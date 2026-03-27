@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+  <!-- Cross/book stylized icon for SermonIndex -->
+  <rect width="40" height="40" rx="8" fill="#d4af37"/>
+  <!-- Open book shape -->
+  <path d="M8 28 L20 24 L32 28 L32 12 L20 8 L8 12 Z" fill="#0f1923" opacity="0.9"/>
+  <!-- Book spine -->
+  <line x1="20" y1="8" x2="20" y2="24" stroke="#d4af37" stroke-width="1.5"/>
+  <!-- Cross above book -->
+  <line x1="20" y1="6" x2="20" y2="13" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="16.5" y1="9" x2="23.5" y2="9" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Page lines left -->
+  <line x1="11" y1="15" x2="18" y2="13" stroke="#d4af37" stroke-width="0.7" opacity="0.5"/>
+  <line x1="11" y1="18" x2="18" y2="16" stroke="#d4af37" stroke-width="0.7" opacity="0.5"/>
+  <line x1="11" y1="21" x2="18" y2="19" stroke="#d4af37" stroke-width="0.7" opacity="0.5"/>
+  <!-- Page lines right -->
+  <line x1="22" y1="13" x2="29" y2="15" stroke="#d4af37" stroke-width="0.7" opacity="0.5"/>
+  <line x1="22" y1="16" x2="29" y2="18" stroke="#d4af37" stroke-width="0.7" opacity="0.5"/>
+  <line x1="22" y1="19" x2="29" y2="21" stroke="#d4af37" stroke-width="0.7" opacity="0.5"/>
+  <!-- Network dots around the book -->
+  <circle cx="6" cy="32" r="1.5" fill="#fff" opacity="0.6"/>
+  <circle cx="34" cy="32" r="1.5" fill="#fff" opacity="0.6"/>
+  <circle cx="20" cy="34" r="1.5" fill="#fff" opacity="0.6"/>
+  <!-- Connection lines (network) -->
+  <line x1="6" y1="32" x2="20" y2="34" stroke="#fff" stroke-width="0.5" opacity="0.3"/>
+  <line x1="34" y1="32" x2="20" y2="34" stroke="#fff" stroke-width="0.5" opacity="0.3"/>
+</svg>
