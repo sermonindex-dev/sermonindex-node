@@ -184,7 +184,7 @@ export default function SeedNodePage({
       <div className="seed-section">
         <div className="page-header">
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ display: 'inline-flex', color: 'var(--gold)' }}>{iconCircuitry}</span> Become a Seed Node
+            <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Become a Seed Node
           </h2>
           <p>Seed nodes carry the full sermon library and serve it to the global peer network</p>
         </div>
@@ -197,7 +197,7 @@ export default function SeedNodePage({
           </p>
           <p>
             If you're interested in becoming a seed node, email{' '}
-            <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold)' }}>{SEED_CONTACT_EMAIL}</a>
+            <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold-text)' }}>{SEED_CONTACT_EMAIL}</a>
           </p>
           <p>
             If you've been invited, enter your seed node password below.
@@ -220,7 +220,7 @@ export default function SeedNodePage({
 
         <div className="seed-card">
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ display: 'inline-flex', color: 'var(--gold)' }}>{iconCircuitry}</span> What is a Seed Node?
+            <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> What is a Seed Node?
           </h3>
           <p>
             SermonIndex is built on a peer-to-peer network where every user helps share sermon content.
@@ -230,7 +230,7 @@ export default function SeedNodePage({
           <p>
             This requires a larger disk or external hard drive. We recommend a dedicated NVMe or USB
             external drive. See our{' '}
-            <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold)' }}>
+            <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold-text)' }}>
               hardware setup guide
             </a>{' '}
             on the SermonIndex forums for recommendations (TerraMaster NVMe enclosures, etc.).
@@ -240,7 +240,7 @@ export default function SeedNodePage({
             indestructible. No single point of failure. No government can censor it. The content lives
             on across the body of Christ.
           </p>
-          <p style={{ color: 'var(--gold)', fontStyle: 'italic', marginBottom: 0 }}>
+          <p style={{ color: 'var(--gold-text)', fontStyle: 'italic', marginBottom: 0 }}>
             "How beautiful on the mountains are the feet of those who bring good news" — Isaiah 52:7
           </p>
         </div>
@@ -254,7 +254,7 @@ export default function SeedNodePage({
     <div className="seed-section">
       <div className="page-header">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ display: 'inline-flex', color: 'var(--gold)' }}>{iconCircuitry}</span> Seed Node Active
+          <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Seed Node Active
         </h2>
         <p>You are helping carry the entire sermon library for the global network</p>
       </div>
@@ -263,9 +263,9 @@ export default function SeedNodePage({
       <div className="seed-card">
         <h3>Step 1: Set Your Storage Location</h3>
         <p>
-          Choose a folder on a drive with at least <strong style={{ color: 'var(--gold)' }}>2.2 TB</strong> of free space.
+          Choose a folder on a drive with at least <strong style={{ color: 'var(--gold-text)' }}>2.2 TB</strong> of free space.
           We recommend using a dedicated external NVMe or USB hard drive. See our{' '}
-          <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold)' }}>
+          <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold-text)' }}>
             hardware guide
           </a>{' '}
           for recommended setups (TerraMaster NVMe, Samsung T7, etc.).
@@ -307,7 +307,7 @@ export default function SeedNodePage({
         <h3>Step 2: Download the Full Library</h3>
         <p>
           Download the complete SermonIndex library to your drive. The total size is approximately{' '}
-          <strong style={{ color: 'var(--gold)' }}>2.2 TB</strong> ({libraryStats?.totalFiles || 0} sermons).
+          <strong style={{ color: 'var(--gold-text)' }}>2.2 TB</strong> ({libraryStats?.totalFiles || 0} sermons).
         </p>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           This can take <strong>several days or weeks</strong> depending on your connection speed. The download will
@@ -317,7 +317,7 @@ export default function SeedNodePage({
         {!downloading ? (
           <div style={{ marginTop: '12px' }}>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              Already downloaded: <strong style={{ color: 'var(--gold)' }}>{downloadedCount}</strong>
+              Already downloaded: <strong style={{ color: 'var(--gold-text)' }}>{downloadedCount}</strong>
               · Remaining: <strong>{totalCount - downloadedCount}</strong>
             </p>
             {downloadedCount < totalCount ? (
@@ -325,7 +325,7 @@ export default function SeedNodePage({
                 {downloadedCount > 0 ? 'Resume Full Library Download' : 'Start Full Library Download'}
               </button>
             ) : (
-              <p style={{ color: '#4caf50', fontWeight: 600 }}>
+              <p style={{ color: 'var(--green)', fontWeight: 600 }}>
                 ✓ Full library downloaded! You are a complete seed node.
               </p>
             )}
@@ -380,7 +380,7 @@ export default function SeedNodePage({
             <div style={{ fontWeight: 500 }}>Library Coverage</div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Percentage of full library held locally</div>
           </div>
-          <span style={{ color: 'var(--gold)', fontWeight: 600 }}>{libraryStats?.coverage || 0}%</span>
+          <span style={{ color: 'var(--gold-text)', fontWeight: 600 }}>{libraryStats?.coverage || 0}%</span>
         </div>
         <div className="settings-row">
           <div>
@@ -420,7 +420,7 @@ export default function SeedNodePage({
       <div className="seed-card">
         <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 0 }}>
           Questions about seed nodes? Email{' '}
-          <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold)' }}>{SEED_CONTACT_EMAIL}</a>
+          <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold-text)' }}>{SEED_CONTACT_EMAIL}</a>
         </p>
       </div>
     </div>

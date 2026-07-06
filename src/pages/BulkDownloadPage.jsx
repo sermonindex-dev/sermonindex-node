@@ -194,7 +194,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
                   · {formatBytes(speaker.totalBytes)}
                 </div>
                 {speaker.downloadedCount > 0 && !isComplete && (
-                  <div className="bulk-speaker-meta" style={{ color: 'var(--gold)' }}>
+                  <div className="bulk-speaker-meta" style={{ color: 'var(--gold-text)' }}>
                     {speaker.downloadedCount} already downloaded · {remaining} remaining
                   </div>
                 )}
@@ -204,7 +204,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
                 {isComplete ? (
                   <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.82rem' }}>✓ Complete</span>
                 ) : isActive ? (
-                  <span style={{ color: 'var(--gold)', fontWeight: 600, fontSize: '0.82rem' }}>Downloading...</span>
+                  <span style={{ color: 'var(--gold-text)', fontWeight: 600, fontSize: '0.82rem' }}>Downloading...</span>
                 ) : (
                   <button
                     className="btn btn-gold"

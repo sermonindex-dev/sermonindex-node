@@ -1,24 +1,77 @@
-/* SermonIndex Desktop App — Global Styles */
+/* SermonIndex Desktop App — Global Styles
+   Palette matches sermonindex.net (light default + dark via html[data-theme='dark']) */
 :root {
-  --bg-primary: #0f1923;
-  --bg-secondary: #162230;
-  --bg-tertiary: #1a2b3d;
-  --bg-hover: #1e3348;
-  --border: #1e3348;
-  --border-light: #2a4158;
-  --text-primary: #e0e6ed;
-  --text-secondary: #8cb4d5;
-  --text-muted: #6a8299;
-  --gold: #d4af37;
+  color-scheme: light;
+  --bg-primary: #F8F8F2;
+  --bg-secondary: #fff;
+  --bg-tertiary: #F1F1E8;
+  --bg-hover: #EDEDE0;
+  --border: #DEE2E6;
+  --border-light: #c9cdb9;
+  --text-primary: #242424;
+  --text-secondary: #555;
+  --text-muted: #888;
+  --gold: #D4AF37;
+  --gold-hover: #C9A432;
+  --gold-text: #967d1f;         /* gold used as text on light surfaces */
+  --text-on-gold: #2a2a14;
   --gold-dim: rgba(212, 175, 55, 0.15);
   --gold-glow: rgba(212, 175, 55, 0.3);
   --olive: #707035;
-  --olive-dim: rgba(112, 112, 53, 0.2);
-  --green: #4caf50;
+  --olive-secondary: #908F51;
+  --olive-dim: rgba(112, 112, 53, 0.15);
+  --tan: #D9CDB6;
+  --footer-bg: #E8EDE4;
+  --green: #3d8a41;
   --red: #e74c3c;
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --orange: #b85c00;
+  --seed-blue: #2d6cb5;
+  --tooltip-bg: #2f2f1c;
+  --tooltip-border: #4a4a2e;
+  --tooltip-text: #F5F5EC;
+  /* Sidebar = brand surface, olive in both modes like the site header */
+  --sidebar-bg: #707035;
+  --sidebar-text: #F8F8F2;
+  --sidebar-text-dim: rgba(248, 248, 242, 0.75);
+  --sidebar-muted: rgba(248, 248, 242, 0.55);
+  --sidebar-hover: rgba(255, 255, 255, 0.1);
+  --sidebar-border: rgba(255, 255, 255, 0.14);
+  --sidebar-active-bg: rgba(212, 175, 55, 0.18);
+  --sidebar-active-text: #fff;
+  --banner-bg: #3a3a20;
+  --banner-text: #e9e9dc;
+  --font: Verdana, Geneva, sans-serif;
+  --font-serif: Georgia, 'Times New Roman', serif;
   --radius: 8px;
   --radius-lg: 12px;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #1e1e1e;
+  --bg-tertiary: #262620;
+  --bg-hover: #30302a;
+  --border: #3a3a3a;
+  --border-light: #444;
+  --text-primary: #e4e4da;
+  --text-secondary: #bbb;
+  --text-muted: #888;
+  --gold-text: #d4af37;
+  --olive: #908F51;
+  --olive-dim: rgba(144, 143, 81, 0.2);
+  --tan: #5A6B50;
+  --footer-bg: #111108;
+  --green: #4caf50;
+  --orange: #e67e22;
+  --seed-blue: #6ea8fe;
+  --tooltip-bg: #33332a;
+  --tooltip-border: #4a4a3c;
+  --tooltip-text: #e4e4da;
+  --sidebar-bg: #2c2c14;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --banner-bg: #262620;
+  --banner-text: #e4e4da;
 }
 
 * {
@@ -46,26 +99,47 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
-/* Sidebar */
+/* Sidebar — olive brand surface in both modes, like the site header */
 .sidebar {
   width: 240px;
   min-width: 240px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
   height: 100vh;
+  color: var(--sidebar-text);
 }
 
 .sidebar-header {
   padding: 16px 16px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--sidebar-border);
 }
 
 .sidebar-logo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+}
+
+/* CSS-only wordmark styled like the site logo: white pill + "index" */
+.sidebar-logo .logo-pill {
+  background: #fff;
+  color: #4a4a20;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  padding: 3px 12px;
+  border-radius: 999px;
+  line-height: 1.4;
+}
+
+.sidebar-logo .logo-index {
+  color: var(--sidebar-text);
+  font-weight: 400;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  opacity: 0.95;
 }
 
 .sidebar-logo .logo-icon {
@@ -78,7 +152,7 @@ body {
   justify-content: center;
   font-size: 16px;
   font-weight: 700;
-  color: var(--bg-primary);
+  color: var(--text-on-gold);
 }
 
 .sidebar-logo .logo-img {
@@ -97,17 +171,17 @@ body {
 .sidebar-logo h1 {
   font-size: 1rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--sidebar-text);
   letter-spacing: 0.3px;
 }
 
 .sidebar-logo .subtitle,
 .sidebar-header .subtitle {
   font-size: 0.6rem;
-  color: var(--text-muted);
+  color: var(--sidebar-muted);
   text-transform: uppercase;
   letter-spacing: 1.8px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .sidebar-nav {
@@ -122,7 +196,7 @@ body {
 
 .nav-section-label {
   font-size: 0.68rem;
-  color: var(--text-muted);
+  color: var(--sidebar-muted);
   text-transform: uppercase;
   letter-spacing: 1.5px;
   padding: 0 12px;
@@ -135,7 +209,7 @@ body {
   gap: 10px;
   padding: 8px 12px;
   border-radius: var(--radius);
-  color: var(--text-secondary);
+  color: var(--sidebar-text-dim);
   cursor: pointer;
   font-size: 0.85rem;
   transition: all 0.15s ease;
@@ -143,13 +217,14 @@ body {
 }
 
 .nav-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text);
 }
 
 .nav-item.active {
-  background: var(--gold-dim);
-  color: var(--gold);
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-text);
+  box-shadow: inset 3px 0 0 var(--gold);
 }
 
 .nav-item .icon {
@@ -174,7 +249,7 @@ body {
 /* Sidebar footer — node status */
 .sidebar-footer {
   padding: 12px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--sidebar-border);
 }
 
 .node-status {
@@ -182,7 +257,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--sidebar-text-dim);
 }
 
 .node-dot {
@@ -200,7 +275,7 @@ body {
 
 .node-stats {
   font-size: 0.68rem;
-  color: var(--text-muted);
+  color: var(--sidebar-muted);
   margin-top: 4px;
 }
 
@@ -210,6 +285,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative; /* anchor for the donate banner */
 }
 
 /* Top bar */
@@ -278,17 +354,17 @@ body {
 
 .mode-badge.cdn {
   background: rgba(76, 175, 80, 0.15);
-  color: #4caf50;
+  color: var(--green);
 }
 
 .mode-badge.p2p-primary {
   background: var(--gold-dim);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 .mode-badge.p2p-only {
   background: rgba(212, 175, 55, 0.25);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Announcement banner in topbar */
@@ -298,10 +374,10 @@ body {
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
-  background: rgba(30, 60, 90, 0.25);
-  border: 1px solid rgba(50, 80, 110, 0.25);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  color: #8cb4d5;
+  color: var(--text-secondary);
   font-size: 0.78rem;
   font-weight: 400;
   line-height: 1.4;
@@ -351,8 +427,8 @@ body {
   color: var(--text-primary);
 }
 
-.net-stat-mini-val.gold { color: var(--gold); }
-.net-stat-mini-val.green { color: #4caf50; }
+.net-stat-mini-val.gold { color: var(--gold-text); }
+.net-stat-mini-val.green { color: var(--green); }
 
 .net-stat-mini-label {
   font-size: 0.68rem;
@@ -382,7 +458,8 @@ body {
   width: 100%;
   height: 100%;
   position: relative;
-  background: var(--bg-secondary);
+  /* The world-map canvas is a self-contained dark visualization in both themes */
+  background: #0c1824;
 }
 
 .net-scroll-content {
@@ -457,7 +534,7 @@ body {
   align-items: center;
   justify-content: center;
   font-size: 0.85rem;
-  color: var(--gold);
+  color: var(--gold-text);
   font-weight: 600;
   flex-shrink: 0;
   overflow: hidden;
@@ -530,7 +607,7 @@ body {
 
 .btn-icon:hover {
   border-color: var(--gold);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Tooltip for action buttons — dark blue matching app theme */
@@ -543,8 +620,8 @@ body {
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  background: #1a2b3d;
-  color: #8cb4d5;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   font-size: 0.65rem;
   font-weight: 500;
   padding: 4px 8px;
@@ -555,8 +632,8 @@ body {
   transition: opacity 0.12s ease;
   z-index: 100;
   letter-spacing: 0.02em;
-  border: 1px solid #2a4158;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  border: 1px solid var(--tooltip-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 .btn-icon[data-tooltip]::before {
   content: '';
@@ -565,7 +642,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   border: 4px solid transparent;
-  border-top-color: #2a4158;
+  border-top-color: var(--tooltip-border);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.12s ease;
@@ -586,8 +663,8 @@ body {
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  background: #1a2b3d;
-  color: #8cb4d5;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   font-size: 0.65rem;
   font-weight: 500;
   padding: 4px 8px;
@@ -598,8 +675,8 @@ body {
   transition: opacity 0.12s ease;
   z-index: 100;
   letter-spacing: 0.02em;
-  border: 1px solid #2a4158;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  border: 1px solid var(--tooltip-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 .seed-badge[data-tooltip]::before {
   content: '';
@@ -608,7 +685,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   border: 4px solid transparent;
-  border-top-color: #2a4158;
+  border-top-color: var(--tooltip-border);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.12s ease;
@@ -622,7 +699,7 @@ body {
 .btn-icon.downloaded {
   background: var(--gold-dim);
   border-color: var(--gold);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Seeding availability badge */
@@ -635,12 +712,12 @@ body {
 
 .seed-badge.available {
   background: rgba(76, 175, 80, 0.12);
-  color: #4caf50;
+  color: var(--green);
 }
 
 .seed-badge.local {
   background: rgba(76, 175, 80, 0.12);
-  color: #4caf50;
+  color: var(--green);
 }
 
 /* Player bar */
@@ -698,7 +775,7 @@ body {
   height: 36px;
   border-radius: 50%;
   background: var(--gold);
-  color: var(--bg-primary);
+  color: var(--text-on-gold);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -706,8 +783,8 @@ body {
 }
 
 .player-controls .play-btn:hover {
-  background: #e0be48;
-  color: var(--bg-primary);
+  background: var(--gold-hover);
+  color: var(--text-on-gold);
 }
 
 .player-progress {
@@ -762,7 +839,7 @@ body {
 }
 
 .seed-card h3 {
-  color: var(--gold);
+  color: var(--gold-text);
   font-size: 1rem;
   margin-bottom: 8px;
 }
@@ -789,7 +866,7 @@ body {
 
 .seed-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--gold), #e0be48);
+  background: linear-gradient(90deg, var(--gold), var(--gold-hover));
   border-radius: 4px;
   transition: width 0.5s ease;
 }
@@ -815,11 +892,12 @@ body {
 
 .btn-gold {
   background: var(--gold);
-  color: var(--bg-primary);
+  color: var(--text-on-gold);
+  font-weight: 700;
 }
 
 .btn-gold:hover {
-  background: #e0be48;
+  background: var(--gold-hover);
 }
 
 .btn-outline {
@@ -830,7 +908,7 @@ body {
 
 .btn-outline:hover {
   border-color: var(--gold);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Input */
@@ -940,7 +1018,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .dl-progress-mini-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--gold), #e0be48);
+  background: linear-gradient(90deg, var(--gold), var(--gold-hover));
   border-radius: 2px;
   transition: width 0.3s ease;
 }
@@ -967,7 +1045,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .dl-progress-mini-text {
   font-size: 0.68rem;
-  color: var(--gold);
+  color: var(--gold-text);
   min-width: 32px;
   text-align: right;
   font-weight: 600;
@@ -985,11 +1063,11 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .dl-status.seeding {
   background: var(--gold-dim);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 .dl-status.queued {
-  background: rgba(139, 180, 213, 0.12);
+  background: rgba(136, 136, 136, 0.14);
   color: var(--text-secondary);
 }
 
@@ -1007,7 +1085,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 .btn-icon.active {
   background: var(--gold-dim);
   border-color: var(--gold);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 .btn-icon.remove {
@@ -1093,7 +1171,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 /* Mode badge variants */
 .mode-badge.p2p {
   background: var(--gold-dim);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Node list (NetworkPage) */
@@ -1196,7 +1274,7 @@ input[type="password"]:focus, input[type="text"]:focus {
   margin-top: 4px;
 }
 
-.net-stat-value.gold { color: var(--gold); }
+.net-stat-value.gold { color: var(--gold-text); }
 .net-stat-value.green { color: var(--green); }
 
 /* Network Dashboard — tab bar */
@@ -1226,11 +1304,11 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .net-tab:hover {
   color: var(--text-primary);
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-hover);
 }
 
 .net-tab.active {
-  color: var(--gold);
+  color: var(--gold-text);
   background: var(--bg-secondary);
   border-bottom: 2px solid var(--gold);
 }
@@ -1257,7 +1335,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 }
 
 .net-country-table tbody tr {
-  border-bottom: 1px solid rgba(30,51,72,0.3);
+  border-bottom: 1px solid var(--border);
   transition: background 0.15s;
 }
 
@@ -1277,7 +1355,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .net-country-count {
   font-weight: 600;
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Content source visual (read-only) */
@@ -1307,13 +1385,13 @@ input[type="password"]:focus, input[type="text"]:focus {
 }
 
 .type-badge.audio {
-  background: rgba(139, 180, 213, 0.12);
+  background: rgba(136, 136, 136, 0.14);
   color: var(--text-secondary);
 }
 
 .type-badge.video {
   background: rgba(212, 175, 55, 0.15);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 /* Bulk Download page */
@@ -1357,7 +1435,7 @@ input[type="password"]:focus, input[type="text"]:focus {
   align-items: center;
   justify-content: center;
   font-size: 0.85rem;
-  color: var(--gold);
+  color: var(--gold-text);
   font-weight: 600;
   flex-shrink: 0;
   overflow: hidden;
@@ -1547,7 +1625,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 .coverage-bar {
   flex: 1;
   height: 4px;
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.2);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -1561,7 +1639,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .coverage-label {
   font-size: 0.62rem;
-  color: var(--text-muted);
+  color: var(--sidebar-muted);
   white-space: nowrap;
 }
 
@@ -1602,7 +1680,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 
 .settings-tab.active {
   background: var(--bg-tertiary);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 
 .settings-tab svg {
@@ -1613,8 +1691,8 @@ input[type="password"]:focus, input[type="text"]:focus {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4ecb71;
-  box-shadow: 0 0 6px rgba(78, 203, 113, 0.6);
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
   display: inline-block;
 }
 
@@ -1679,10 +1757,10 @@ input[type="password"]:focus, input[type="text"]:focus {
 .sidebar-announcement {
   margin: 0 12px;
   padding: 10px 12px;
-  background: rgba(30, 60, 90, 0.3);
-  border: 1px solid rgba(50, 80, 110, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--sidebar-border);
   border-radius: var(--radius);
-  color: #8cb4d5;
+  color: var(--sidebar-text-dim);
   font-size: 0.73rem;
   line-height: 1.5;
   display: flex;
@@ -1699,7 +1777,7 @@ input[type="password"]:focus, input[type="text"]:focus {
   gap: 6px;
   padding: 4px 12px;
   border-radius: 12px;
-  background: rgba(30, 51, 72, 0.5);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border);
   font-size: 0.72rem;
   font-weight: 600;
@@ -1712,4 +1790,111 @@ input[type="password"]:focus, input[type="text"]:focus {
 .topbar-health-badge:hover {
   background: var(--bg-hover);
   border-color: var(--border-light);
+}
+
+/* ── Theme toggle (moon/sun) ── */
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.theme-toggle:hover {
+  border-color: var(--gold);
+  color: var(--gold-text);
+  background: var(--gold-dim);
+}
+
+/* ── Donate banner (site-style support banner) ── */
+.donate-banner {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 24px;
+  background: var(--banner-bg);
+  color: var(--banner-text);
+  border-top: 1px solid rgba(212, 175, 55, 0.35);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+  animation: donate-slide-up 0.35s ease-out;
+}
+
+@keyframes donate-slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.donate-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.donate-banner-heading {
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.donate-banner-text p {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--banner-text);
+  margin: 0;
+}
+
+.donate-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.donate-banner .btn-donate {
+  background: var(--gold);
+  color: var(--text-on-gold);
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius);
+  padding: 10px 28px;
+  font-size: 0.85rem;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.donate-banner .btn-donate:hover {
+  background: var(--gold-hover);
+}
+
+.donate-banner .btn-dismiss {
+  background: transparent;
+  color: var(--banner-text);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  font-size: 0.85rem;
+  font-family: var(--font);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: all 0.2s;
+}
+
+.donate-banner .btn-dismiss:hover {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.5);
 }

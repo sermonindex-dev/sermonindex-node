@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, Component } from 'reac
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import PlayerBar from './components/PlayerBar';
+import DonateBanner from './components/DonateBanner';
 import LibraryPage from './pages/LibraryPage';
 import DownloadsPage from './pages/DownloadsPage';
 import BulkDownloadPage from './pages/BulkDownloadPage';
@@ -25,17 +26,17 @@ class ErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '48px', textAlign: 'center', background: '#0f1923', color: '#e0e6ed', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <h2 style={{ color: '#d4af37', marginBottom: '16px' }}>Something went wrong</h2>
-          <p style={{ color: '#8cb4d5', marginBottom: '24px', maxWidth: '400px' }}>
+        <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-primary)', color: 'var(--text-primary)', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <h2 style={{ color: 'var(--gold-text)', marginBottom: '16px' }}>Something went wrong</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '24px', maxWidth: '400px' }}>
             The app encountered an unexpected error. This has been logged.
           </p>
-          <p style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#6a8299', marginBottom: '24px', maxWidth: '500px', wordBreak: 'break-all' }}>
+          <p style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '500px', wordBreak: 'break-all' }}>
             {this.state.error?.message || 'Unknown error'}
           </p>
           <button
             onClick={() => { this.setState({ hasError: false, error: null }); }}
-            style={{ background: '#d4af37', color: '#0f1923', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}
+            style={{ background: '#D4AF37', color: '#2a2a14', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}
           >
             Try Again
           </button>
@@ -91,7 +92,7 @@ export default function App() {
   const [announcement, setAnnouncement] = useState('');       // server-pushed banner message
   const [availablePacks, setAvailablePacks] = useState([]);   // content packs from server
   const [settingsTab, setSettingsTab] = useState(null);       // which settings sub-tab to open
-  const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: '#6a8299', score: 0 });
+  const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
   const audioRef = useRef(null);
   const videoRef = useRef(null);
 
@@ -206,7 +207,7 @@ export default function App() {
   // Poll network health for TopBar indicator
   useEffect(() => {
     if (!p2pRunning) {
-      setNetworkHealth({ label: 'Offline', color: '#6a8299', score: 0 });
+      setNetworkHealth({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
       return;
     }
     let cancelled = false;
@@ -230,7 +231,7 @@ export default function App() {
         if (livePeers >= 10) score += 10;
         score = Math.min(100, score);
         const label = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score >= 20 ? 'Fair' : 'Offline';
-        const color = score >= 80 ? '#4ecb71' : score >= 50 ? '#d4af37' : score >= 20 ? '#e67e22' : '#6a8299';
+        const color = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--gold-text)' : score >= 20 ? 'var(--orange)' : 'var(--text-muted)';
         setNetworkHealth({ label, color, score });
       } catch {}
     };
@@ -830,6 +831,7 @@ export default function App() {
             {renderPage()}
           </ErrorBoundary>
         </div>
+        <DonateBanner />
         {currentSermon && (
           <PlayerBar
             sermon={currentSermon}

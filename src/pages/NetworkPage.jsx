@@ -313,13 +313,13 @@ export default function NetworkPage({ nodeStats }) {
         ctx.fillStyle = 'rgba(255,240,200,0.9)'; ctx.fill();
 
         if (isSeed) {
-          ctx.font = '9px Inter, sans-serif';
+          ctx.font = '9px Verdana, sans-serif';
           ctx.fillStyle = 'rgba(212,175,55,0.5)';
           ctx.textAlign = 'center';
           ctx.fillText(node.city, x, y - baseR - 6);
           ctx.fillText(`SEED · ${node.coverage}%`, x, y - baseR + 2);
         } else if (isMe) {
-          ctx.font = 'bold 9px Inter, sans-serif';
+          ctx.font = 'bold 9px Verdana, sans-serif';
           ctx.fillStyle = 'rgba(76,175,80,0.7)';
           ctx.textAlign = 'center';
           ctx.fillText('YOU', x, y - baseR - 4);
@@ -330,7 +330,7 @@ export default function NetworkPage({ nodeStats }) {
       const livePulse = Math.sin(now / 800) * 0.3 + 0.7;
       ctx.fillStyle = `rgba(76,175,80,${livePulse})`;
       ctx.beginPath(); ctx.arc(w - 16, 16, 4, 0, Math.PI * 2); ctx.fill();
-      ctx.font = '9px Inter, sans-serif';
+      ctx.font = '9px Verdana, sans-serif';
       ctx.fillStyle = `rgba(76,175,80,${livePulse * 0.8})`;
       ctx.textAlign = 'right';
       ctx.fillText('LIVE', w - 26, 20);
@@ -422,16 +422,17 @@ export default function NetworkPage({ nodeStats }) {
           <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
           {hoveredNode && (
             <div style={{
+              /* Overlay on the always-dark map canvas — fixed dark-friendly colors */
               position: 'absolute', bottom: '16px', left: '16px',
-              background: 'rgba(15,25,35,0.92)', border: '1px solid var(--border)',
+              background: 'rgba(15,25,35,0.92)', border: '1px solid rgba(255,255,255,0.12)',
               borderRadius: '8px', padding: '10px 14px', fontSize: '0.8rem',
               lineHeight: '1.5', backdropFilter: 'blur(8px)',
             }}>
-              <div style={{ fontWeight: 600, color: hoveredNode.type === 'seed' ? 'var(--gold)' : hoveredNode.id === getNodeId() ? 'var(--green)' : 'var(--text-primary)' }}>
+              <div style={{ fontWeight: 600, color: hoveredNode.type === 'seed' ? '#d4af37' : hoveredNode.id === getNodeId() ? '#4caf50' : '#e4e4da' }}>
                 {hoveredNode.city}, {hoveredNode.country}
                 {hoveredNode.id === getNodeId() && <span style={{ fontSize: '0.68rem', opacity: 0.7, marginLeft: '6px' }}>(You)</span>}
               </div>
-              <div style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ color: '#9aa3ad', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <span style={{ display: 'inline-flex' }}>{hoveredNode.type === 'seed' ? iconSeed : iconUser}</span>
                 {hoveredNode.type === 'seed' ? 'Seed Node' : 'Peer'} · {hoveredNode.coverage}% coverage
               </div>
@@ -440,26 +441,27 @@ export default function NetworkPage({ nodeStats }) {
 
           {/* Map legend */}
           <div style={{
+            /* Legend over the always-dark map canvas — fixed dark-friendly colors */
             position: 'absolute', top: '12px', left: '12px',
-            background: 'rgba(15,25,35,0.85)', border: '1px solid var(--border)',
+            background: 'rgba(15,25,35,0.85)', border: '1px solid rgba(255,255,255,0.12)',
             borderRadius: '6px', padding: '8px 12px', fontSize: '0.7rem',
             backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', gap: '4px',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#d4af37', display: 'inline-block' }} />
-              <span style={{ color: 'var(--text-muted)' }}>Seed Node</span>
+              <span style={{ color: '#9aa3ad' }}>Seed Node</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'rgba(212,175,55,0.5)', display: 'inline-block' }} />
-              <span style={{ color: 'var(--text-muted)' }}>Peer</span>
+              <span style={{ color: '#9aa3ad' }}>Peer</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4caf50', display: 'inline-block' }} />
-              <span style={{ color: 'var(--text-muted)' }}>You</span>
+              <span style={{ color: '#9aa3ad' }}>You</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', borderTop: '1px solid rgba(30,51,72,0.3)', paddingTop: '4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '4px' }}>
               <span style={{ width: '14px', height: '2px', background: 'rgba(212,175,55,0.3)', display: 'inline-block', borderRadius: '1px' }} />
-              <span style={{ color: 'var(--text-muted)' }}>Connection</span>
+              <span style={{ color: '#9aa3ad' }}>Connection</span>
             </div>
           </div>
         </div>
@@ -485,7 +487,7 @@ export default function NetworkPage({ nodeStats }) {
                       <span>{c.name}</span>
                     </td>
                     <td><span className="net-country-count">{c.total}</span></td>
-                    <td>{c.seeds > 0 ? <span style={{ color: 'var(--gold)' }}>{c.seeds}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
+                    <td>{c.seeds > 0 ? <span style={{ color: 'var(--gold-text)' }}>{c.seeds}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td>{c.peers > 0 ? c.peers : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{[...c.cities].join(', ') || '-'}</td>
                   </tr>
@@ -500,7 +502,7 @@ export default function NetworkPage({ nodeStats }) {
           <div className="net-scroll-content">
             {seedNodes.map(node => (
               <div key={node.id} className="node-list-item seed">
-                <span className="node-list-icon" style={{ display: 'flex', color: 'var(--gold)' }}>{iconSeed}</span>
+                <span className="node-list-icon" style={{ display: 'flex', color: 'var(--gold-text)' }}>{iconSeed}</span>
                 <div className="node-list-info">
                   <div className="node-list-name">{node.city}, {node.country}</div>
                   <div className="node-list-detail">Seed Node · {node.coverage}% coverage · Full library</div>

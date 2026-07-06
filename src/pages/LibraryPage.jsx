@@ -44,7 +44,7 @@ function DownloadProgress({ dlState }) {
         <div className="dl-progress-mini-bar">
           <div className="dl-progress-mini-fill seeding" style={{ width: '100%' }}></div>
         </div>
-        <span className="dl-progress-mini-text" style={{ color: '#6ea8fe' }}>Seeding to P2P network</span>
+        <span className="dl-progress-mini-text" style={{ color: 'var(--seed-blue)' }}>Seeding to P2P network</span>
       </div>
     );
   }

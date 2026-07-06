@@ -79,7 +79,7 @@ export default function SettingsPage({
                 <div style={{ fontWeight: 500 }}>P2P Node (BitTorrent)</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   {p2pRunning
-                    ? <span style={{ color: '#4caf50' }}>Running — sharing sermons with the peer network</span>
+                    ? <span style={{ color: 'var(--green)' }}>Running — sharing sermons with the peer network</span>
                     : p2pEnabled
                       ? 'Starting up...'
                       : 'Disabled — sermons will only download from CDN'}
@@ -109,7 +109,7 @@ export default function SettingsPage({
                 <div style={{ fontWeight: 500 }}>Storage Limit</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   Maximum disk space for cached sermons:{' '}
-                  <strong style={{ color: 'var(--gold)' }}>
+                  <strong style={{ color: 'var(--gold-text)' }}>
                     {storageLimit === 0 ? 'Unlimited' : `${storageLimit} GB`}
                   </strong>
                 </div>
@@ -134,7 +134,7 @@ export default function SettingsPage({
                 <div style={{ fontWeight: 500 }}>Upload Bandwidth Limit</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   Limit how much bandwidth is used for sharing:{' '}
-                  <strong style={{ color: 'var(--gold)' }}>
+                  <strong style={{ color: 'var(--gold-text)' }}>
                     {bandwidthLimit === 0 ? 'Unlimited' : bandwidthLimit < 1 ? `${bandwidthLimit * 1000} Kbps` : `${bandwidthLimit} Mbps`}
                   </strong>
                 </div>
@@ -210,7 +210,7 @@ export default function SettingsPage({
               })}
             </div>
             {modeStatus === 'saved' && (
-              <div style={{ fontSize: '0.75rem', color: '#4caf50', marginTop: '8px', transition: 'opacity 0.3s' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--green)', marginTop: '8px', transition: 'opacity 0.3s' }}>
                 Mode updated successfully
               </div>
             )}
@@ -223,7 +223,7 @@ export default function SettingsPage({
             <h3>Node Statistics</h3>
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Peers Connected</span>
-              <span style={{ color: 'var(--gold)', fontWeight: 600 }}>{nodeStats.peersConnected}</span>
+              <span style={{ color: 'var(--gold-text)', fontWeight: 600 }}>{nodeStats.peersConnected}</span>
             </div>
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Files Shared</span>
@@ -280,7 +280,7 @@ export default function SettingsPage({
           </div>
 
           <div className="seed-card" style={{ background: 'rgba(212,175,55,0.04)', border: '1px solid rgba(212,175,55,0.15)' }}>
-            <h3 style={{ color: 'var(--gold)' }}>Network Layers</h3>
+            <h3 style={{ color: 'var(--gold-text)' }}>Network Layers</h3>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
               Your node uses standard BitTorrent connectivity for maximum reachability:
             </p>

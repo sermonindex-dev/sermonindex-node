@@ -1,5 +1,4 @@
 import React from 'react';
-import siLogo from '../assets/si-logo.png';
 
 // Clean SVG icons (Lucide-inspired, MIT license, single-color flat)
 const icons = {
@@ -51,8 +50,9 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <div className="sidebar-logo">
-          <img src={siLogo} alt="SermonIndex" className="logo-img-wide" />
+        <div className="sidebar-logo" aria-label="SermonIndex">
+          <span className="logo-pill">sermon</span>
+          <span className="logo-index">index</span>
         </div>
         <div className="subtitle">Node Software</div>
       </div>

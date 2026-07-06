@@ -276,6 +276,23 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a URL in the system default browser (used by the Donate banner)
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Only http(s) URLs allowed".to_string());
+    }
+    use std::process::Command;
+    #[cfg(target_os = "macos")]
+    let res = Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let res = Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    #[cfg(target_os = "linux")]
+    let res = Command::new("xdg-open").arg(&url).spawn();
+    res.map_err(|e| format!("Failed to open URL: {}", e))?;
+    Ok(())
+}
+
 /// Delete a downloaded sermon file
 #[tauri::command]
 fn delete_sermon_file(filename: String) -> Result<(), String> {
@@ -616,6 +633,7 @@ pub fn run() {
             get_app_version,
             check_disk_space,
             open_folder,
+            open_url,
             save_sermon_file,
             create_sermon_file,
             append_sermon_chunk,

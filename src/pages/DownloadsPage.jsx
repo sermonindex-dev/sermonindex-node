@@ -176,12 +176,12 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                         style={{ width: dlState.state === 'seeding' ? '100%' : dlState.progress < 0 ? '40%' : `${Math.min(Math.round(dlState.progress), 99)}%` }}
                       ></div>
                     </div>
-                    <span className="dl-progress-mini-text" style={dlState.state === 'seeding' ? { color: '#6ea8fe' } : {}}>
+                    <span className="dl-progress-mini-text" style={dlState.state === 'seeding' ? { color: 'var(--seed-blue)' } : {}}>
                       {dlState.state === 'seeding' ? 'Seeding to P2P network' : dlState.state === 'queued' ? 'Queued' : dlState.progress < 0 ? (dlState.bytesDownloaded > 0 ? formatStorage(dlState.bytesDownloaded) : 'Downloading...') : `${Math.min(Math.round(dlState.progress), 99)}%`}
                     </span>
                   </div>
                 ) : sermon.incomplete ? (
-                  <span className="seed-badge incomplete" style={{ color: '#e67e22', borderColor: 'rgba(230,126,34,0.3)', background: 'rgba(230,126,34,0.1)' }}>
+                  <span className="seed-badge incomplete" style={{ color: 'var(--orange)', borderColor: 'rgba(230,126,34,0.3)', background: 'rgba(230,126,34,0.1)' }}>
                     {iconWarning} <span style={{ marginLeft: '3px' }}>Incomplete — {sermon.diskSize ? formatStorage(sermon.diskSize) : '?'} / {sermon.sizeFormatted}</span>
                   </span>
                 ) : (
@@ -252,7 +252,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                     className="btn-icon"
                     onClick={() => onRedownload(sermon.id)}
                     data-tooltip="Re-download"
-                    style={{ color: '#e67e22' }}
+                    style={{ color: 'var(--orange)' }}
                   >
                     {iconRefresh}
                   </button>

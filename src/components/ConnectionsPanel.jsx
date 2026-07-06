@@ -82,15 +82,15 @@ const LAYERS = [
 ];
 
 const STATUS_COLORS = {
-  connected: '#4ecb71',
-  connecting: '#d4af37',
-  disconnected: '#6a8299',
-  error: '#e74c3c',
-  listening: '#4ecb71',
-  active: '#4ecb71',
-  enabled: '#4ecb71',
-  inactive: '#6a8299',
-  idle: '#6a8299',
+  connected: 'var(--green)',
+  connecting: 'var(--gold-text)',
+  disconnected: 'var(--text-muted)',
+  error: 'var(--red)',
+  listening: 'var(--green)',
+  active: 'var(--green)',
+  enabled: 'var(--green)',
+  inactive: 'var(--text-muted)',
+  idle: 'var(--text-muted)',
 };
 
 const STATUS_LABELS = {
@@ -255,7 +255,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   })();
 
   const healthLabel = healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore >= 20 ? 'Fair' : 'Offline';
-  const healthColor = healthScore >= 80 ? '#4ecb71' : healthScore >= 50 ? '#d4af37' : healthScore >= 20 ? '#e67e22' : '#6a8299';
+  const healthColor = healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore >= 20 ? 'var(--orange)' : 'var(--text-muted)';
 
   // Restart handler
   const handleReconnect = useCallback(async () => {
@@ -343,7 +343,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
           <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Peers</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--gold)' }}>{livePeers}</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--gold-text)' }}>{livePeers}</div>
             </div>
             <div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Torrents</div>
@@ -351,7 +351,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
             </div>
             <div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Seeding</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: seededCount > 0 ? '#4ecb71' : 'var(--text-primary)' }}>{seededCount}</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: seededCount > 0 ? 'var(--green)' : 'var(--text-primary)' }}>{seededCount}</div>
             </div>
             <div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Uptime</div>
@@ -364,7 +364,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
           {/* Native node extras */}
           {status?.running && (
             <div style={{ marginTop: '12px', padding: '10px 12px', background: 'rgba(78, 203, 113, 0.06)', borderRadius: '8px', border: '1px solid rgba(78, 203, 113, 0.15)', overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.7rem', color: '#4ecb71', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--green)', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 Native BitTorrent Node — DHT + Trackers + UPnP
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
@@ -387,7 +387,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
 
           {LAYERS.map((layer, i) => {
             const status_ = layerStatus[layer.id];
-            const color = STATUS_COLORS[status_] || '#6a8299';
+            const color = STATUS_COLORS[status_] || 'var(--text-muted)';
             const label = STATUS_LABELS[status_] || status_;
             // "Active" = actually carrying traffic or providing a service right now
             const isActive = ['connected', 'listening', 'active', 'enabled'].includes(status_);
@@ -412,7 +412,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
                   <div style={{
                     width: 32, height: 32, borderRadius: '8px',
-                    background: 'rgba(140, 180, 213, 0.1)',
+                    background: 'var(--bg-hover)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     flexShrink: 0,
                     color: isActive ? 'var(--text-secondary)' : 'var(--text-muted)',
@@ -459,7 +459,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                 const live = s.live || {};
                 const peers = live.snapshot?.peer_stats?.live || 0;
                 const pct = s.total_bytes ? Math.min(100, (100 * (s.progress_bytes || 0)) / s.total_bytes) : 0;
-                const stateColor = s.state === 'error' ? '#e74c3c' : s.finished ? '#4ecb71' : s.state === 'live' ? '#d4af37' : '#6a8299';
+                const stateColor = s.state === 'error' ? 'var(--red)' : s.finished ? 'var(--green)' : s.state === 'live' ? 'var(--gold-text)' : 'var(--text-muted)';
                 const stateLabel = s.state === 'error' ? 'Error' : s.finished ? 'Seeding' : s.state === 'live' ? 'Downloading' : (s.state || 'initializing');
                 return (
                   <div key={t.id ?? i} style={{
@@ -572,7 +572,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                 fontFamily: 'monospace',
                 lineHeight: 1.7,
                 padding: '1px 0',
-                color: entry.type === 'error' ? '#e74c3c' : entry.type === 'success' ? '#4ecb71' : entry.type === 'warn' ? '#e67e22' : 'var(--text-muted)',
+                color: entry.type === 'error' ? 'var(--red)' : entry.type === 'success' ? 'var(--green)' : entry.type === 'warn' ? 'var(--orange)' : 'var(--text-muted)',
               }}>
                 <span style={{ color: 'var(--border-light)', marginRight: '8px' }}>{entry.time}</span>
                 {entry.msg}
@@ -589,7 +589,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                 }
               }}
               style={{
-                marginTop: '6px', fontSize: '0.7rem', color: 'var(--gold)', background: 'rgba(212,175,55,0.08)',
+                marginTop: '6px', fontSize: '0.7rem', color: 'var(--gold-text)', background: 'rgba(212,175,55,0.08)',
                 border: '1px solid rgba(212,175,55,0.2)', borderRadius: '4px', padding: '3px 10px',
                 cursor: 'pointer', alignSelf: 'center',
               }}
