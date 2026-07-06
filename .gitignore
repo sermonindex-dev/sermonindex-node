@@ -4,3 +4,5 @@ src-tauri/target/
 ipfs_debug.log
 .DS_Store
 *.dmg
+*.mp4
+ipfs_debug.log

@@ -41,8 +41,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, StreamProtocol, SwarmEvent},
     tcp, upnp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
-use multihash::Multihash;
-use sha2::{Digest, Sha256};
+// multihash and sha2 are used by crate::unixfs for CID construction
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -112,6 +111,11 @@ pub enum IpfsCommand {
     RemovePin {
         cid_str: String,
         respond: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Fetch content from the network by CID (DHT lookup + bitswap)
+    FetchFromNetwork {
+        cid_str: String,
+        respond: tokio::sync::oneshot::Sender<Result<Vec<u8>, String>>,
     },
     /// Stop the node
     Stop {
@@ -237,6 +241,13 @@ impl IpfsHandle {
         rx.await.map_err(|_| "Node stopped".to_string())?
     }
 
+    pub async fn fetch_from_network(&self, cid_str: String) -> Result<Vec<u8>, String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.cmd_tx.send(IpfsCommand::FetchFromNetwork { cid_str, respond: tx })
+            .await.map_err(|_| "Node stopped".to_string())?;
+        rx.await.map_err(|_| "Node stopped".to_string())?
+    }
+
     pub async fn stop(&self) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let _ = self.cmd_tx.send(IpfsCommand::Stop { respond: tx }).await;
@@ -244,11 +255,18 @@ impl IpfsHandle {
     }
 }
 
-/// Content-addressed block store — maps CID → data
+/// Content-addressed block store — maps CID → raw block bytes
+///
+/// Stores individual IPFS blocks (not whole files). A file is represented as:
+/// - Small file (≤ 256 KiB): single raw block
+/// - Large file (> 256 KiB): multiple raw leaf chunks + a DAG-PB root node
+///
+/// The catalog maps sermon_id → root CID (the file's content address).
+/// Individual chunk blocks are stored separately and served via bitswap.
 struct BlockStore {
-    /// CID string → raw bytes
+    /// CID string → raw block bytes (individual chunks, NOT whole files)
     blocks: HashMap<String, Vec<u8>>,
-    /// sermon_id → CID string (for catalog tracking)
+    /// sermon_id → root CID string (for catalog tracking)
     catalog: HashMap<String, String>,
     /// Persistence directory
     storage_dir: PathBuf,
@@ -266,35 +284,78 @@ impl BlockStore {
         store
     }
 
-    /// Hash bytes and store as a CIDv1 (SHA-256, raw codec)
+    /// Add a file using standard IPFS UnixFS chunking.
+    /// Returns the root CID (the file's content address).
+    /// Stores all blocks (leaf chunks + root DAG node) individually.
+    /// Produces CIDs identical to `ipfs add --cid-version=1 --raw-leaves <file>`.
     fn add(&mut self, data: &[u8]) -> String {
-        let hash = Sha256::digest(data);
-        // CIDv1 with raw codec (0x55) and SHA-256 (0x12)
-        let mh = Multihash::<64>::wrap(0x12, &hash).expect("valid multihash");
-        let cid = Cid::new_v1(0x55, mh);
-        let cid_str = cid.to_string();
+        let chunked = crate::unixfs::chunk_file(data);
 
-        self.blocks.insert(cid_str.clone(), data.to_vec());
-        self.save_block_to_disk(&cid_str, data);
-        cid_str
+        for (cid_str, block_data) in &chunked.blocks {
+            self.blocks.insert(cid_str.clone(), block_data.clone());
+            self.save_block_to_disk(cid_str, block_data);
+        }
+
+        chunked.root_cid
     }
 
-    fn get(&self, cid_str: &str) -> Option<&Vec<u8>> {
+    /// Reassemble a file from its blocks (root CID → original file bytes).
+    /// For small files, returns the single block directly.
+    /// For chunked files, parses the DAG-PB root and concatenates leaf data.
+    fn get_file(&self, root_cid: &str) -> Option<Vec<u8>> {
+        crate::unixfs::reassemble_file(root_cid, &|cid| {
+            self.blocks.get(cid).cloned()
+        }).ok()
+    }
+
+    /// Get a raw block by CID (for bitswap serving — serves individual chunks)
+    fn get_block(&self, cid_str: &str) -> Option<&Vec<u8>> {
         self.blocks.get(cid_str)
     }
 
-    fn remove(&mut self, cid_str: &str) -> bool {
-        let removed = self.blocks.remove(cid_str).is_some();
-        if removed {
-            let path = self.storage_dir.join(self.safe_filename(cid_str));
-            let _ = std::fs::remove_file(path);
-        }
-        // Also remove from catalog if present
-        self.catalog.retain(|_, v| v != cid_str);
-        removed
+    /// Store a block with a known CID (e.g. fetched from network via bitswap)
+    fn put(&mut self, cid_str: &str, data: Vec<u8>) {
+        self.save_block_to_disk(cid_str, &data);
+        self.blocks.insert(cid_str.to_string(), data);
     }
 
+    fn has_block(&self, cid_str: &str) -> bool {
+        self.blocks.contains_key(cid_str)
+    }
+
+    fn remove(&mut self, root_cid: &str) -> bool {
+        // If this is a DAG-PB root, also remove all child blocks
+        if let Some(root_data) = self.blocks.get(root_cid).cloned() {
+            let all_cids = crate::unixfs::get_block_cids(root_cid, &root_data);
+            let mut removed_any = false;
+            for cid in &all_cids {
+                if self.blocks.remove(cid).is_some() {
+                    let path = self.storage_dir.join(self.safe_filename(cid));
+                    let _ = std::fs::remove_file(path);
+                    removed_any = true;
+                }
+            }
+            self.catalog.retain(|_, v| v != root_cid);
+            removed_any
+        } else {
+            // Single block removal
+            let removed = self.blocks.remove(root_cid).is_some();
+            if removed {
+                let path = self.storage_dir.join(self.safe_filename(root_cid));
+                let _ = std::fs::remove_file(path);
+            }
+            self.catalog.retain(|_, v| v != root_cid);
+            removed
+        }
+    }
+
+    /// Return all root CIDs (catalog entries = pinned files).
     fn pinned_cids(&self) -> Vec<String> {
+        self.catalog.values().cloned().collect()
+    }
+
+    /// Return all block CIDs (for DHT providing — announce every block)
+    fn all_block_cids(&self) -> Vec<String> {
         self.blocks.keys().cloned().collect()
     }
 
@@ -335,6 +396,67 @@ impl BlockStore {
                 }
             }
         }
+
+        // Prune stale catalog entries from the pre-UnixFS migration.
+        // Old entries stored entire MP3s as a single raw block (megabytes).
+        // Valid UnixFS entries are either:
+        //   - DAG-PB root (bafybei..., small protobuf with links, typically < 1KB)
+        //   - Raw leaf for small files (bafkrei..., ≤ 256KB / CHUNK_SIZE)
+        // Any raw-codec block larger than 262144 bytes is a stale flat entry.
+        let before = self.catalog.len();
+        self.catalog.retain(|sermon_id, root_cid| {
+            if !self.blocks.contains_key(root_cid) {
+                log::info!("[IPFS-Rust] Pruning catalog entry {}: root CID {} not in block store", sermon_id, root_cid);
+                return false;
+            }
+            // DAG-PB roots (bafybei...) are always valid post-migration
+            if root_cid.starts_with("bafybei") {
+                return true;
+            }
+            // Raw leaves (bafkrei...) are valid only if ≤ 256KB (IPFS chunk size).
+            // Old pre-migration entries stored entire files as one raw block — always > 256KB for sermons.
+            if let Some(block_data) = self.blocks.get(root_cid) {
+                if block_data.len() > 262144 {
+                    log::info!("[IPFS-Rust] Pruning catalog entry {}: CID {} is a pre-migration flat block ({} bytes)", sermon_id, root_cid, block_data.len());
+                    return false;
+                }
+            }
+            true
+        });
+        let pruned = before - self.catalog.len();
+        if pruned > 0 {
+            log::info!("[IPFS-Rust] Pruned {} stale catalog entries (pre-migration)", pruned);
+            self.save_catalog_to_disk();
+
+            // Also remove orphaned block files that are no longer referenced by any catalog entry
+            let referenced_cids: std::collections::HashSet<String> = self.catalog.values()
+                .flat_map(|root_cid| {
+                    if let Some(root_data) = self.blocks.get(root_cid) {
+                        let mut cids = crate::unixfs::get_block_cids(root_cid, root_data);
+                        cids.push(root_cid.clone());
+                        cids
+                    } else {
+                        vec![root_cid.clone()]
+                    }
+                })
+                .collect();
+
+            let orphaned: Vec<String> = self.blocks.keys()
+                .filter(|cid| !referenced_cids.contains(*cid))
+                .cloned()
+                .collect();
+
+            for cid in &orphaned {
+                let path = self.storage_dir.join(self.safe_filename(cid));
+                let _ = std::fs::remove_file(path);
+                self.blocks.remove(cid);
+            }
+            if !orphaned.is_empty() {
+                log::info!("[IPFS-Rust] Removed {} orphaned blocks from disk", orphaned.len());
+            }
+        }
+
+        log::info!("[IPFS-Rust] Catalog: {} sermons, {} total blocks", self.catalog.len(), self.blocks.len());
     }
 
     fn save_catalog_to_disk(&self) {
@@ -426,10 +548,16 @@ pub async fn start_node(storage_path: PathBuf, announce_address: Option<String>)
 
             SiBehaviour {
                 kademlia,
-                identify: identify::Behaviour::new(identify::Config::new(
-                    "/sermonindex/1.0.0".to_string(),
-                    keypair.public(),
-                )),
+                identify: identify::Behaviour::new(
+                    identify::Config::new(
+                        // protocol_version — informational field exchanged with peers.
+                        // Use "ipfs/1.0.0" so kubo peers recognize us as IPFS-compatible.
+                        // (The identify protocol path /ipfs/id/1.0.0 is hardcoded in the crate.)
+                        "ipfs/1.0.0".to_string(),
+                        keypair.public(),
+                    )
+                    .with_agent_version(format!("sermonindex/{}", env!("CARGO_PKG_VERSION"))),
+                ),
                 ping: ping::Behaviour::new(ping::Config::new()),
                 relay_client: relay_behaviour,
                 dcutr: dcutr::Behaviour::new(keypair.public().to_peer_id()),
@@ -609,6 +737,31 @@ async fn run_event_loop(
     // Track actual listening ports (may differ from requested 4001 if port was in use)
     let mut actual_tcp_port: Option<u16> = None;
     let mut actual_quic_port: Option<u16> = None;
+
+    // ── Network fetch tracking ──
+    // Maps Kademlia query IDs to pending fetch requests so we can:
+    // 1. Start a get_providers query when FetchFromNetwork arrives
+    // 2. When providers are found, send bitswap WANT requests
+    // 3. When bitswap response arrives, resolve the pending request
+    use std::collections::HashMap as StdHashMap;
+    use libp2p::request_response::OutboundRequestId;
+
+    // QueryId → (CID string, CID bytes, response channel)
+    let mut pending_provider_queries: StdHashMap<kad::QueryId, (String, Vec<u8>, Vec<tokio::sync::oneshot::Sender<Result<Vec<u8>, String>>>)> = StdHashMap::new();
+    // OutboundRequestId → (CID string of the block being fetched, root CID of the file)
+    let mut pending_bitswap_requests: StdHashMap<OutboundRequestId, (String, String)> = StdHashMap::new();
+
+    // ── Multi-block file fetch tracking ──
+    // When fetching a chunked UnixFS file, we need to fetch the root block,
+    // parse its DAG-PB links, then fetch all child blocks before reassembly.
+    // root_cid → PendingFileFetch
+    #[allow(dead_code)]
+    struct PendingFileFetch {
+        remaining_cids: Vec<String>,    // CIDs we still need to fetch
+        provider_peer: Option<PeerId>,  // Peer that had the root — try them first for children
+        respond: tokio::sync::oneshot::Sender<Result<Vec<u8>, String>>,
+    }
+    let mut pending_file_fetches: StdHashMap<String, PendingFileFetch> = StdHashMap::new();
 
     if natpmp_mapped {
         log::info!("[NAT-PMP] Starting with early mapping: TCP ext:{}, UDP ext:{:?}",
@@ -818,7 +971,7 @@ async fn run_event_loop(
                             kad::Event::RoutingUpdated { peer, .. } => {
                                 log::debug!("[IPFS-Rust] DHT routing updated: {peer}");
                             }
-                            kad::Event::OutboundQueryProgressed { result, .. } => {
+                            kad::Event::OutboundQueryProgressed { id: query_id, result, .. } => {
                                 match result {
                                     kad::QueryResult::Bootstrap(Ok(ok)) => {
                                         elog!("[DHT] Bootstrap step OK ({} remaining)", ok.num_remaining);
@@ -836,8 +989,50 @@ async fn run_event_loop(
                                         match result {
                                             kad::GetProvidersOk::FoundProviders { key, providers } => {
                                                 elog!("[DHT] Found {} providers for {:?}", providers.len(), key);
+                                                // Check if this is a pending network fetch
+                                                if let Some((_cid_str, cid_bytes, _)) = pending_provider_queries.get(&query_id) {
+                                                    let cid_str = _cid_str.clone();
+                                                    let cid_bytes = cid_bytes.clone();
+                                                    elog!("[FETCH] Got {} providers for CID {}, sending WANT requests", providers.len(), &cid_str[..cid_str.len().min(24)]);
+                                                    let want_msg = bitswap::build_want_block(&cid_bytes);
+                                                    // Send WANT to the first non-local provider (one is enough)
+                                                    for provider in &providers {
+                                                        if *provider == local_peer_id { continue; }
+                                                        let request = crate::bitswap::BitswapRequest(want_msg.clone());
+                                                        let req_id = swarm.behaviour_mut().bitswap.send_request(provider, request);
+                                                        elog!("[FETCH] Sent WANT to peer {} (req {:?})", &provider.to_string()[..16.min(provider.to_string().len())], req_id);
+                                                        // Track: this bitswap request is for block_cid (= root_cid here)
+                                                        pending_bitswap_requests.insert(req_id, (cid_str.clone(), cid_str.clone()));
+                                                        break; // Only need one provider for the root
+                                                    }
+                                                }
                                             }
-                                            kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {}
+                                            kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {
+                                                // Check if this was a network fetch that found no providers
+                                                if let Some((cid_str, _, mut senders)) = pending_provider_queries.remove(&query_id) {
+                                                    elog!("[FETCH] No providers found for CID {}", &cid_str[..cid_str.len().min(24)]);
+                                                    // Resolve the file fetch with error
+                                                    if let Some(fetch) = pending_file_fetches.remove(&cid_str) {
+                                                        let _ = fetch.respond.send(Err(format!("No providers found for CID: {}", cid_str)));
+                                                    }
+                                                    // Also resolve any remaining direct senders
+                                                    for sender in senders.drain(..) {
+                                                        let _ = sender.send(Err(format!("No providers found for CID: {}", cid_str)));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    kad::QueryResult::GetProviders(Err(e)) => {
+                                        elog!("[DHT] GetProviders FAILED: {:?}", e);
+                                        // Resolve any pending fetch requests with error
+                                        if let Some((cid_str, _, mut senders)) = pending_provider_queries.remove(&query_id) {
+                                            if let Some(fetch) = pending_file_fetches.remove(&cid_str) {
+                                                let _ = fetch.respond.send(Err(format!("DHT lookup failed for {}: {:?}", cid_str, e)));
+                                            }
+                                            for sender in senders.drain(..) {
+                                                let _ = sender.send(Err(format!("DHT lookup failed for {}: {:?}", cid_str, e)));
+                                            }
                                         }
                                     }
                                     _ => {}
@@ -1018,7 +1213,7 @@ async fn run_event_loop(
 
                                             match cid_str {
                                                 Some(cid_string) => {
-                                                    let have_block = store.get(&cid_string).is_some();
+                                                    let have_block = store.has_block(&cid_string);
                                                     if have_block {
                                                         elog!("[BITSWAP] WANT '{}' → FOUND", &cid_string[..cid_string.len().min(24)]);
                                                     } else {
@@ -1027,8 +1222,8 @@ async fn run_event_loop(
 
                                                     match entry.want_type {
                                                         bitswap::WantType::Block => {
-                                                            if let Some(data) = store.get(&cid_string) {
-                                                                // Send the actual block data
+                                                            if let Some(data) = store.get_block(&cid_string) {
+                                                                // Send the actual block data (individual chunk)
                                                                 let prefix = bitswap::cid_prefix(&entry.cid_bytes);
                                                                 response_blocks.push(BitswapBlock {
                                                                     prefix,
@@ -1083,14 +1278,117 @@ async fn run_event_loop(
                                             );
                                         }
                                     }
-                                    request_response::Message::Response { .. } => {
-                                        // We don't initiate Bitswap requests, but log for completeness
-                                        log::debug!("[BITSWAP] Got response from {} (unexpected)", peer);
+                                    request_response::Message::Response { request_id, response } => {
+                                        // Check if this is a response to one of our WANT requests
+                                        if let Some((block_cid, root_cid)) = pending_bitswap_requests.remove(&request_id) {
+                                            let parsed = bitswap::parse_response(&response.0);
+                                            let peer_short = &peer.to_string()[..16.min(peer.to_string().len())];
+                                            elog!("[FETCH] Got bitswap response for {} from {}: {} blocks, {} presences",
+                                                &block_cid[..block_cid.len().min(24)], peer_short,
+                                                parsed.blocks.len(), parsed.presences.len());
+
+                                            if let Some(block) = parsed.blocks.into_iter().next() {
+                                                // Store the block in our blockstore
+                                                let block_data = block.data.clone();
+                                                {
+                                                    let mut store = block_store.lock().await;
+                                                    store.put(&block_cid, block_data.clone());
+                                                }
+                                                elog!("[FETCH] Stored block {} ({} bytes) from peer", &block_cid[..block_cid.len().min(24)], block_data.len());
+
+                                                // Check if this block is the root of a pending file fetch
+                                                // If it's DAG-PB, we need to fetch child blocks too
+                                                if block_cid == root_cid {
+                                                    // This is the root block — check if it has children
+                                                    let child_cids = crate::unixfs::get_block_cids(&block_cid, &block_data);
+                                                    // get_block_cids returns root + children; remove root
+                                                    let children: Vec<String> = child_cids.into_iter()
+                                                        .filter(|c| c != &block_cid)
+                                                        .collect();
+
+                                                    if children.is_empty() {
+                                                        // Single-block file (raw leaf) — resolve immediately
+                                                        elog!("[FETCH] Single-block file {} — resolving", &root_cid[..root_cid.len().min(24)]);
+                                                        if let Some(fetch) = pending_file_fetches.remove(&root_cid) {
+                                                            let _ = fetch.respond.send(Ok(block_data));
+                                                        }
+                                                    } else {
+                                                        // Multi-block DAG — need to fetch children
+                                                        elog!("[FETCH] Root {} has {} child blocks — fetching from peer {}", &root_cid[..root_cid.len().min(24)], children.len(), peer_short);
+                                                        if let Some(fetch) = pending_file_fetches.get_mut(&root_cid) {
+                                                            fetch.remaining_cids = children.clone();
+                                                            fetch.provider_peer = Some(peer);
+                                                        }
+
+                                                        // Send WANT-Block for each child to the same provider peer
+                                                        for child_cid_str in &children {
+                                                            if let Ok(child_cid) = child_cid_str.parse::<Cid>() {
+                                                                let want_msg = bitswap::build_want_block(&child_cid.to_bytes());
+                                                                let request = crate::bitswap::BitswapRequest(want_msg);
+                                                                let req_id = swarm.behaviour_mut().bitswap.send_request(&peer, request);
+                                                                pending_bitswap_requests.insert(req_id, (child_cid_str.clone(), root_cid.clone()));
+                                                                log::debug!("[FETCH] Sent WANT for child {} to {}", &child_cid_str[..child_cid_str.len().min(24)], peer_short);
+                                                            }
+                                                        }
+                                                        elog!("[FETCH] Queued {} child block requests to peer {}", children.len(), peer_short);
+                                                    }
+                                                } else {
+                                                    // This is a child block — check if file fetch is now complete
+                                                    if let Some(fetch) = pending_file_fetches.get_mut(&root_cid) {
+                                                        fetch.remaining_cids.retain(|c| c != &block_cid);
+                                                        let remaining = fetch.remaining_cids.len();
+                                                        log::debug!("[FETCH] Child {} received, {} remaining for root {}", &block_cid[..block_cid.len().min(24)], remaining, &root_cid[..root_cid.len().min(24)]);
+
+                                                        if remaining == 0 {
+                                                            // All blocks received — reassemble the file
+                                                            elog!("[FETCH] All blocks received for {} — reassembling", &root_cid[..root_cid.len().min(24)]);
+                                                            let store = block_store.lock().await;
+                                                            let result = store.get_file(&root_cid);
+                                                            drop(store);
+
+                                                            if let Some(fetch) = pending_file_fetches.remove(&root_cid) {
+                                                                match result {
+                                                                    Some(data) => {
+                                                                        elog!("[FETCH] Reassembled {} ({} bytes) from network", &root_cid[..root_cid.len().min(24)], data.len());
+                                                                        let _ = fetch.respond.send(Ok(data));
+                                                                    }
+                                                                    None => {
+                                                                        let _ = fetch.respond.send(Err(format!("Failed to reassemble file from blocks: {}", root_cid)));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                // No block data — check presences
+                                                let has_dont_have = parsed.presences.iter().any(|p| !p.have);
+                                                if has_dont_have {
+                                                    elog!("[FETCH] Peer {} sent DontHave for {}", &peer.to_string()[..16.min(peer.to_string().len())], &block_cid[..block_cid.len().min(24)]);
+                                                }
+                                                // If this was the root block that failed, resolve the whole fetch with error
+                                                if block_cid == root_cid {
+                                                    if let Some(fetch) = pending_file_fetches.remove(&root_cid) {
+                                                        let _ = fetch.respond.send(Err(format!("Peer did not have root block: {}", root_cid)));
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            log::debug!("[BITSWAP] Got response from {} (no pending request)", peer);
+                                        }
                                     }
                                 }
                             }
-                            request_response::Event::OutboundFailure { peer, error, .. } => {
+                            request_response::Event::OutboundFailure { peer, error, request_id, .. } => {
                                 log::debug!("[BITSWAP] Outbound failure to {}: {:?}", peer, error);
+                                // Resolve any pending fetch request with error
+                                if let Some((block_cid, root_cid)) = pending_bitswap_requests.remove(&request_id) {
+                                    elog!("[FETCH] Bitswap request failed for {} to {}: {:?}", &block_cid[..block_cid.len().min(24)], peer, error);
+                                    // Fail the entire file fetch if any block fails
+                                    if let Some(fetch) = pending_file_fetches.remove(&root_cid) {
+                                        let _ = fetch.respond.send(Err(format!("Bitswap block fetch failed for {}: {:?}", block_cid, error)));
+                                    }
+                                }
                             }
                             request_response::Event::InboundFailure { peer, error, .. } => {
                                 elog!("[BITSWAP] Inbound failure from {}: {:?}", &peer.to_string()[..16.min(peer.to_string().len())], error);
@@ -1119,7 +1417,7 @@ async fn run_event_loop(
                             elog!("[DHT] Relay re-provide triggered INLINE ({relay_count} relay addresses, {:.1}s after first relay)",
                                 relay_time.elapsed().as_secs_f64());
                             let store = block_store.lock().await;
-                            let cid_keys: Vec<String> = store.pinned_cids();
+                            let cid_keys: Vec<String> = store.all_block_cids();
                             drop(store);
                             let count = cid_keys.len();
                             if count > 0 {
@@ -1149,6 +1447,7 @@ async fn run_event_loop(
                 match cmd {
                     Some(IpfsCommand::AddFile { data, sermon_id, respond }) => {
                         let mut store = block_store.lock().await;
+                        let data_len = data.len();
                         let cid_str = store.add(&data);
 
                         if let Some(sid) = &sermon_id {
@@ -1156,27 +1455,32 @@ async fn run_event_loop(
                             store.save_catalog_to_disk();
                         }
 
-                        // Announce on DHT
-                        if let Ok(cid) = cid_str.parse::<Cid>() {
-                            let mh = cid.hash().to_bytes();
-                            let key = kad::RecordKey::new(&mh);
-                            match swarm.behaviour_mut().kademlia.start_providing(key) {
-                                Ok(_query_id) => {
-                                    elog!("[DHT] Announcing CID {} (query started)", &cid_str[..cid_str.len().min(24)]);
-                                }
-                                Err(e) => {
-                                    elog!("[DHT] ✗ Provide FAILED for {}: {e}", &cid_str[..cid_str.len().min(24)]);
+                        // Collect all block CIDs to announce (root + all chunks)
+                        let all_cids: Vec<String> = if let Some(root_data) = store.get_block(&cid_str).cloned() {
+                            crate::unixfs::get_block_cids(&cid_str, &root_data)
+                        } else {
+                            vec![cid_str.clone()]
+                        };
+                        drop(store);
+
+                        // Announce ALL block CIDs on DHT (root + chunks)
+                        let mut provided = 0;
+                        for block_cid_str in &all_cids {
+                            if let Ok(cid) = block_cid_str.parse::<Cid>() {
+                                let mh = cid.hash().to_bytes();
+                                let key = kad::RecordKey::new(&mh);
+                                if swarm.behaviour_mut().kademlia.start_providing(key).is_ok() {
+                                    provided += 1;
                                 }
                             }
                         }
-
-                        elog!("[IPFS] Added & pinned: {} ({} bytes)", &cid_str[..cid_str.len().min(24)], data.len());
+                        elog!("[IPFS] Added & pinned: {} ({} bytes, {} blocks, {} announced on DHT)",
+                            &cid_str[..cid_str.len().min(24)], data_len, all_cids.len(), provided);
                         let _ = respond.send(Ok(cid_str));
                     }
                     Some(IpfsCommand::GetFile { cid_str, respond }) => {
                         let store = block_store.lock().await;
-                        let result = store.get(&cid_str)
-                            .cloned()
+                        let result = store.get_file(&cid_str)
                             .ok_or_else(|| format!("CID not found: {cid_str}"));
                         let _ = respond.send(result);
                     }
@@ -1242,6 +1546,41 @@ async fn run_event_loop(
                             let _ = respond.send(Err(format!("CID not found: {cid_str}")));
                         }
                     }
+                    Some(IpfsCommand::FetchFromNetwork { cid_str, respond }) => {
+                        // Fast path: check local store first
+                        {
+                            let store = block_store.lock().await;
+                            if let Some(data) = store.get_file(&cid_str) {
+                                elog!("[FETCH] CID {} found locally (fast path)", &cid_str[..cid_str.len().min(24)]);
+                                let _ = respond.send(Ok(data));
+                                continue;
+                            }
+                        }
+                        // Network path: start DHT provider lookup for the root CID
+                        // This will find providers, bitswap the root block, then recursively
+                        // fetch child blocks for chunked UnixFS files.
+                        elog!("[FETCH] CID {} not local, starting DHT provider lookup", &cid_str[..cid_str.len().min(24)]);
+                        match cid_str.parse::<Cid>() {
+                            Ok(cid) => {
+                                let mh = cid.hash().to_bytes();
+                                let key = kad::RecordKey::new(&mh);
+                                let cid_bytes = cid.to_bytes();
+                                let query_id = swarm.behaviour_mut().kademlia.get_providers(key);
+                                pending_provider_queries.insert(query_id, (cid_str.clone(), cid_bytes, vec![]));
+
+                                // Register the file fetch — response goes here when all blocks are ready
+                                pending_file_fetches.insert(cid_str.clone(), PendingFileFetch {
+                                    remaining_cids: vec![],
+                                    provider_peer: None,
+                                    respond,
+                                });
+                                elog!("[FETCH] DHT get_providers started for {} (query {:?})", &cid_str[..cid_str.len().min(24)], query_id);
+                            }
+                            Err(e) => {
+                                let _ = respond.send(Err(format!("Invalid CID '{}': {}", cid_str, e)));
+                            }
+                        }
+                    }
                     Some(IpfsCommand::Stop { respond }) => {
                         log::info!("[IPFS-Rust] Node stopping...");
                         let _ = respond.send(());
@@ -1269,7 +1608,7 @@ async fn run_event_loop(
                     elog!("[DHT] Skipping re-provide — no external addresses yet");
                 } else {
                     let store = block_store.lock().await;
-                    let cids = store.pinned_cids();
+                    let cids = store.all_block_cids();
                     drop(store);
 
                     let count = cids.len();
@@ -1456,7 +1795,7 @@ async fn run_event_loop(
                 if reprovide_pending {
                     reprovide_pending = false;
                     let store = block_store.lock().await;
-                    let cid_keys: Vec<String> = store.pinned_cids();
+                    let cid_keys: Vec<String> = store.all_block_cids();
                     drop(store);
                     let count = cid_keys.len();
                     if count > 0 {

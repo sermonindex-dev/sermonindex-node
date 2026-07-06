@@ -460,9 +460,11 @@ export async function fetchNetworkStats() {
  */
 export async function fetchConfig() {
   try {
-    const res = await fetch(`${API_BASE}/api/config`);
+    // Cache-bust to always get the latest config from server
+    const res = await fetch(`${API_BASE}/api/config?_t=${Date.now()}`);
     if (res.ok) {
       const data = await res.json();
+      console.log('[Heartbeat] fetchConfig got:', data.config);
       return data.config || {};
     }
   } catch {}

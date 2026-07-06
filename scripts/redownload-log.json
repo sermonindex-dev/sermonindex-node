@@ -1,0 +1,51 @@
+{
+  "started": "2026-03-27T21:50:18.233Z",
+  "files": {
+    "__6XIYa9pPw": {
+      "status": "completed",
+      "sizeMB": 4.1,
+      "cdnSizeMB": 5,
+      "codec": "h264",
+      "originalCodec": "vp9",
+      "wasTranscoded": true,
+      "wasDowngraded": false,
+      "resolution": "480x854",
+      "duration": 42,
+      "audioCodec": "opus",
+      "downloadSec": 2.3,
+      "totalSec": 3.7,
+      "completedAt": "2026-03-27T21:50:22.162Z"
+    },
+    "_-ArR_4_xBE": {
+      "status": "completed",
+      "sizeMB": 14.6,
+      "cdnSizeMB": 14.6,
+      "codec": "h264",
+      "originalCodec": "h264",
+      "wasTranscoded": false,
+      "wasDowngraded": false,
+      "resolution": "320x240",
+      "duration": 532,
+      "audioCodec": "aac",
+      "downloadSec": 2.3,
+      "totalSec": 2.3,
+      "completedAt": "2026-03-27T21:50:24.496Z"
+    },
+    "__rSzyBH4O4": {
+      "status": "completed",
+      "sizeMB": 308.6,
+      "cdnSizeMB": 239.8,
+      "codec": "h264",
+      "originalCodec": "h264",
+      "wasTranscoded": true,
+      "wasDowngraded": false,
+      "resolution": "1280x720",
+      "duration": 3308,
+      "audioCodec": "opus",
+      "downloadSec": 29.8,
+      "totalSec": 56.3,
+      "completedAt": "2026-03-27T21:51:14.872Z"
+    }
+  },
+  "summary": {}
+}

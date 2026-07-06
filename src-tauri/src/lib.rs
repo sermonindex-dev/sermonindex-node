@@ -11,6 +11,8 @@ use tokio::sync::Mutex;
 mod bitswap;
 mod ipfs_node;
 mod natpmp;
+mod torrent_node;
+mod unixfs;
 
 /// Global state for the IPFS node handle
 struct IpfsState {
@@ -21,6 +23,28 @@ impl IpfsState {
     fn new() -> Self {
         Self { handle: None }
     }
+}
+
+/// Global state for the BitTorrent session handle.
+/// Arc so commands can clone it out and release the lock before long awaits.
+struct TorrentState {
+    handle: Option<Arc<torrent_node::TorrentHandle>>,
+}
+
+impl TorrentState {
+    fn new() -> Self {
+        Self { handle: None }
+    }
+}
+
+/// Clone the torrent handle out of state (releases the lock immediately).
+async fn get_torrent_handle(
+    state: &tauri::State<'_, Arc<Mutex<TorrentState>>>,
+) -> Result<Arc<torrent_node::TorrentHandle>, String> {
+    let ts = state.lock().await;
+    ts.handle
+        .clone()
+        .ok_or_else(|| "Torrent session not running".to_string())
 }
 
 /// Get the app data directory for storing IPFS blocks and catalog data
@@ -443,6 +467,21 @@ async fn ipfs_get_file(
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// Fetch a file from the IPFS network by CID (DHT lookup + bitswap).
+/// Tries local store first, then queries peers. Returns base64-encoded data.
+#[tauri::command]
+async fn ipfs_fetch_from_network(
+    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
+    cid: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let ipfs = state.lock().await;
+    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
+
+    let bytes = handle.fetch_from_network(cid).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 /// Announce/provide a CID on the DHT
 #[tauri::command]
 async fn ipfs_provide(
@@ -485,13 +524,133 @@ async fn ipfs_remove_pin(
     handle.remove_pin(cid).await
 }
 
+// ============================================================
+// BitTorrent Tauri Commands — exposed to the frontend via invoke()
+// ============================================================
+
+/// Start the BitTorrent session (DHT + trackers + UPnP)
+#[tauri::command]
+async fn torrent_start(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+) -> Result<torrent_node::SessionInfo, String> {
+    let mut ts = state.lock().await;
+    if let Some(handle) = ts.handle.as_ref() {
+        return Ok(handle.info());
+    }
+    let data_dir = get_app_data_dir();
+    let download_dir = data_dir.join("downloads");
+    let handle = torrent_node::start(data_dir, download_dir).await?;
+    let info = handle.info();
+    ts.handle = Some(Arc::new(handle));
+    log::info!("[Torrent] Session started");
+    Ok(info)
+}
+
+/// Stop the BitTorrent session
+#[tauri::command]
+async fn torrent_stop(state: tauri::State<'_, Arc<Mutex<TorrentState>>>) -> Result<(), String> {
+    let mut ts = state.lock().await;
+    if let Some(handle) = ts.handle.take() {
+        handle.stop().await;
+        log::info!("[Torrent] Session stopped");
+    }
+    Ok(())
+}
+
+/// Get session status (running, port, uptime, torrent count)
+#[tauri::command]
+async fn torrent_status(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+) -> Result<torrent_node::SessionInfo, String> {
+    let ts = state.lock().await;
+    match ts.handle.as_ref() {
+        Some(handle) => Ok(handle.info()),
+        None => Ok(torrent_node::SessionInfo {
+            running: false,
+            tcp_listen_port: None,
+            uptime_secs: 0,
+            torrent_count: 0,
+        }),
+    }
+}
+
+/// Create a .torrent for a local file (absolute path) and seed it in place.
+/// Returns { info_hash, magnet, torrent_file, name }.
+#[tauri::command]
+async fn torrent_seed_file(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+    file_path: String,
+    name: Option<String>,
+) -> Result<torrent_node::SeedResult, String> {
+    let handle = get_torrent_handle(&state).await?;
+    let torrents_dir = get_app_data_dir().join("torrents");
+    handle
+        .seed_file(PathBuf::from(&file_path).as_path(), name, &torrents_dir)
+        .await
+}
+
+/// Seed a file that's already in the app's downloads folder (by filename).
+#[tauri::command]
+async fn torrent_seed_downloaded(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+    filename: String,
+    name: Option<String>,
+) -> Result<torrent_node::SeedResult, String> {
+    let handle = get_torrent_handle(&state).await?;
+    let file_path = get_app_data_dir().join("downloads").join(&filename);
+    let torrents_dir = get_app_data_dir().join("torrents");
+    handle.seed_file(&file_path, name, &torrents_dir).await
+}
+
+/// Add a torrent by magnet link, .torrent URL, or local .torrent path.
+/// Downloads into the app downloads folder, then seeds.
+#[tauri::command]
+async fn torrent_add(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+    source: String,
+) -> Result<torrent_node::AddResult, String> {
+    let handle = get_torrent_handle(&state).await?;
+    handle.add(&source, None).await
+}
+
+/// List all torrents with live stats (progress, speeds, peers)
+#[tauri::command]
+async fn torrent_list(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+) -> Result<Vec<torrent_node::TorrentInfo>, String> {
+    let handle = get_torrent_handle(&state).await?;
+    Ok(handle.list())
+}
+
+/// Remove a torrent (optionally deleting its files)
+#[tauri::command]
+async fn torrent_remove(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+    id: usize,
+    delete_files: bool,
+) -> Result<(), String> {
+    let handle = get_torrent_handle(&state).await?;
+    handle.remove(id, delete_files).await
+}
+
+/// Session-wide stats (speeds, peer counts, uptime)
+#[tauri::command]
+async fn torrent_session_stats(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+) -> Result<serde_json::Value, String> {
+    let handle = get_torrent_handle(&state).await?;
+    Ok(handle.session_stats())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize tokio runtime for async IPFS operations
     let ipfs_state = Arc::new(Mutex::new(IpfsState::new()));
+    let torrent_state = Arc::new(Mutex::new(TorrentState::new()));
 
     tauri::Builder::default()
         .manage(ipfs_state)
+        .manage(torrent_state)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -625,10 +784,21 @@ pub fn run() {
             ipfs_is_running,
             ipfs_add_file,
             ipfs_get_file,
+            ipfs_fetch_from_network,
             ipfs_provide,
             ipfs_diagnostics,
             ipfs_list_pinned,
             ipfs_remove_pin,
+            // ── BitTorrent commands (PoC pivot) ──
+            torrent_start,
+            torrent_stop,
+            torrent_status,
+            torrent_seed_file,
+            torrent_seed_downloaded,
+            torrent_add,
+            torrent_list,
+            torrent_remove,
+            torrent_session_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

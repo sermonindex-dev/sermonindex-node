@@ -321,6 +321,176 @@ fn write_length_delimited(data: &[u8], buf: &mut Vec<u8>) {
     buf.extend_from_slice(data);
 }
 
+// ── Outbound request building ──
+
+/// Build a Bitswap WANT-Block request message for the given CID bytes.
+/// This asks a peer to send us the actual block data.
+pub fn build_want_block(cid_bytes: &[u8]) -> Vec<u8> {
+    // Build the Entry sub-message
+    let mut entry = Vec::new();
+    // field 1 = block (CID bytes)
+    write_tag(1, 2, &mut entry);
+    write_length_delimited(cid_bytes, &mut entry);
+    // field 2 = priority (int32) — use 1
+    write_tag(2, 0, &mut entry);
+    encode_varint(1, &mut entry);
+    // field 3 = cancel (bool) — false
+    // (omit, default is false)
+    // field 4 = wantType (0=Block)
+    write_tag(4, 0, &mut entry);
+    encode_varint(0, &mut entry); // WantType::Block
+    // field 5 = sendDontHave (bool) — true, so we get a definitive answer
+    write_tag(5, 0, &mut entry);
+    encode_varint(1, &mut entry);
+
+    // Build the Wantlist sub-message
+    let mut wantlist = Vec::new();
+    // field 1 = repeated Entry
+    write_tag(1, 2, &mut wantlist);
+    write_length_delimited(&entry, &mut wantlist);
+    // field 2 = full (bool) — false (incremental)
+    // (omit, default is false)
+
+    // Build the top-level Message
+    let mut msg = Vec::new();
+    // field 1 = wantlist
+    write_tag(1, 2, &mut msg);
+    write_length_delimited(&wantlist, &mut msg);
+
+    msg
+}
+
+/// A block received in a Bitswap response
+#[derive(Debug, Clone)]
+pub struct ReceivedBlock {
+    pub prefix: Vec<u8>,
+    pub data: Vec<u8>,
+}
+
+/// A block presence from a Bitswap response
+#[derive(Debug, Clone)]
+pub struct ReceivedPresence {
+    pub cid_bytes: Vec<u8>,
+    pub have: bool,
+}
+
+/// Parsed Bitswap response
+#[derive(Debug, Default)]
+pub struct ParsedResponse {
+    pub blocks: Vec<ReceivedBlock>,
+    pub presences: Vec<ReceivedPresence>,
+}
+
+/// Parse a Bitswap response message to extract blocks and presences
+pub fn parse_response(data: &[u8]) -> ParsedResponse {
+    let mut result = ParsedResponse::default();
+    let mut pos = 0;
+
+    while pos < data.len() {
+        let (field_num, wire_type, new_pos) = read_tag(data, pos);
+        pos = new_pos;
+
+        match (field_num, wire_type) {
+            (2, 2) => {
+                // field 2 = repeated bytes blocks (Bitswap 1.0 legacy — raw block data)
+                let (block_data, new_pos) = read_length_delimited(data, pos);
+                pos = new_pos;
+                result.blocks.push(ReceivedBlock {
+                    prefix: vec![],
+                    data: block_data.to_vec(),
+                });
+            }
+            (3, 2) => {
+                // field 3 = repeated Block payload (Bitswap 1.1+)
+                let (block_msg, new_pos) = read_length_delimited(data, pos);
+                pos = new_pos;
+                if let Some(block) = parse_payload_block(block_msg) {
+                    result.blocks.push(block);
+                }
+            }
+            (4, 2) => {
+                // field 4 = repeated BlockPresence
+                let (presence_msg, new_pos) = read_length_delimited(data, pos);
+                pos = new_pos;
+                if let Some(presence) = parse_block_presence(presence_msg) {
+                    result.presences.push(presence);
+                }
+            }
+            _ => {
+                pos = skip_field(data, pos, wire_type);
+            }
+        }
+    }
+
+    result
+}
+
+fn parse_payload_block(data: &[u8]) -> Option<ReceivedBlock> {
+    let mut prefix = Vec::new();
+    let mut block_data = Vec::new();
+    let mut pos = 0;
+
+    while pos < data.len() {
+        let (field_num, wire_type, new_pos) = read_tag(data, pos);
+        pos = new_pos;
+
+        match (field_num, wire_type) {
+            (1, 2) => {
+                let (bytes, new_pos) = read_length_delimited(data, pos);
+                pos = new_pos;
+                prefix = bytes.to_vec();
+            }
+            (2, 2) => {
+                let (bytes, new_pos) = read_length_delimited(data, pos);
+                pos = new_pos;
+                block_data = bytes.to_vec();
+            }
+            _ => {
+                pos = skip_field(data, pos, wire_type);
+            }
+        }
+    }
+
+    if block_data.is_empty() {
+        None
+    } else {
+        Some(ReceivedBlock { prefix, data: block_data })
+    }
+}
+
+fn parse_block_presence(data: &[u8]) -> Option<ReceivedPresence> {
+    let mut cid_bytes = Vec::new();
+    let mut have = false;
+    let mut pos = 0;
+
+    while pos < data.len() {
+        let (field_num, wire_type, new_pos) = read_tag(data, pos);
+        pos = new_pos;
+
+        match (field_num, wire_type) {
+            (1, 2) => {
+                let (bytes, new_pos) = read_length_delimited(data, pos);
+                pos = new_pos;
+                cid_bytes = bytes.to_vec();
+            }
+            (2, 0) => {
+                let (val, new_pos) = read_varint(data, pos);
+                pos = new_pos;
+                have = val == 0; // 0=Have, 1=DontHave
+            }
+            _ => {
+                pos = skip_field(data, pos, wire_type);
+            }
+        }
+    }
+
+    if cid_bytes.is_empty() {
+        None
+    } else {
+        Some(ReceivedPresence { cid_bytes, have })
+    }
+}
+
 // ── libp2p StreamProtocol codec for Bitswap ──
 
 #[derive(Debug, Clone)]

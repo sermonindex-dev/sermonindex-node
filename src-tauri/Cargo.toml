@@ -29,6 +29,12 @@ tauri-plugin-dialog = "2"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# ── BitTorrent node (librqbit — the engine behind rqbit) ──
+# Mainline DHT + trackers + UPnP. Replaces the hand-rolled IPFS stack.
+librqbit = "8"
+url = "2"
+urlencoding = "2"
+
 # ── Native IPFS / libp2p node ──
 # Runs a real TCP+QUIC libp2p node that public gateways can reach
 libp2p = { version = "0.54", default-features = false, features = [

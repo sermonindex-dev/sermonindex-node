@@ -108,10 +108,21 @@ export default function App() {
       setCatalog(getCatalog());
       setLibraryStats(getLibraryStats());
 
+      // Normalize server mode keys (CDN_PRIMARY → cdn, IPFS_PRIMARY → ipfs-primary, etc.)
+      const normalizeMode = (m) => {
+        const map = {
+          CDN_PRIMARY: 'cdn', IPFS_PRIMARY: 'ipfs-primary', IPFS_ONLY: 'ipfs-only',
+          cdn: 'cdn', 'ipfs-primary': 'ipfs-primary', 'ipfs-only': 'ipfs-only',
+        };
+        const result = map[m] || 'cdn';
+        console.log(`[App] normalizeMode: "${m}" → "${result}"`);
+        return result;
+      };
+
       // Fetch config immediately on startup (don't wait for heartbeat)
       try {
         const config = await fetchConfig();
-        if (config.source_mode) setContentMode(config.source_mode);
+        if (config.source_mode) setContentMode(normalizeMode(config.source_mode));
         if (config.announcement !== undefined) setAnnouncement(config.announcement || '');
       } catch (e) {
         console.warn('[App] Initial config fetch failed:', e.message);
@@ -132,9 +143,11 @@ export default function App() {
       }, {
         onConfigUpdate: (config) => {
           // Remote config updated from server
-          // Apply source mode from server
+          console.log('[App] onConfigUpdate received:', JSON.stringify(config));
+          // Apply source mode from server (normalize server keys to app keys)
           if (config.source_mode) {
-            setContentMode(config.source_mode);
+            console.log('[App] Setting content mode from heartbeat:', config.source_mode);
+            setContentMode(normalizeMode(config.source_mode));
           }
           // Apply announcement banner
           if (config.announcement !== undefined) {
@@ -336,8 +349,13 @@ export default function App() {
       cdn: SOURCE_MODE.CDN_PRIMARY,
       'ipfs-primary': SOURCE_MODE.IPFS_PRIMARY,
       'ipfs-only': SOURCE_MODE.IPFS_ONLY,
+      // Also accept server-side keys as fallback
+      CDN_PRIMARY: SOURCE_MODE.CDN_PRIMARY,
+      IPFS_PRIMARY: SOURCE_MODE.IPFS_PRIMARY,
+      IPFS_ONLY: SOURCE_MODE.IPFS_ONLY,
     };
     downloadManager.setMode(modeMap[contentMode] || SOURCE_MODE.CDN_PRIMARY);
+    console.log('[App] Content mode synced to download manager:', contentMode, '→', modeMap[contentMode] || SOURCE_MODE.CDN_PRIMARY);
   }, [contentMode]);
 
   // Sync bandwidth limit
@@ -398,7 +416,12 @@ export default function App() {
     const audio = audioRef.current;
     const video = videoRef.current;
     if (audio) { audio.pause(); audio.src = ''; }
-    if (video) { video.pause(); video.src = ''; }
+    if (video) {
+      video.pause();
+      while (video.firstChild) video.removeChild(video.firstChild);
+      video.removeAttribute('src');
+      video.load();
+    }
     setCurrentSermon(null);
     setIsPlaying(false);
     setProgress(0);
@@ -428,7 +451,12 @@ export default function App() {
 
     // New sermon — stop any current playback first
     if (audio) { audio.pause(); audio.src = ''; }
-    if (videoRef.current) { videoRef.current.pause(); videoRef.current.src = ''; }
+    if (videoRef.current) {
+      videoRef.current.pause();
+      while (videoRef.current.firstChild) videoRef.current.removeChild(videoRef.current.firstChild);
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load(); // Reset the media element
+    }
 
     setCurrentSermon(sermon);
     setProgress(0);
@@ -465,11 +493,47 @@ export default function App() {
       setVideoFullscreen(false);
       setVideoError(null);
 
-      // Play video directly (CDN videos should be proper MP4)
+      // Play video directly — all CDN videos are now proper MP4 containers
       if (videoRef.current) {
-        videoRef.current.src = streamUrl;
-        videoRef.current.load();
-        videoRef.current.play().catch(() => {});
+        const v = videoRef.current;
+        // Remove any stale source
+        v.removeAttribute('src');
+        v.load();
+
+        // Use <source> element for proper MIME type hinting (helps WKWebView)
+        // Clear any existing sources first
+        while (v.firstChild) v.removeChild(v.firstChild);
+        const source = document.createElement('source');
+        source.src = streamUrl;
+        source.type = 'video/mp4';
+        v.appendChild(source);
+        v.load();
+
+        console.log(`[VideoPlayer] Set source: ${streamUrl.slice(0, 100)}`);
+
+        // Wait for video to be ready before playing (WKWebView needs this)
+        const tryPlay = () => {
+          v.play().catch((err) => {
+            console.warn('[VideoPlayer] Autoplay blocked, trying muted:', err.message);
+            v.muted = true;
+            v.play().catch((err2) => {
+              console.warn('[VideoPlayer] Muted autoplay also failed:', err2.message);
+              // Don't set error — user can click to play manually
+            });
+          });
+        };
+
+        if (v.readyState >= 3) {
+          // Already have enough data
+          tryPlay();
+        } else {
+          v.addEventListener('canplay', tryPlay, { once: true });
+          // Timeout fallback — if canplay never fires in 5s, try anyway
+          setTimeout(() => {
+            if (v.readyState < 3 && !v.paused) return; // Already playing
+            if (v.readyState >= 1) tryPlay();
+          }, 5000);
+        }
       }
     } else {
       // Audio — use <audio> element only
@@ -693,6 +757,8 @@ export default function App() {
           <video
             ref={videoRef}
             className="video-mini-element"
+            playsInline
+            preload="auto"
             onClick={() => {
               if (videoRef.current) {
                 if (isPlaying) videoRef.current.pause(); else videoRef.current.play().catch(() => {});
@@ -709,21 +775,32 @@ export default function App() {
             onPause={() => setIsPlaying(false)}
             onLoadedMetadata={(e) => { setDuration(e.target.duration || 0); }}
             onError={(e) => {
-              console.warn('[VideoPlayer] Error:', e);
-              const v = e.target;
-              const src = v.src || '';
+              // When using <source> elements, error may fire on <source> — always use the <video> ref
+              const v = videoRef.current;
+              if (!v) return;
+              const mediaError = v.error;
+              const errorCodes = { 1: 'MEDIA_ERR_ABORTED', 2: 'MEDIA_ERR_NETWORK', 3: 'MEDIA_ERR_DECODE', 4: 'MEDIA_ERR_SRC_NOT_SUPPORTED' };
+              const errorName = errorCodes[mediaError?.code] || 'UNKNOWN';
+              const sourceEl = v.querySelector('source');
+              const src = sourceEl?.src || v.src || '';
+              console.warn(`[VideoPlayer] Error: ${errorName} (code ${mediaError?.code}) message: ${mediaError?.message || 'none'} src: ${src?.slice(0, 100)}`);
               // If local file failed, try CDN URL directly
               const cdnUrl = currentSermon?.cdnUrl || currentSermon?.archiveUrl || currentSermon?.url;
               if (cdnUrl && src !== cdnUrl && !src.startsWith('blob:')) {
                 console.log('[VideoPlayer] Local playback failed, trying CDN:', cdnUrl);
-                v.src = cdnUrl;
+                // Replace source element
+                while (v.firstChild) v.removeChild(v.firstChild);
+                const newSource = document.createElement('source');
+                newSource.src = cdnUrl;
+                newSource.type = 'video/mp4';
+                v.appendChild(newSource);
                 v.load();
                 v.play().catch(() => {
-                  setVideoError('Failed to play this video.');
+                  setVideoError(`Playback failed: ${errorName}`);
                   setIsPlaying(false);
                 });
               } else {
-                setVideoError('Failed to play this video.');
+                setVideoError(`Playback failed: ${errorName}`);
                 setIsPlaying(false);
               }
             }}

@@ -18,16 +18,19 @@ export default function SettingsPage({
   nodeStats,
 }) {
   const [peerId, setPeerId] = useState('');
-  const [announceAddress, setAnnounceAddress] = useState('');
+  const [publicIp, setPublicIp] = useState('');
+  const [manualAddressEnabled, setManualAddressEnabled] = useState(false);
   const [announceStatus, setAnnounceStatus] = useState(''); // 'saved', 'error', ''
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [modeStatus, setModeStatus] = useState(''); // 'saved', ''
 
   // Load announce address from persisted settings
   useEffect(() => {
     loadSettings().then(settings => {
       if (settings?.announceAddress) {
-        setAnnounceAddress(settings.announceAddress);
-        setShowAdvanced(true);
+        // Extract just the IP from stored multiaddr like /ip4/1.2.3.4/tcp/4001
+        const match = settings.announceAddress.match(/\/ip4\/([^/]+)/);
+        setPublicIp(match ? match[1] : settings.announceAddress);
+        setManualAddressEnabled(true);
       }
     }).catch(() => {});
   }, []);
@@ -35,11 +38,31 @@ export default function SettingsPage({
   const handleSaveAnnounce = async () => {
     try {
       const existing = await loadSettings().catch(() => ({})) || {};
-      await saveSettings({ ...existing, announceAddress: announceAddress.trim() });
+      // Build the full multiaddr from just the IP
+      const fullAddr = manualAddressEnabled && publicIp.trim()
+        ? `/ip4/${publicIp.trim()}/tcp/4001`
+        : '';
+      await saveSettings({ ...existing, announceAddress: fullAddr });
       setAnnounceStatus('saved');
       setTimeout(() => setAnnounceStatus(''), 3000);
     } catch {
       setAnnounceStatus('error');
+    }
+  };
+
+  const handleToggleManualAddress = async (enabled) => {
+    setManualAddressEnabled(enabled);
+    if (!enabled) {
+      // Clear the saved address when disabling
+      try {
+        const existing = await loadSettings().catch(() => ({})) || {};
+        await saveSettings({ ...existing, announceAddress: '' });
+        setPublicIp('');
+        setAnnounceStatus('saved');
+        setTimeout(() => setAnnounceStatus(''), 3000);
+      } catch {
+        setAnnounceStatus('error');
+      }
     }
   };
 
@@ -193,77 +216,80 @@ export default function SettingsPage({
           </div>
 
           <div className="seed-card">
-            <div
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-            >
-              <h3 style={{ margin: 0 }}>Advanced Networking</h3>
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                {showAdvanced ? '▾' : '▸'}
-              </span>
+            <h3>Advanced Networking</h3>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+              Your node listens on port <strong>4001</strong> (TCP &amp; QUIC). If UPnP doesn't work
+              on your router, you can manually port-forward 4001 and enter your public IP below.
+            </p>
+
+            <div className="settings-row">
+              <div>
+                <div style={{ fontWeight: 500 }}>Manual Public IP</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {manualAddressEnabled
+                    ? publicIp
+                      ? <span style={{ color: '#4caf50' }}>Using {publicIp}:4001 as your public address</span>
+                      : 'Enabled — enter your public IP below'
+                    : 'Disabled — using automatic NAT traversal (UPnP, relay, hole punching)'}
+                </div>
+              </div>
+              <div
+                className={`toggle ${manualAddressEnabled ? 'on' : ''}`}
+                onClick={() => handleToggleManualAddress(!manualAddressEnabled)}
+              ></div>
             </div>
 
-            {showAdvanced && (
-              <div style={{ marginTop: '14px' }}>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                  Your node listens on port <strong>4001</strong> (TCP &amp; QUIC). If UPnP doesn't work
-                  on your router, you can manually port-forward 4001 and enter your public IP below.
-                  This tells the network how to reach you directly — like opening a port for a game server.
-                </p>
-
-                <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', border: 'none' }}>
-                  <div style={{ fontWeight: 500, fontSize: '0.82rem' }}>External Address Override</div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                    Format: <code style={{ background: 'var(--bg-primary)', padding: '2px 6px', borderRadius: '4px' }}>/ip4/YOUR_PUBLIC_IP/tcp/4001</code>
+            {manualAddressEnabled && (
+              <div style={{ marginTop: '4px', padding: '0 0 8px 0' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    value={publicIp}
+                    onChange={e => setPublicIp(e.target.value)}
+                    placeholder="203.0.113.5"
+                    style={{
+                      flex: 1,
+                      background: 'var(--bg-primary)',
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-primary)',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      fontSize: '0.82rem',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                  <button
+                    onClick={handleSaveAnnounce}
+                    style={{
+                      background: announceStatus === 'saved' ? '#4caf50' : 'var(--gold)',
+                      color: announceStatus === 'saved' ? '#fff' : '#1a1a2e',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '8px 16px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      transition: 'all 0.2s',
+                      minWidth: '72px',
+                    }}
+                  >
+                    {announceStatus === 'saved' ? 'Saved!' : 'Save'}
+                  </button>
+                </div>
+                {announceStatus === 'saved' && (
+                  <div style={{ fontSize: '0.75rem', color: '#4caf50', marginTop: '6px' }}>
+                    Saved — restart the IPFS node (toggle off/on above) to apply.
                   </div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <input
-                      type="text"
-                      value={announceAddress}
-                      onChange={e => setAnnounceAddress(e.target.value)}
-                      placeholder="/ip4/203.0.113.5/tcp/4001"
-                      style={{
-                        flex: 1,
-                        background: 'var(--bg-primary)',
-                        border: '1px solid var(--border)',
-                        color: 'var(--text-primary)',
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        fontSize: '0.82rem',
-                        fontFamily: 'monospace',
-                      }}
-                    />
-                    <button
-                      onClick={handleSaveAnnounce}
-                      style={{
-                        background: 'var(--gold)',
-                        color: '#1a1a2e',
-                        border: 'none',
-                        borderRadius: '6px',
-                        padding: '8px 16px',
-                        fontSize: '0.8rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        flexShrink: 0,
-                      }}
-                    >
-                      Save
-                    </button>
+                )}
+                {announceStatus === 'error' && (
+                  <div style={{ fontSize: '0.75rem', color: '#ef5350', marginTop: '6px' }}>
+                    Failed to save settings.
                   </div>
-                  {announceStatus === 'saved' && (
-                    <div style={{ fontSize: '0.75rem', color: '#4caf50' }}>
-                      Saved — restart the IPFS node (toggle off/on above) to apply.
-                    </div>
-                  )}
-                  {announceStatus === 'error' && (
-                    <div style={{ fontSize: '0.75rem', color: '#ef5350' }}>
-                      Failed to save settings.
-                    </div>
-                  )}
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    To find your public IP, visit <a href="https://whatismyip.com" target="_blank" rel="noreferrer" style={{ color: 'var(--text-secondary)' }}>whatismyip.com</a>.
-                    Leave empty to use automatic NAT traversal (UPnP, relay, hole punching).
-                  </div>
+                )}
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                  Enter just your public IP address. Port 4001 is added automatically.
+                  To find your IP, visit <a href="https://whatismyip.com" target="_blank" rel="noreferrer" style={{ color: 'var(--text-secondary)' }}>whatismyip.com</a>.
                 </div>
               </div>
             )}
@@ -272,42 +298,60 @@ export default function SettingsPage({
           <div className="seed-card">
             <h3>Content Source</h3>
             <p style={{ marginBottom: '8px' }}>
-              Controls where the app fetches sermon content from. As the peer network grows stronger,
-              this will automatically shift toward full decentralization.
+              Controls where the app fetches sermon content from. Click to switch modes.
             </p>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              This setting is managed by the SermonIndex network and will update automatically as more
-              peers come online. You don't need to change this — the network optimizes itself over time.
+              The network will suggest optimal settings via heartbeat, but you can override manually.
             </p>
 
             <div className="content-source-visual">
-              {modes.map((mode, i) => (
-                <div
-                  key={mode.key}
-                  className={`settings-row ${contentMode === mode.key ? 'active-mode' : ''}`}
-                  style={i === modes.length - 1 ? { border: 'none' } : {}}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{
-                      width: 14, height: 14, borderRadius: '50%',
-                      border: `2px solid ${contentMode === mode.key ? 'var(--gold)' : 'var(--border-light)'}`,
-                      background: contentMode === mode.key ? 'var(--gold)' : 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      flexShrink: 0,
-                    }}>
-                      {contentMode === mode.key && (
-                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />
-                      )}
+              {modes.map((mode, i) => {
+                const isActive = contentMode === mode.key;
+                return (
+                  <div
+                    key={mode.key}
+                    className={`settings-row ${isActive ? 'active-mode' : ''}`}
+                    style={{
+                      ...(i === modes.length - 1 ? { border: 'none' } : {}),
+                      cursor: 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                    onClick={() => {
+                      if (!isActive) {
+                        onModeChange(mode.key);
+                        setModeStatus('saved');
+                        setTimeout(() => setModeStatus(''), 2500);
+                      }
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: 14, height: 14, borderRadius: '50%',
+                        border: `2px solid ${isActive ? 'var(--gold)' : 'var(--border-light)'}`,
+                        background: isActive ? 'var(--gold)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                        transition: 'all 0.15s',
+                      }}>
+                        {isActive && (
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />
+                        )}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{mode.label}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{mode.desc}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{mode.label}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{mode.desc}</div>
-                    </div>
+                    {isActive && <span className="mode-badge cdn">Active</span>}
                   </div>
-                  {contentMode === mode.key && <span className="mode-badge cdn">Active</span>}
-                </div>
-              ))}
+                );
+              })}
             </div>
+            {modeStatus === 'saved' && (
+              <div style={{ fontSize: '0.75rem', color: '#4caf50', marginTop: '8px', transition: 'opacity 0.3s' }}>
+                Mode updated successfully
+              </div>
+            )}
           </div>
         </div>
 

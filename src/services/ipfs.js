@@ -188,7 +188,32 @@ export async function addFile(bytes, sermonId = null, sourceUrl = null) {
 export async function getFile(cidString) {
   if (!_running) throw new Error('IPFS node not initialized');
 
-  const b64 = await invoke('ipfs_get_file', { cid: cidString });
+  // Try local store first (fast)
+  try {
+    const b64 = await invoke('ipfs_get_file', { cid: cidString });
+    return base64ToUint8Array(b64);
+  } catch (localErr) {
+    ipfsLog.info(`[IPFS] CID ${cidString.slice(0, 24)} not local, trying network fetch...`);
+  }
+
+  // Network fetch: DHT provider lookup + bitswap
+  try {
+    const b64 = await invoke('ipfs_fetch_from_network', { cid: cidString });
+    ipfsLog.info(`[IPFS] Fetched ${cidString.slice(0, 24)} from peer network`);
+    return base64ToUint8Array(b64);
+  } catch (netErr) {
+    throw new Error(`CID not found locally or on network: ${cidString} (${netErr})`);
+  }
+}
+
+/**
+ * Explicitly fetch a file from the IPFS network (DHT + bitswap)
+ * Unlike getFile(), this always does a network lookup even if found locally
+ */
+export async function fetchFromNetwork(cidString) {
+  if (!_running) throw new Error('IPFS node not initialized');
+
+  const b64 = await invoke('ipfs_fetch_from_network', { cid: cidString });
   return base64ToUint8Array(b64);
 }
 
