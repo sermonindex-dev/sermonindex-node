@@ -3,7 +3,7 @@
  *
  * Periodically reports this node's status to the si-app API.
  * On each heartbeat response, receives:
- *   - Remote config (source mode, IPFS toggle, announcements, etc.)
+ *   - Remote config (source mode, P2P toggle, announcements, etc.)
  *   - Available content packs (images, transcripts, etc.)
  *
  * The API uses Bunny CDN geo-headers for location when available,
@@ -19,7 +19,7 @@ let _getStatsFn = null;
 let _startTime = Date.now();
 let _onConfigUpdate = null;    // Callback when remote config changes
 let _onContentPacks = null;    // Callback when content packs are available
-let _getSermonInfoFn = null;   // Callback to get sermon info by ID (for IPFS pin reporting)
+let _getSermonInfoFn = null;   // Callback to get sermon info by ID (for seeded torrent reporting)
 let _lastConfig = null;        // Cache last config to detect changes
 let _onRemoteCommand = null;   // Callback for remote admin commands
 
@@ -178,67 +178,62 @@ async function sendHeartbeat() {
     const stats = _getStatsFn ? _getStatsFn() : {};
     const geo = await getGeoLocation();
 
-    // Collect IPFS CIDs and diagnostics if available
-    let ipfsCids = {};
-    let ipfsDiag = null;
+    // Collect torrent node status (seeded torrents + session diagnostics)
+    let torrents = [];
+    let livePeers = 0;
+    let p2pStatus = { running: false };
     try {
-      const ipfsModule = await import('./ipfs.js').catch(() => null);
-      if (ipfsModule && ipfsModule.isNodeRunning()) {
-        ipfsCids = ipfsModule.getCatalog(); // { sermonId: cidString, ... }
-        // Collect IPFS connection diagnostics for admin visibility
-        try {
-          ipfsDiag = await ipfsModule.getDiagnostics();
-        } catch {}
+      const torrentModule = await import('./torrent.js').catch(() => null);
+      if (torrentModule) {
+        const status = await torrentModule.getStatus().catch(() => null);
+        if (status?.running) {
+          torrents = await torrentModule.listTorrents().catch(() => []);
+          let sessionStats = null;
+          try { sessionStats = await torrentModule.getSessionStats(); } catch {}
+          livePeers = torrents.reduce((n, t) => n + (t.stats?.live?.snapshot?.peer_stats?.live || 0), 0);
+          p2pStatus = {
+            running: true,
+            node_id: getNodeId(),
+            tcp_listen_port: status.tcp_listen_port || null,
+            torrent_count: status.torrent_count ?? torrents.length,
+            seeded_count: torrents.filter(t => t.stats?.finished).length,
+            peer_count: livePeers,
+            uptime: status.uptime_secs || 0,
+            uploaded_bytes: torrents.reduce((n, t) => n + (t.stats?.uploaded_bytes || 0), 0),
+            downloaded_bytes: torrents.reduce((n, t) => n + (t.stats?.progress_bytes || 0), 0),
+            session: sessionStats || null,
+          };
+        }
+        // Attach last 20 log entries for admin visibility
+        if (torrentModule.getLogs) {
+          p2pStatus.recent_logs = torrentModule.getLogs(20).map(l => ({
+            t: l.t, level: l.level, msg: l.msg.slice(0, 200),
+          }));
+        }
       }
     } catch {}
-    // Enrich with sermon metadata if callback provided
-    let ipfsPins = {};
-    if (Object.keys(ipfsCids).length > 0 && _getSermonInfoFn) {
-      for (const [sermonId, cid] of Object.entries(ipfsCids)) {
-        const info = _getSermonInfoFn(sermonId);
-        ipfsPins[sermonId] = { cid, title: info?.title || '', speaker: info?.speaker || '', type: info?.type || 'audio' };
-      }
-    } else {
-      for (const [sermonId, cid] of Object.entries(ipfsCids)) {
-        ipfsPins[sermonId] = { cid };
-      }
+
+    // Seeded torrents keyed by sermon ID — the torrent name is the downloaded
+    // filename (`<sermonId>.<ext>`), enriched with sermon metadata if available
+    const seededTorrents = {};
+    for (const t of torrents) {
+      if (!t.stats?.finished || !t.info_hash) continue;
+      const sermonId = (t.name || '').replace(/\.[^.]+$/, '');
+      const info = sermonId && _getSermonInfoFn ? _getSermonInfoFn(sermonId) : null;
+      seededTorrents[sermonId || t.info_hash] = {
+        info_hash: t.info_hash,
+        title: info?.title || '',
+        speaker: info?.speaker || '',
+        type: info?.type || 'audio',
+      };
     }
-
-    // Build IPFS diagnostics summary for the server
-    const ipfsStatus = ipfsDiag ? {
-      running: ipfsDiag.running,
-      peer_id: ipfsDiag.peerId || null,
-      peer_count: ipfsDiag.peerCount || 0,
-      pinned_cids: (ipfsDiag.pinnedCids || []).length,
-      uptime: ipfsDiag.uptime || 0,
-      multiaddrs: (ipfsDiag.multiaddrs || []).slice(0, 5),
-      transports: {
-        websocket: (ipfsDiag.connections || []).some(c => (c.remoteAddr || '').includes('/ws')),
-        webrtc: (ipfsDiag.connections || []).some(c => (c.remoteAddr || '').includes('/webrtc')),
-        relay: (ipfsDiag.connections || []).some(c => (c.remoteAddr || '').includes('/p2p-circuit')),
-      },
-      connections: (ipfsDiag.connections || []).slice(0, 10).map(c => ({
-        peer: (c.remotePeer || '').slice(0, 16),
-        addr: c.remoteAddr || '',
-        dir: c.direction || '',
-      })),
-    } : { running: false };
-
-    // Attach last 20 log entries for admin visibility
-    try {
-      const ipfsModule2 = await import('./ipfs.js').catch(() => null);
-      if (ipfsModule2 && ipfsModule2.getLogs) {
-        ipfsStatus.recent_logs = ipfsModule2.getLogs(20).map(l => ({
-          t: l.t, level: l.level, msg: l.msg.slice(0, 200),
-        }));
-      }
-    } catch {}
 
     const payload = {
       node_id: getNodeId(),
+      protocol: 'bittorrent',
       files_stored: stats.filesShared || 0,
       storage_used_bytes: stats.storageUsedBytes || 0,
-      peers_connected: stats.peersConnected || 0,
+      peers_connected: livePeers || stats.peersConnected || 0,
       uptime_seconds: Math.floor((Date.now() - _startTime) / 1000),
       library_coverage: stats.libraryCoverage || 0,
       content_mode: stats.contentMode || 'cdn',
@@ -248,8 +243,8 @@ async function sendHeartbeat() {
       lon: geo.lon,
       city: geo.city,
       country: geo.country,
-      ipfs_pins: ipfsPins,
-      ipfs_status: ipfsStatus, // Full connection diagnostics for admin
+      seeded_torrents: seededTorrents, // info_hashes replace the old per-sermon CID map
+      p2p_status: p2pStatus, // Full session diagnostics for admin
     };
 
     const res = await fetch(`${API_BASE}/api/node/heartbeat`, {
@@ -303,66 +298,42 @@ async function executeRemoteCommand(cmd) {
   let result = { success: false, message: 'Unknown command' };
 
   try {
-    const ipfsModule = await import('./ipfs.js').catch(() => null);
+    const torrentModule = await import('./torrent.js').catch(() => null);
 
-    switch (action) {
-      case 'reconnect_ipfs': {
-        if (ipfsModule) {
-          await ipfsModule.stopNode();
-          await ipfsModule.initNode('sermonindex');
-          result = { success: true, message: 'IPFS node reconnected' };
-        } else {
-          result = { success: false, message: 'IPFS module not available' };
-        }
-        break;
+    if (/^(reconnect|restart)/.test(action || '')) {
+      // Restart the P2P session (also covers the legacy reconnect command name)
+      if (torrentModule) {
+        try { await torrentModule.stopSession(); } catch {}
+        await new Promise(r => setTimeout(r, 1000));
+        const status = await torrentModule.startSession();
+        result = { success: true, message: `P2P session restarted (port ${status?.tcp_listen_port ?? '?'}, ${status?.torrent_count ?? 0} torrents)` };
+      } else {
+        result = { success: false, message: 'Torrent module not available' };
       }
-      case 'reannounce_content': {
-        if (ipfsModule && ipfsModule.isNodeRunning()) {
-          const pins = await ipfsModule.listPinned();
-          let announced = 0;
-          for (const cid of pins) {
-            try { await ipfsModule.debugProvide(cid); announced++; } catch {}
-          }
-          result = { success: true, message: `Re-announced ${announced}/${pins.length} CIDs` };
-        } else {
-          result = { success: false, message: 'IPFS not running' };
-        }
-        break;
+    } else if (action === 'get_diagnostics') {
+      if (torrentModule) {
+        const status = await torrentModule.getStatus().catch(() => ({ running: false }));
+        const sessionStats = await torrentModule.getSessionStats().catch(() => null);
+        const torrents = await torrentModule.listTorrents().catch(() => []);
+        result = { success: true, message: JSON.stringify({ protocol: 'bittorrent', status, sessionStats, torrents }) };
+      } else {
+        result = { success: false, message: 'Torrent module not available' };
       }
-      case 'run_self_test': {
-        if (ipfsModule && ipfsModule.isNodeRunning()) {
-          const testContent = `admin-test-${Date.now()}`;
-          const cid = await ipfsModule.addFile(new TextEncoder().encode(testContent));
-          const provResult = await ipfsModule.debugProvide(cid);
-          result = {
-            success: provResult.success,
-            message: `Test CID: ${cid}, provide: ${provResult.success ? 'OK' : provResult.error}`,
-          };
-        } else {
-          result = { success: false, message: 'IPFS not running' };
-        }
-        break;
+    } else if (action === 'get_logs') {
+      if (torrentModule && torrentModule.getLogs) {
+        result = { success: true, message: JSON.stringify(torrentModule.getLogs(100)) };
+      } else {
+        result = { success: false, message: 'Logs not available' };
       }
-      case 'get_diagnostics': {
-        if (ipfsModule && ipfsModule.getDiagnostics) {
-          const diag = await ipfsModule.getDiagnostics();
-          result = { success: true, message: JSON.stringify(diag) };
-        } else {
-          result = { success: false, message: 'IPFS not available' };
-        }
-        break;
-      }
-      case 'get_logs': {
-        if (ipfsModule && ipfsModule.getLogs) {
-          const logs = ipfsModule.getLogs(100);
-          result = { success: true, message: JSON.stringify(logs) };
-        } else {
-          result = { success: false, message: 'Logs not available' };
-        }
-        break;
-      }
-      default:
-        result = { success: false, message: `Unknown action: ${action}` };
+    } else if (action === 'reannounce_content' || action === 'run_self_test') {
+      // Legacy commands from the previous P2P stack — torrents announce
+      // themselves continuously via DHT/trackers, so report status instead
+      const status = torrentModule ? await torrentModule.getStatus().catch(() => null) : null;
+      result = status?.running
+        ? { success: true, message: `P2P node running with ${status.torrent_count} torrents (no-op on BitTorrent — DHT/trackers announce automatically)` }
+        : { success: false, message: 'P2P node not running' };
+    } else {
+      result = { success: false, message: `Unknown action: ${action}` };
     }
   } catch (err) {
     result = { success: false, message: err.message };

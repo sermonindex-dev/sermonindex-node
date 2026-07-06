@@ -4,15 +4,13 @@
  * Download priority:
  *   1. Archive.org (free, unlimited) — primary source
  *   2. Bunny CDN (paid, fast) — fallback
- *   3. IPFS peers — when network is strong enough
  *
  * Features:
  * - Download queue with concurrency control
  * - Progress tracking per file and overall
- * - Automatic IPFS pinning after download
+ * - Automatic BitTorrent seeding after download (fire-and-forget)
  * - Resume capability
  * - Bandwidth throttling
- * - Archive.org → CDN → IPFS mode switching
  */
 
 // Tauri invoke — lazy-loaded to work in browser too
@@ -98,30 +96,36 @@ async function saveFileToDisk(filename, bytes) {
   }
 }
 
-// IPFS is optional — lazy-loaded on first use to avoid top-level await
-let ipfsModule = null;
-let ipfsLoadAttempted = false;
+// Torrent seeding is optional — lazy-loaded on first use to avoid top-level await
+let torrentModule = null;
+let torrentLoadAttempted = false;
 
-async function loadIPFS() {
-  if (ipfsLoadAttempted) return ipfsModule;
-  ipfsLoadAttempted = true;
+async function loadTorrent() {
+  if (torrentLoadAttempted) return torrentModule;
+  torrentLoadAttempted = true;
   try {
-    ipfsModule = await import('./ipfs.js');
+    torrentModule = await import('./torrent.js');
   } catch (e) {
-    console.warn('[DL] IPFS module not available, downloads will work without pinning');
-    ipfsModule = null;
+    console.warn('[DL] Torrent module not available, downloads will work without seeding');
+    torrentModule = null;
   }
-  return ipfsModule;
+  return torrentModule;
 }
 
-async function tryPinToIPFS(bytes, sermonId, sourceUrl = null) {
-  const mod = await loadIPFS();
-  if (!mod) return null;
+/**
+ * Seed a downloaded file (by filename in the app downloads dir) to the swarm.
+ * Returns { id, info_hash, magnet, torrent_file, name } or null on failure.
+ * Fire-and-forget — a seeding failure must never break the download flow.
+ */
+async function trySeedTorrent(filename) {
   try {
-    if (!mod.isNodeRunning()) return null;
-    return await mod.addFile(bytes, sermonId, sourceUrl);
+    const mod = await loadTorrent();
+    if (!mod) return null;
+    await mod.startSession(); // idempotent
+    // Keep the default torrent name (= filename) so the sermon ID stays recoverable
+    return await mod.seedDownloaded(filename);
   } catch (e) {
-    console.warn('[DL] IPFS pinning skipped:', e.message);
+    console.warn('[DL] Torrent seeding skipped:', e?.message || e);
     return null;
   }
 }
@@ -129,7 +133,7 @@ async function tryPinToIPFS(bytes, sermonId, sourceUrl = null) {
 export const DL_STATE = {
   QUEUED: 'queued',
   DOWNLOADING: 'downloading',
-  PINNING: 'pinning',
+  SEEDING: 'seeding',
   COMPLETE: 'complete',
   ERROR: 'error',
   PAUSED: 'paused',
@@ -137,9 +141,9 @@ export const DL_STATE = {
 
 // Content source modes — controlled by admin, not user
 export const SOURCE_MODE = {
-  CDN_PRIMARY: 'cdn',           // Archive.org first, CDN fallback, IPFS last
-  IPFS_PRIMARY: 'ipfs-primary', // IPFS first, Archive.org fallback, CDN last
-  IPFS_ONLY: 'ipfs-only',       // IPFS only — full decentralization
+  CDN_PRIMARY: 'cdn',          // Archive.org first, CDN fallback
+  P2P_PRIMARY: 'p2p-primary',  // Peer swarm first, Archive.org/CDN fallback (needs catalog magnets)
+  P2P_ONLY: 'p2p-only',        // Peer swarm only — full decentralization (needs catalog magnets)
 };
 
 class DownloadManager {
@@ -179,7 +183,7 @@ class DownloadManager {
    */
   async download(sermon) {
     if (this.queue.has(sermon.id) && this.queue.get(sermon.id).state === DL_STATE.COMPLETE) {
-      return this.queue.get(sermon.id).cid;
+      return this.queue.get(sermon.id).magnet;
     }
 
     const entry = {
@@ -188,7 +192,8 @@ class DownloadManager {
       progress: 0,
       bytesDownloaded: 0,
       totalBytes: sermon.sizeBytes || 0,
-      cid: null,
+      magnet: null,
+      infoHash: null,
       error: null,
       startTime: null,
       source: null,
@@ -214,20 +219,10 @@ class DownloadManager {
 
     try {
       // ── PHASE 1: Download (holds concurrency slot) ──────────────────
-      if (this.mode === SOURCE_MODE.IPFS_ONLY) {
-        bytes = await this._fetchFromIPFS(sermon, entry);
-        entry.source = 'ipfs';
-      } else if (this.mode === SOURCE_MODE.IPFS_PRIMARY) {
-        try {
-          bytes = await this._fetchFromIPFS(sermon, entry);
-          entry.source = 'ipfs';
-        } catch {
-          bytes = await this._fetchWithArchiveFallback(sermon, entry);
-        }
-      } else {
-        // Default: Archive.org → CDN → IPFS
-        bytes = await this._fetchWithArchiveFallback(sermon, entry);
-      }
+      // All modes currently download over HTTP (Archive.org → CDN). The peer
+      // swarm is fed by seeding completed files; swarm-first fetching will
+      // become possible once catalog entries carry magnet links.
+      bytes = await this._fetchWithArchiveFallback(sermon, entry);
 
       // Save file to disk IMMEDIATELY (so it appears in My Downloads right away)
       const fileSizeMB = (bytes.byteLength / (1024 * 1024)).toFixed(1);
@@ -256,47 +251,35 @@ class DownloadManager {
     // ── Release download slot — other queued downloads can proceed now ──
     this.activeDownloads--;
 
-    // ── PHASE 2: Post-processing (IPFS pin, no slot needed) ──
-    try {
-      // Try to pin to IPFS with a 30-second timeout (non-critical)
-      entry.state = DL_STATE.PINNING;
-      this._notify(sermon.id, entry);
+    // ── PHASE 2: Seed the file to the torrent swarm (fire-and-forget) ──
+    // Hashing large files can take a while, so we don't block completion on
+    // it. When seeding finishes, the entry is updated with magnet/info_hash
+    // and listeners are re-notified — a seeding failure never breaks the flow.
+    entry.state = DL_STATE.SEEDING;
+    this._notify(sermon.id, entry);
 
-      let cid = null;
-      try {
-        const pinPromise = tryPinToIPFS(bytes, sermon.id, entry.sourceUrl);
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('IPFS pin timeout')), 30000)
-        );
-        cid = await Promise.race([pinPromise, timeoutPromise]);
-      } catch (pinErr) {
-        console.warn(`[DL] IPFS pin skipped for "${sermon.title}":`, pinErr.message);
-      }
+    trySeedTorrent(filename)
+      .then((seedInfo) => {
+        if (seedInfo && seedInfo.magnet) {
+          entry.magnet = seedInfo.magnet;
+          entry.infoHash = seedInfo.info_hash || null;
+          console.log(`[DL] Seeding "${sermon.title}" → ${seedInfo.info_hash}`);
+          this._notify(sermon.id, entry);
+        }
+      })
+      .catch(() => { /* never breaks the download flow */ });
 
-      entry.state = DL_STATE.COMPLETE;
-      entry.cid = cid || `local-${sermon.id}`;
-      entry.progress = 100;
-      entry.bytesDownloaded = bytes.byteLength;
-      this.totalDownloaded += bytes.byteLength;
-      this.totalFiles++;
-      this._notify(sermon.id, entry);
+    entry.state = DL_STATE.COMPLETE;
+    if (!entry.magnet) entry.magnet = `local-${sermon.id}`;
+    entry.progress = 100;
+    entry.bytesDownloaded = bytes.byteLength;
+    this.totalDownloaded += bytes.byteLength;
+    this.totalFiles++;
+    this._notify(sermon.id, entry);
 
-      const fileSizeMB = (bytes.byteLength / (1024 * 1024)).toFixed(1);
-      console.log(`[DL] Complete: "${sermon.title}" via ${entry.source} (${fileSizeMB} MB) → CID: ${cid || 'local'}`);
-      return cid;
-
-    } catch (err) {
-      // Post-processing failed but file is already on disk
-      entry.state = DL_STATE.COMPLETE;
-      entry.cid = `local-${sermon.id}`;
-      entry.progress = 100;
-      entry.bytesDownloaded = bytes.byteLength;
-      this.totalDownloaded += bytes.byteLength;
-      this.totalFiles++;
-      this._notify(sermon.id, entry);
-      console.warn(`[DL] Post-processing failed for "${sermon.title}" but file is saved:`, err.message);
-      return entry.cid;
-    }
+    const doneSizeMB = (bytes.byteLength / (1024 * 1024)).toFixed(1);
+    console.log(`[DL] Complete: "${sermon.title}" via ${entry.source} (${doneSizeMB} MB)`);
+    return entry.magnet;
   }
 
   /**
@@ -347,15 +330,8 @@ class DownloadManager {
         entry.sourceUrl = sermon.cdnUrl;
         return bytes;
       } catch (e) {
-        console.warn(`[DL] CDN failed for "${sermon.title}": ${e.message}, trying IPFS...`);
+        console.warn(`[DL] CDN failed for "${sermon.title}": ${e.message}`);
       }
-    }
-
-    // Last resort: IPFS
-    if (sermon.cid || sermon.localCid) {
-      const bytes = await this._fetchFromIPFS(sermon, entry);
-      entry.source = 'ipfs';
-      return bytes;
     }
 
     throw new Error('No available source for download');
@@ -440,19 +416,6 @@ class DownloadManager {
     }
 
     return result.buffer;
-  }
-
-  /**
-   * Fetch from IPFS peers
-   */
-  async _fetchFromIPFS(sermon, entry) {
-    const cid = sermon.cid || sermon.localCid;
-    if (!cid) throw new Error('No CID available for IPFS fetch');
-    const mod = await loadIPFS();
-    if (!mod || !mod.isNodeRunning()) throw new Error('IPFS node not running');
-    entry.source = 'ipfs';
-    const bytes = await mod.getFile(cid);
-    return bytes.buffer;
   }
 
   /**

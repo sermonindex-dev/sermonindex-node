@@ -353,7 +353,7 @@ export default function SeedNodePage({
               </button>
             </div>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '12px' }}>
-              Downloading from Archive.org (free) with Bunny CDN fallback · Each file is pinned to IPFS locally
+              Downloading from Archive.org (free) with Bunny CDN fallback · Each file is seeded to the P2P network
               {displayProgress.percent >= 100 && ' · Download complete!'}
             </p>
           </div>
@@ -384,8 +384,8 @@ export default function SeedNodePage({
         </div>
         <div className="settings-row">
           <div>
-            <div style={{ fontWeight: 500 }}>Files Pinned</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sermons stored and available on IPFS</div>
+            <div style={{ fontWeight: 500 }}>Files Seeded</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sermons stored and shared on the P2P network</div>
           </div>
           <span style={{ color: 'var(--text-secondary)' }}>{downloadedCount} / {totalCount}</span>
         </div>

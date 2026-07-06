@@ -2,7 +2,7 @@
  * SermonIndex Torrent Service (PoC)
  *
  * Thin frontend wrapper around the native Rust BitTorrent node (librqbit)
- * running in Tauri. This is the pivot away from the IPFS stack:
+ * running in Tauri. This replaces the previous embedded P2P stack:
  *
  *  - Mainline DHT (millions of nodes — no SermonIndex bootstrap servers needed)
  *  - Public trackers as a second peer-discovery mechanism
@@ -23,6 +23,33 @@
  *   await torrentPoc.watch()                           // poll progress every 2s
  */
 
+// ─── Log capture ring buffer (last 200 entries) ─────────────────────────
+const LOG_BUFFER_SIZE = 200;
+const logBuffer = [];
+
+function captureLog(level, ...args) {
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  const entry = { t: Date.now(), level, msg };
+  logBuffer.push(entry);
+  if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
+  if (level === 'error') console.error(...args);
+  else if (level === 'warn') console.warn(...args);
+  else console.log(...args);
+}
+
+const torrentLog = {
+  info: (...args) => captureLog('info', ...args),
+  warn: (...args) => captureLog('warn', ...args),
+  error: (...args) => captureLog('error', ...args),
+};
+
+/**
+ * Get captured log entries (for remote admin or the Connections panel)
+ */
+export function getLogs(count = 50) {
+  return logBuffer.slice(-count);
+}
+
 let _tauriInvoke = null;
 
 async function invoke(cmd, args = {}) {
@@ -39,12 +66,26 @@ async function invoke(cmd, args = {}) {
 
 /** Start the torrent session (DHT + trackers + UPnP). Idempotent. */
 export async function startSession() {
-  return invoke('torrent_start');
+  try {
+    const status = await invoke('torrent_start');
+    torrentLog.info(`[Torrent] Session started (port ${status?.tcp_listen_port ?? '?'}, ${status?.torrent_count ?? 0} torrents)`);
+    return status;
+  } catch (err) {
+    torrentLog.error('[Torrent] Failed to start session:', err);
+    throw err;
+  }
 }
 
 /** Stop the torrent session. */
 export async function stopSession() {
-  return invoke('torrent_stop');
+  try {
+    const res = await invoke('torrent_stop');
+    torrentLog.info('[Torrent] Session stopped');
+    return res;
+  } catch (err) {
+    torrentLog.warn('[Torrent] Stop error:', err);
+    throw err;
+  }
 }
 
 /** { running, tcp_listen_port, uptime_secs, torrent_count } */
@@ -58,12 +99,26 @@ export async function getStatus() {
  * Hashing a large file can take a little while — that's normal.
  */
 export async function seedFile(filePath, name = null) {
-  return invoke('torrent_seed_file', { filePath, name });
+  try {
+    const res = await invoke('torrent_seed_file', { filePath, name });
+    torrentLog.info(`[Torrent] Seeding: ${res?.name} (${res?.info_hash})`);
+    return res;
+  } catch (err) {
+    torrentLog.error(`[Torrent] Seed failed for ${filePath}:`, err);
+    throw err;
+  }
 }
 
 /** Seed a file already in the app's downloads folder, by filename. */
 export async function seedDownloaded(filename, name = null) {
-  return invoke('torrent_seed_downloaded', { filename, name });
+  try {
+    const res = await invoke('torrent_seed_downloaded', { filename, name });
+    torrentLog.info(`[Torrent] Seeding downloaded file: ${res?.name} (${res?.info_hash})`);
+    return res;
+  } catch (err) {
+    torrentLog.error(`[Torrent] Seed failed for ${filename}:`, err);
+    throw err;
+  }
 }
 
 /**
@@ -72,7 +127,14 @@ export async function seedDownloaded(filename, name = null) {
  * Returns { id, info_hash, name }.
  */
 export async function addTorrent(source) {
-  return invoke('torrent_add', { source });
+  try {
+    const res = await invoke('torrent_add', { source });
+    torrentLog.info(`[Torrent] Added: ${res?.name} (${res?.info_hash})`);
+    return res;
+  } catch (err) {
+    torrentLog.error('[Torrent] Add failed:', err);
+    throw err;
+  }
 }
 
 /** List all torrents with live stats. */
@@ -82,7 +144,9 @@ export async function listTorrents() {
 
 /** Remove a torrent (optionally deleting its files). */
 export async function removeTorrent(id, deleteFiles = false) {
-  return invoke('torrent_remove', { id, deleteFiles });
+  const res = await invoke('torrent_remove', { id, deleteFiles });
+  torrentLog.info(`[Torrent] Removed torrent ${id}${deleteFiles ? ' (files deleted)' : ''}`);
+  return res;
 }
 
 /** Session-wide stats (speeds, peers, uptime). */
@@ -127,6 +191,7 @@ const torrentPoc = {
   },
   remove: removeTorrent,
   sessionStats: getSessionStats,
+  logs: getLogs,
   watch: async (intervalMs = 2000) => {
     if (_watchInterval) clearInterval(_watchInterval);
     _watchInterval = setInterval(async () => {

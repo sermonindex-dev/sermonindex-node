@@ -92,7 +92,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
 
       <div className="seed-card" style={{ marginBottom: '16px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <p style={{ fontSize: '0.78rem', margin: 0, color: 'var(--text-muted)', lineHeight: 1.5, flex: 1 }}>
-          Downloaded files are stored in a hashed format for IPFS sharing. Use the <strong style={{ color: 'var(--text-primary)' }}>Export</strong> button on any sermon to save a readable copy to your Desktop.
+          Downloaded files are stored locally and seeded to the P2P network. Use the <strong style={{ color: 'var(--text-primary)' }}>Export</strong> button on any sermon to save a readable copy to your Desktop.
         </p>
         {onOpenFolder && (
           <button
@@ -100,7 +100,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
             onClick={onOpenFolder}
             style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}
           >
-            {iconFolder} Open IPFS Folder
+            {iconFolder} Open Downloads Folder
           </button>
         )}
       </div>
@@ -138,7 +138,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           const isActive = currentSermon?.id === sermon.id;
           const isExpanded = expandedId === sermon.id;
           const dlState = downloadStates?.[sermon.id];
-          const isActivelyDownloading = dlState && ['downloading', 'pinning', 'queued'].includes(dlState.state);
+          const isActivelyDownloading = dlState && ['downloading', 'seeding', 'queued'].includes(dlState.state);
 
           return (
             <div
@@ -172,27 +172,27 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                   <div className="dl-progress-mini" style={{ width: '100%' }}>
                     <div className="dl-progress-mini-bar">
                       <div
-                        className={`dl-progress-mini-fill ${dlState.state === 'pinning' ? 'pinning' : ''} ${dlState.progress < 0 ? 'indeterminate' : ''}`}
-                        style={{ width: dlState.state === 'pinning' ? '100%' : dlState.progress < 0 ? '40%' : `${Math.min(Math.round(dlState.progress), 99)}%` }}
+                        className={`dl-progress-mini-fill ${dlState.state === 'seeding' ? 'seeding' : ''} ${dlState.progress < 0 ? 'indeterminate' : ''}`}
+                        style={{ width: dlState.state === 'seeding' ? '100%' : dlState.progress < 0 ? '40%' : `${Math.min(Math.round(dlState.progress), 99)}%` }}
                       ></div>
                     </div>
-                    <span className="dl-progress-mini-text" style={dlState.state === 'pinning' ? { color: '#6ea8fe' } : {}}>
-                      {dlState.state === 'pinning' ? 'Pinning to IPFS' : dlState.state === 'queued' ? 'Queued' : dlState.progress < 0 ? (dlState.bytesDownloaded > 0 ? formatStorage(dlState.bytesDownloaded) : 'Downloading...') : `${Math.min(Math.round(dlState.progress), 99)}%`}
+                    <span className="dl-progress-mini-text" style={dlState.state === 'seeding' ? { color: '#6ea8fe' } : {}}>
+                      {dlState.state === 'seeding' ? 'Seeding to P2P network' : dlState.state === 'queued' ? 'Queued' : dlState.progress < 0 ? (dlState.bytesDownloaded > 0 ? formatStorage(dlState.bytesDownloaded) : 'Downloading...') : `${Math.min(Math.round(dlState.progress), 99)}%`}
                     </span>
                   </div>
                 ) : sermon.incomplete ? (
-                  <span className="ipfs-badge incomplete" style={{ color: '#e67e22', borderColor: 'rgba(230,126,34,0.3)', background: 'rgba(230,126,34,0.1)' }}>
+                  <span className="seed-badge incomplete" style={{ color: '#e67e22', borderColor: 'rgba(230,126,34,0.3)', background: 'rgba(230,126,34,0.1)' }}>
                     {iconWarning} <span style={{ marginLeft: '3px' }}>Incomplete — {sermon.diskSize ? formatStorage(sermon.diskSize) : '?'} / {sermon.sizeFormatted}</span>
                   </span>
                 ) : (
                   <span
-                    className="ipfs-badge local"
-                    style={{ cursor: sermon.localCid && !sermon.localCid.startsWith('local-') ? 'pointer' : 'default' }}
-                    data-tooltip={sermon.localCid && !sermon.localCid.startsWith('local-') ? 'Copy IPFS Link' : 'Seeded locally'}
+                    className="seed-badge local"
+                    style={{ cursor: sermon.localMagnet && sermon.localMagnet.startsWith('magnet:') ? 'pointer' : 'default' }}
+                    data-tooltip={sermon.localMagnet && sermon.localMagnet.startsWith('magnet:') ? 'Copy Magnet Link' : 'Seeded locally'}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (sermon.localCid && !sermon.localCid.startsWith('local-')) {
-                        const link = `https://ipfs.io/ipfs/${sermon.localCid}`;
+                      if (sermon.localMagnet && sermon.localMagnet.startsWith('magnet:')) {
+                        const link = sermon.localMagnet;
                         const el = e.currentTarget;
                         const showCopied = () => {
                           const origTooltip = el.getAttribute('data-tooltip');

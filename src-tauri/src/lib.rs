@@ -8,22 +8,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tokio::sync::Mutex;
 
-mod bitswap;
-mod ipfs_node;
-mod natpmp;
 mod torrent_node;
-mod unixfs;
-
-/// Global state for the IPFS node handle
-struct IpfsState {
-    handle: Option<ipfs_node::IpfsHandle>,
-}
-
-impl IpfsState {
-    fn new() -> Self {
-        Self { handle: None }
-    }
-}
 
 /// Global state for the BitTorrent session handle.
 /// Arc so commands can clone it out and release the lock before long awaits.
@@ -47,7 +32,7 @@ async fn get_torrent_handle(
         .ok_or_else(|| "Torrent session not running".to_string())
 }
 
-/// Get the app data directory for storing IPFS blocks and catalog data
+/// Get the app data directory for storing sermon files and catalog data
 fn get_app_data_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".sermonindex")
@@ -199,10 +184,10 @@ fn load_settings() -> Result<String, String> {
     }
 }
 
-/// Get disk usage of the IPFS storage directory
+/// Get disk usage of the sermon downloads directory
 #[tauri::command]
 fn get_storage_usage() -> Result<StorageInfo, String> {
-    let path = get_app_data_dir().join("ipfs");
+    let path = get_app_data_dir().join("downloads");
     if !path.exists() {
         return Ok(StorageInfo {
             bytes: 0,
@@ -390,141 +375,6 @@ struct DiskSpaceInfo {
 }
 
 // ============================================================
-// IPFS Tauri Commands — exposed to the frontend via invoke()
-// ============================================================
-
-/// Start the native IPFS node
-#[tauri::command]
-async fn ipfs_start(state: tauri::State<'_, Arc<Mutex<IpfsState>>>) -> Result<String, String> {
-    let mut ipfs = state.lock().await;
-    if ipfs.handle.is_some() {
-        return Ok("already_running".to_string());
-    }
-
-    // Read announce address from settings (for manual port-forward users)
-    let announce_address = load_settings()
-        .ok()
-        .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
-        .and_then(|v| v.get("announceAddress").and_then(|a| a.as_str().map(String::from)))
-        .filter(|s| !s.is_empty());
-
-    let storage_path = get_app_data_dir().join("ipfs-native");
-    let handle = ipfs_node::start_node(storage_path, announce_address).await?;
-    let diag = handle.diagnostics().await;
-    let peer_id = diag.peer_id.clone();
-    ipfs.handle = Some(handle);
-
-    log::info!("[IPFS] Native node started: {}", peer_id);
-    Ok(peer_id)
-}
-
-/// Stop the native IPFS node
-#[tauri::command]
-async fn ipfs_stop(state: tauri::State<'_, Arc<Mutex<IpfsState>>>) -> Result<(), String> {
-    let mut ipfs = state.lock().await;
-    if let Some(handle) = ipfs.handle.take() {
-        handle.stop().await;
-        log::info!("[IPFS] Native node stopped");
-    }
-    Ok(())
-}
-
-/// Check if the IPFS node is running
-#[tauri::command]
-async fn ipfs_is_running(state: tauri::State<'_, Arc<Mutex<IpfsState>>>) -> Result<bool, String> {
-    let ipfs = state.lock().await;
-    Ok(ipfs.handle.is_some())
-}
-
-/// Add a file to IPFS (pin it). Takes base64-encoded data.
-#[tauri::command]
-async fn ipfs_add_file(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-    data_b64: String,
-    sermon_id: Option<String>,
-) -> Result<String, String> {
-    use base64::Engine;
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-
-    let bytes = base64::engine::general_purpose::STANDARD.decode(&data_b64)
-        .map_err(|e| format!("Invalid base64: {e}"))?;
-
-    handle.add_file(bytes, sermon_id).await
-}
-
-/// Get a file from IPFS by CID. Returns base64-encoded data.
-#[tauri::command]
-async fn ipfs_get_file(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-    cid: String,
-) -> Result<String, String> {
-    use base64::Engine;
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-
-    let bytes = handle.get_file(cid).await?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
-}
-
-/// Fetch a file from the IPFS network by CID (DHT lookup + bitswap).
-/// Tries local store first, then queries peers. Returns base64-encoded data.
-#[tauri::command]
-async fn ipfs_fetch_from_network(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-    cid: String,
-) -> Result<String, String> {
-    use base64::Engine;
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-
-    let bytes = handle.fetch_from_network(cid).await?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
-}
-
-/// Announce/provide a CID on the DHT
-#[tauri::command]
-async fn ipfs_provide(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-    cid: String,
-) -> Result<(), String> {
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-    handle.provide(cid).await
-}
-
-/// Get node diagnostics
-#[tauri::command]
-async fn ipfs_diagnostics(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-) -> Result<ipfs_node::NodeDiagnostics, String> {
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-    Ok(handle.diagnostics().await)
-}
-
-/// List all pinned CIDs
-#[tauri::command]
-async fn ipfs_list_pinned(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-) -> Result<Vec<String>, String> {
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-    Ok(handle.list_pinned().await)
-}
-
-/// Remove a pinned CID
-#[tauri::command]
-async fn ipfs_remove_pin(
-    state: tauri::State<'_, Arc<Mutex<IpfsState>>>,
-    cid: String,
-) -> Result<(), String> {
-    let ipfs = state.lock().await;
-    let handle = ipfs.handle.as_ref().ok_or("IPFS not running")?;
-    handle.remove_pin(cid).await
-}
-
-// ============================================================
 // BitTorrent Tauri Commands — exposed to the frontend via invoke()
 // ============================================================
 
@@ -644,12 +494,9 @@ async fn torrent_session_stats(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize tokio runtime for async IPFS operations
-    let ipfs_state = Arc::new(Mutex::new(IpfsState::new()));
     let torrent_state = Arc::new(Mutex::new(TorrentState::new()));
 
     tauri::Builder::default()
-        .manage(ipfs_state)
         .manage(torrent_state)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
@@ -660,8 +507,8 @@ pub fn run() {
             // Create the data directory on startup
             let data_dir = get_app_data_dir();
             let _ = fs::create_dir_all(&data_dir);
-            let _ = fs::create_dir_all(data_dir.join("ipfs"));
             let _ = fs::create_dir_all(data_dir.join("downloads"));
+            let _ = fs::create_dir_all(data_dir.join("torrents"));
 
             // Enable logging in all builds (Info for release, Debug for dev)
             let log_level = if cfg!(debug_assertions) {
@@ -681,7 +528,7 @@ pub fn run() {
                 .build(app)?;
             let show_item = MenuItemBuilder::with_id("show", "Show SermonIndex")
                 .build(app)?;
-            let ipfs_item = MenuItemBuilder::with_id("ipfs", "IPFS Settings")
+            let network_item = MenuItemBuilder::with_id("network", "Network Settings")
                 .build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit")
                 .build(app)?;
@@ -690,7 +537,7 @@ pub fn run() {
                 .item(&node_status_item)
                 .separator()
                 .item(&show_item)
-                .item(&ipfs_item)
+                .item(&network_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -717,7 +564,7 @@ pub fn run() {
                                 let _ = window.set_focus();
                             }
                         }
-                        "ipfs" => {
+                        "network" => {
                             // Show window and navigate to settings page
                             if let Some(window) = app_handle.get_webview_window("main") {
                                 let _ = window.show();
@@ -778,18 +625,7 @@ pub fn run() {
             get_file_size,
             get_sermon_file_path,
             export_sermon_file,
-            // ── Native IPFS commands ──
-            ipfs_start,
-            ipfs_stop,
-            ipfs_is_running,
-            ipfs_add_file,
-            ipfs_get_file,
-            ipfs_fetch_from_network,
-            ipfs_provide,
-            ipfs_diagnostics,
-            ipfs_list_pinned,
-            ipfs_remove_pin,
-            // ── BitTorrent commands (PoC pivot) ──
+            // ── BitTorrent commands ──
             torrent_start,
             torrent_stop,
             torrent_status,

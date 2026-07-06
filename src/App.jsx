@@ -82,8 +82,8 @@ export default function App() {
   const [bandwidthLimit, setBandwidthLimitState] = useState(0);
   const [storageLimit, setStorageLimitState] = useState(0);
   const [backgroundMode, setBackgroundMode] = useState(true);
-  const [ipfsEnabled, setIpfsEnabled] = useState(true);
-  const [ipfsRunning, setIpfsRunning] = useState(false);
+  const [p2pEnabled, setP2pEnabled] = useState(true);
+  const [p2pRunning, setP2pRunning] = useState(false);
   const [videoMini, setVideoMini] = useState(false); // true = mini player, false = could be fullscreen
   const [videoFullscreen, setVideoFullscreen] = useState(false);
   const [videoError, setVideoError] = useState(null); // null or error message string
@@ -98,7 +98,7 @@ export default function App() {
   // The active media type: 'audio' or 'video'
   const mediaType = currentSermon?.type === 'video' ? 'video' : 'audio';
 
-  // Initialize catalog and IPFS on mount
+  // Initialize catalog and the P2P (BitTorrent) node on mount
   useEffect(() => {
     async function init() {
       // Load persistent node ID from disk before anything else
@@ -108,13 +108,15 @@ export default function App() {
       setCatalog(getCatalog());
       setLibraryStats(getLibraryStats());
 
-      // Normalize server mode keys (CDN_PRIMARY → cdn, IPFS_PRIMARY → ipfs-primary, etc.)
+      // Normalize server mode keys to app keys. Legacy server values
+      // (e.g. *_PRIMARY / *_ONLY from the pre-BitTorrent era) map onto the
+      // new p2p modes so old admin configs keep working.
       const normalizeMode = (m) => {
-        const map = {
-          CDN_PRIMARY: 'cdn', IPFS_PRIMARY: 'ipfs-primary', IPFS_ONLY: 'ipfs-only',
-          cdn: 'cdn', 'ipfs-primary': 'ipfs-primary', 'ipfs-only': 'ipfs-only',
-        };
-        const result = map[m] || 'cdn';
+        const s = String(m || '').toLowerCase();
+        let result = 'cdn';
+        if (s.startsWith('cdn')) result = 'cdn';
+        else if (s.includes('only')) result = 'p2p-only';
+        else if (s.includes('primary')) result = 'p2p-primary';
         console.log(`[App] normalizeMode: "${m}" → "${result}"`);
         return result;
       };
@@ -135,7 +137,7 @@ export default function App() {
         return {
           filesShared: freshStats?.downloadedFiles || 0,
           storageUsedBytes: freshStats?.downloadedSizeBytes || 0,
-          peersConnected: 0, // Updated live via ipfs.js peer monitoring
+          peersConnected: 0, // heartbeat.js aggregates live peers from the torrent stats itself
           libraryCoverage: freshStats?.coverage || 0,
           contentMode: contentMode,
           nodeType: seedUnlocked ? 'seed' : 'user',
@@ -159,32 +161,32 @@ export default function App() {
           setAvailablePacks(packs);
         },
         getSermonInfo: (sermonId) => {
-          // Return sermon metadata for IPFS pin reporting
+          // Return sermon metadata for seeded torrent reporting
           const sermon = getCatalog().find(s => s.id === sermonId);
           return sermon ? { title: sermon.title, speaker: sermon.speaker, type: sermon.type } : null;
         },
       });
 
-      // Start IPFS node by default (with 30s timeout to allow DHT init)
+      // Start the BitTorrent node by default (with 30s timeout for DHT/UPnP init)
       try {
-        const ipfsModule = await import('./services/ipfs.js').catch((err) => {
-          console.error('[App] IPFS module import failed:', err);
+        const torrentModule = await import('./services/torrent.js').catch((err) => {
+          console.error('[App] Torrent module import failed:', err);
           return null;
         });
-        if (ipfsModule) {
-          console.log('[App] IPFS module loaded, initializing node...');
-          const initPromise = ipfsModule.initNode('sermonindex');
+        if (torrentModule) {
+          console.log('[App] Torrent module loaded, starting session...');
+          const initPromise = torrentModule.startSession();
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('IPFS init timeout (30s)')), 30000)
+            setTimeout(() => reject(new Error('P2P init timeout (30s)')), 30000)
           );
           await Promise.race([initPromise, timeoutPromise]);
-          setIpfsRunning(true);
+          setP2pRunning(true);
           setNodeOnline(true);
-          console.log('[App] IPFS node started successfully');
+          console.log('[App] P2P node started successfully');
         }
       } catch (e) {
-        console.error('[App] IPFS node failed to start (non-critical):', e.message, e.stack);
-        setIpfsRunning(false);
+        console.error('[App] P2P node failed to start (non-critical):', e.message, e.stack);
+        setP2pRunning(false);
       }
     }
     init();
@@ -203,44 +205,29 @@ export default function App() {
 
   // Poll network health for TopBar indicator
   useEffect(() => {
-    if (!ipfsRunning) {
+    if (!p2pRunning) {
       setNetworkHealth({ label: 'Offline', color: '#6a8299', score: 0 });
       return;
     }
     let cancelled = false;
     const poll = async () => {
       try {
-        const ipfs = await import('./services/ipfs.js').catch(() => null);
-        if (!ipfs || !ipfs.getDiagnostics || cancelled) return;
-        const diag = await ipfs.getDiagnostics();
+        const torrent = await import('./services/torrent.js').catch(() => null);
+        if (!torrent || cancelled) return;
+        const status = await torrent.getStatus().catch(() => null);
+        const torrents = status?.running ? await torrent.listTorrents().catch(() => []) : [];
         if (cancelled) return;
-        const peers = diag?.peerCount || 0;
-        const addrs = diag?.multiaddrs || diag?.listen_addresses || [];
-        const extAddrs = diag?.externalAddresses || diag?.external_addresses || [];
-        const upnp = diag?.upnpStatus || diag?.upnp_status || 'unknown';
-        const natpmp = diag?.natpmpStatus || diag?.natpmp_status || 'inactive';
-        const relay = diag?.relayStatus || diag?.relay_status || 'inactive';
-        const mdnsPeers = diag?.mdnsPeers || diag?.mdns_peers || 0;
-        const rvStatus = diag?.rendezvousStatus || diag?.rendezvous_status || 'inactive';
-        const nat = diag?.natStatus || '';
-        const isPublic = nat.toLowerCase().includes('public') || extAddrs.length > 0;
-        const hasRelay = addrs.some(a => a.includes('p2p-circuit'));
+        const livePeers = torrents.reduce((n, t) => n + (t.stats?.live?.snapshot?.peer_stats?.live || 0), 0);
 
         // Match ConnectionsPanel health score exactly
         let score = 0;
-        if (peers >= 1) score += 15;
-        if (peers >= 5) score += 15;
-        if (peers >= 10) score += 10;
-        if (addrs.some(a => a.includes('/tcp/') && !a.includes('/ws'))) score += 10; // TCP
-        if (addrs.some(a => a.includes('/quic'))) score += 10; // QUIC
-        if (addrs.some(a => a.includes('/ws'))) score += 5; // WebSocket
-        if (upnp === 'mapped' || extAddrs.length > 0) score += 10; // UPnP
-        if (natpmp === 'mapped') score += 10; // NAT-PMP
-        if (hasRelay) score += 10; // Circuit Relay
-        if (peers > 0) score += 10; // DHT
-        if (mdnsPeers > 0) score += 5; // mDNS
-        if (rvStatus === 'registered') score += 5; // Rendezvous
-        if (isPublic || hasRelay) score += 5; // Hole Punch potential
+        if (status?.running) score += 20;                       // Session up
+        if (status?.tcp_listen_port) score += 15;               // TCP listener bound
+        if ((status?.torrent_count || 0) > 0) score += 15;      // Seeding/leeching something
+        if (torrents.some(t => t.stats?.finished)) score += 10; // At least one full seed
+        if (livePeers >= 1) score += 20;
+        if (livePeers >= 5) score += 10;
+        if (livePeers >= 10) score += 10;
         score = Math.min(100, score);
         const label = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score >= 20 ? 'Fair' : 'Offline';
         const color = score >= 80 ? '#4ecb71' : score >= 50 ? '#d4af37' : score >= 20 ? '#e67e22' : '#6a8299';
@@ -250,26 +237,26 @@ export default function App() {
     poll();
     const iv = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [ipfsRunning]);
+  }, [p2pRunning]);
 
-  // Handle IPFS toggle
-  const handleIpfsToggle = useCallback(async (enabled) => {
-    setIpfsEnabled(enabled);
+  // Handle P2P node toggle
+  const handleP2pToggle = useCallback(async (enabled) => {
+    setP2pEnabled(enabled);
     try {
-      const ipfsModule = await import('./services/ipfs.js').catch(() => null);
-      if (!ipfsModule) return;
+      const torrentModule = await import('./services/torrent.js').catch(() => null);
+      if (!torrentModule) return;
       if (enabled) {
-        await ipfsModule.initNode('sermonindex');
-        setIpfsRunning(true);
+        await torrentModule.startSession();
+        setP2pRunning(true);
         setNodeOnline(true);
       } else {
-        await ipfsModule.stopNode();
-        setIpfsRunning(false);
+        await torrentModule.stopSession();
+        setP2pRunning(false);
         setNodeOnline(false);
       }
     } catch (e) {
-      console.warn('[App] IPFS toggle error:', e.message);
-      setIpfsRunning(false);
+      console.warn('[App] P2P toggle error:', e.message);
+      setP2pRunning(false);
     }
   }, []);
 
@@ -301,18 +288,18 @@ export default function App() {
       setDownloadStates(prev => ({ ...prev, [sermonId]: { ...state } }));
 
       // Mark as downloaded when entering post-processing (file is already saved to disk)
-      // States: PINNING = file saved, pinning to IPFS
-      //         COMPLETE = all done
-      const postProcessStates = [DL_STATE.PINNING, DL_STATE.COMPLETE];
+      // States: SEEDING = file saved, seeding to the torrent swarm
+      //         COMPLETE = all done (magnet may still arrive via a later notify)
+      const postProcessStates = [DL_STATE.SEEDING, DL_STATE.COMPLETE];
       if (postProcessStates.includes(state.state) && !markOnceSet.has(sermonId)) {
         markOnceSet.add(sermonId);
         const size = state.bytesDownloaded || 0;
-        markDownloaded(sermonId, state.cid || `local-${sermonId}`, size);
+        markDownloaded(sermonId, state.magnet || `local-${sermonId}`, size);
         setCatalog(getCatalog());
         setLibraryStats(getLibraryStats());
       }
       if (state.state === DL_STATE.COMPLETE) {
-        markDownloaded(sermonId, state.cid, state.bytesDownloaded || 0);
+        markDownloaded(sermonId, state.magnet, state.bytesDownloaded || 0);
         setCatalog(getCatalog());
         setLibraryStats(getLibraryStats());
       }
@@ -320,18 +307,20 @@ export default function App() {
     return unsub;
   }, []);
 
-  // Poll IPFS peer count every 5s so Settings & Network pages show live data
+  // Poll live torrent peer count every 5s so Settings & Network pages show live data
   useEffect(() => {
-    if (!ipfsRunning) return;
+    if (!p2pRunning) return;
     let cancelled = false;
     const poll = async () => {
       try {
-        const ipfs = await import('./services/ipfs.js').catch(() => null);
-        if (ipfs && !cancelled) {
-          const stats = ipfs.getStats();
+        const torrent = await import('./services/torrent.js').catch(() => null);
+        if (torrent && !cancelled) {
+          const torrents = await torrent.listTorrents().catch(() => []);
+          if (cancelled) return;
+          const livePeers = torrents.reduce((n, t) => n + (t.stats?.live?.snapshot?.peer_stats?.live || 0), 0);
           setNodeStats(prev => {
-            if (prev.peersConnected !== stats.peersConnected) {
-              return { ...prev, peersConnected: stats.peersConnected };
+            if (prev.peersConnected !== livePeers) {
+              return { ...prev, peersConnected: livePeers };
             }
             return prev;
           });
@@ -341,18 +330,14 @@ export default function App() {
     poll(); // immediate first read
     const id = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [ipfsRunning]);
+  }, [p2pRunning]);
 
   // Sync content mode to download manager
   useEffect(() => {
     const modeMap = {
       cdn: SOURCE_MODE.CDN_PRIMARY,
-      'ipfs-primary': SOURCE_MODE.IPFS_PRIMARY,
-      'ipfs-only': SOURCE_MODE.IPFS_ONLY,
-      // Also accept server-side keys as fallback
-      CDN_PRIMARY: SOURCE_MODE.CDN_PRIMARY,
-      IPFS_PRIMARY: SOURCE_MODE.IPFS_PRIMARY,
-      IPFS_ONLY: SOURCE_MODE.IPFS_ONLY,
+      'p2p-primary': SOURCE_MODE.P2P_PRIMARY,
+      'p2p-only': SOURCE_MODE.P2P_ONLY,
     };
     downloadManager.setMode(modeMap[contentMode] || SOURCE_MODE.CDN_PRIMARY);
     console.log('[App] Content mode synced to download manager:', contentMode, '→', modeMap[contentMode] || SOURCE_MODE.CDN_PRIMARY);
@@ -649,7 +634,7 @@ export default function App() {
     }
   }, []);
 
-  // ── Open IPFS downloads folder ───────────────────────────────────────────
+  // ── Open the app downloads folder ────────────────────────────────────────
   const handleOpenFolder = useCallback(async () => {
     try {
       const tauriMod = await import('@tauri-apps/api/core').catch(() => null);
@@ -719,9 +704,9 @@ export default function App() {
       case 'network':
         return <NetworkPage nodeStats={realStats} />;
       case 'connections':
-        return <ConnectionsPage ipfsRunning={ipfsRunning} ipfsEnabled={ipfsEnabled} onIpfsToggle={handleIpfsToggle} />;
+        return <ConnectionsPage p2pRunning={p2pRunning} p2pEnabled={p2pEnabled} onP2pToggle={handleP2pToggle} />;
       case 'settings':
-        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} ipfsEnabled={ipfsEnabled} ipfsRunning={ipfsRunning} onIpfsToggle={handleIpfsToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} nodeStats={realStats} />;
+        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} nodeStats={realStats} />;
       default:
         return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} search={search} onSearch={setSearch} />;
     }

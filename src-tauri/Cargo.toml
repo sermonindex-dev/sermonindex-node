@@ -35,41 +35,4 @@ librqbit = "8"
 url = "2"
 urlencoding = "2"
 
-# ── Native IPFS / libp2p node ──
-# Runs a real TCP+QUIC libp2p node that public gateways can reach
-libp2p = { version = "0.54", default-features = false, features = [
-  "tokio",
-  "tcp",
-  "quic",
-  "dns",
-  "websocket",
-  "noise",
-  "yamux",
-  "kad",
-  "identify",
-  "ping",
-  "relay",
-  "dcutr",
-  "autonat",
-  "upnp",
-  "mdns",
-  "rendezvous",
-  "request-response",
-  "macros",
-  "serde",
-  "rsa",
-] }
 tokio = { version = "1", features = ["full"] }
-futures = "0.3"
-multihash = "0.19"
-cid = "0.11"
-sha2 = "0.10"
-unsigned-varint = "0.8"
-prost = "0.12"
-bytes = "1"
-async-trait = "0.1"
-# NAT-PMP + PCP port mapping — alternative to UPnP for routers that don't support it
-# Tries NAT-PMP (RFC 6886) first, then PCP (RFC 6887) — covers most modern routers
-crab_nat = "0.2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }

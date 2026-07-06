@@ -98,7 +98,8 @@ function expandSermon(entry, speakers, topics) {
     cdnUrl: buildCdnUrl(cdnCode, isVideo),
     // The "url" field is what the player/downloader uses — Archive.org first, CDN fallback
     url: buildArchiveUrl(archiveCode, isVideo) || buildCdnUrl(cdnCode, isVideo),
-    cid: null,
+    magnet: null, // Filled in when the catalog carries torrent magnet links
+
     type: isVideo ? 'video' : 'audio',
     format: isVideo ? 'mp4' : 'mp3',
     views: views || 0,
@@ -108,7 +109,7 @@ function expandSermon(entry, speakers, topics) {
 // ── State ─────────────────────────────────────────────────────────────────
 
 let catalog = [];
-let downloadState = {}; // sermonId → { downloaded: boolean, cid: string }
+let downloadState = {}; // sermonId → { downloaded: boolean, magnet: string }
 
 /**
  * Initialize the catalog — expand compact data, load download state
@@ -237,8 +238,7 @@ export function getCatalog() {
     downloaded: !!downloadState[s.id]?.downloaded,
     incomplete: !!downloadState[s.id]?.incomplete,
     diskSize: downloadState[s.id]?.diskSize || 0,
-    localCid: downloadState[s.id]?.cid || null,
-    ipfsPeers: 0, // Real peer count comes from IPFS node when online
+    localMagnet: downloadState[s.id]?.magnet || null,
   }));
 }
 
@@ -273,10 +273,10 @@ export function searchCatalog(query) {
 }
 
 /**
- * Mark a sermon as downloaded with its CID
+ * Mark a sermon as downloaded with its magnet link (or `local-<id>` placeholder)
  */
-export function markDownloaded(sermonId, cid, diskSize) {
-  downloadState[sermonId] = { downloaded: true, cid, diskSize: diskSize || 0 };
+export function markDownloaded(sermonId, magnet, diskSize) {
+  downloadState[sermonId] = { downloaded: true, magnet, diskSize: diskSize || 0 };
   _persistDownloadState();
 }
 

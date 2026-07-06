@@ -17,8 +17,9 @@ BitTorrent solves all three with zero infrastructure of our own:
 | Availability with zero volunteers | HTTP (Archive.org / Bunny CDN) stays as guaranteed fallback |
 
 The engine is [librqbit](https://github.com/ikatson/rqbit) (v8), embedded
-directly in the existing Tauri Rust process. The IPFS code is untouched and
-still compiles alongside — we remove it once the PoC is validated.
+directly in the existing Tauri Rust process. The IPFS code has now been fully
+removed (Rust modules, JS services, npm/cargo deps, UI). The pre-removal state
+is preserved in the git checkpoint commit "Checkpoint: pre-IPFS-removal state".
 
 ## What was added
 
@@ -87,6 +88,7 @@ Notes:
    first, based on heartbeat-server swarm stats), shows upload stats:
    "You've served N GB to M people."
 4. **Heartbeat server** — keeps its role as stats dashboard + optionally a
-   private tracker for faster peer discovery.
-5. **Remove** the IPFS modules (`ipfs_node.rs`, `bitswap.rs`, `unixfs.rs`,
-   `natpmp.rs`, `helia` npm deps) once parity is confirmed.
+   private tracker for faster peer discovery. (Payload now sends
+   `seeded_torrents` / `p2p_status` / `protocol: 'bittorrent'` — the server
+   dashboard may need a matching update.)
+5. ~~Remove the IPFS modules~~ — DONE (Rust modules, JS services, deps, CSP).

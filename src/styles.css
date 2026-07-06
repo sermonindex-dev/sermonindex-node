@@ -281,12 +281,12 @@ body {
   color: #4caf50;
 }
 
-.mode-badge.ipfs-primary {
+.mode-badge.p2p-primary {
   background: var(--gold-dim);
   color: var(--gold);
 }
 
-.mode-badge.ipfs-only {
+.mode-badge.p2p-only {
   background: rgba(212, 175, 55, 0.25);
   color: var(--gold);
 }
@@ -576,11 +576,11 @@ body {
   opacity: 1;
 }
 
-/* Tooltip on ipfs-badge (seeding badge) */
-.ipfs-badge[data-tooltip] {
+/* Tooltip on seed-badge (seeding badge) */
+.seed-badge[data-tooltip] {
   position: relative;
 }
-.ipfs-badge[data-tooltip]::after {
+.seed-badge[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
   bottom: calc(100% + 6px);
@@ -601,7 +601,7 @@ body {
   border: 1px solid #2a4158;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
-.ipfs-badge[data-tooltip]::before {
+.seed-badge[data-tooltip]::before {
   content: '';
   position: absolute;
   bottom: calc(100% + 2px);
@@ -614,8 +614,8 @@ body {
   transition: opacity 0.12s ease;
   z-index: 100;
 }
-.ipfs-badge[data-tooltip]:hover::after,
-.ipfs-badge[data-tooltip]:hover::before {
+.seed-badge[data-tooltip]:hover::after,
+.seed-badge[data-tooltip]:hover::before {
   opacity: 1;
 }
 
@@ -625,20 +625,20 @@ body {
   color: var(--gold);
 }
 
-/* IPFS availability badge */
-.ipfs-badge {
+/* Seeding availability badge */
+.seed-badge {
   font-size: 0.62rem;
   padding: 2px 6px;
   border-radius: 3px;
   margin-left: auto;
 }
 
-.ipfs-badge.available {
+.seed-badge.available {
   background: rgba(76, 175, 80, 0.12);
   color: #4caf50;
 }
 
-.ipfs-badge.local {
+.seed-badge.local {
   background: rgba(76, 175, 80, 0.12);
   color: #4caf50;
 }
@@ -945,12 +945,12 @@ input[type="password"]:focus, input[type="text"]:focus {
   transition: width 0.3s ease;
 }
 
-.dl-progress-mini-fill.pinning {
+.dl-progress-mini-fill.seeding {
   background: linear-gradient(90deg, #4a90d9, #6ea8fe);
-  animation: pinning-pulse 1.5s ease-in-out infinite;
+  animation: seeding-pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes pinning-pulse {
+@keyframes seeding-pulse {
   0%, 100% { opacity: 0.7; }
   50% { opacity: 1; }
 }
@@ -983,7 +983,7 @@ input[type="password"]:focus, input[type="text"]:focus {
   font-weight: 500;
 }
 
-.dl-status.pinning {
+.dl-status.seeding {
   background: var(--gold-dim);
   color: var(--gold);
 }
@@ -1091,7 +1091,7 @@ input[type="password"]:focus, input[type="text"]:focus {
 }
 
 /* Mode badge variants */
-.mode-badge.ipfs {
+.mode-badge.p2p {
   background: var(--gold-dim);
   color: var(--gold);
 }

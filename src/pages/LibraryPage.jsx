@@ -38,13 +38,13 @@ function DownloadProgress({ dlState }) {
   if (!dlState) return null;
   const { state, progress } = dlState;
 
-  if (state === 'pinning') {
+  if (state === 'seeding') {
     return (
       <div className="dl-progress-mini">
         <div className="dl-progress-mini-bar">
-          <div className="dl-progress-mini-fill pinning" style={{ width: '100%' }}></div>
+          <div className="dl-progress-mini-fill seeding" style={{ width: '100%' }}></div>
         </div>
-        <span className="dl-progress-mini-text" style={{ color: '#6ea8fe' }}>Pinning to IPFS</span>
+        <span className="dl-progress-mini-text" style={{ color: '#6ea8fe' }}>Seeding to P2P network</span>
       </div>
     );
   }
@@ -223,7 +223,7 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
           const isCurrentPlaying = currentSermon?.id === sermon.id && isPlaying;
           const isActive = currentSermon?.id === sermon.id;
           const dlState = sermon.dlState;
-          const isDownloading = dlState && ['downloading', 'pinning', 'queued'].includes(dlState.state);
+          const isDownloading = dlState && ['downloading', 'seeding', 'queued'].includes(dlState.state);
           const isExpanded = expandedId === sermon.id;
 
           return (
@@ -261,7 +261,7 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
 
               <div className="sermon-meta-row2">
                 {sermon.downloaded && (
-                  <span className="ipfs-badge local">{iconPin} <span style={{ marginLeft: '3px' }}>Seeded</span></span>
+                  <span className="seed-badge local">{iconPin} <span style={{ marginLeft: '3px' }}>Seeded</span></span>
                 )}
                 {sermon.year && (
                   <span className="year-badge">{sermon.year}</span>

@@ -3,8 +3,8 @@ import React from 'react';
 export default function TopBar({ contentMode, announcement, onNavigate, networkHealth }) {
   const modeLabels = {
     cdn: 'Archive.org + CDN',
-    'ipfs-primary': 'IPFS Primary',
-    'ipfs-only': 'IPFS Only',
+    'p2p-primary': 'P2P Primary',
+    'p2p-only': 'P2P Only',
   };
   const modeLabel = modeLabels[contentMode] || 'Archive.org + CDN';
 
