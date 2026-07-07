@@ -102,12 +102,25 @@ export default function App() {
   // Initialize catalog and the P2P (BitTorrent) node on mount
   useEffect(() => {
     async function init() {
-      // Load persistent node ID from disk before anything else
-      await loadNodeIdFromDisk();
+      // Stage 1: catalog FIRST — the library must load even if anything else fails
+      try {
+        await initCatalog();
+      } catch (e) {
+        console.error('[App] initCatalog failed (showing what we have):', e);
+      }
+      try {
+        setCatalog(getCatalog());
+        setLibraryStats(getLibraryStats());
+      } catch (e) {
+        console.error('[App] Catalog state failed:', e);
+      }
 
-      await initCatalog();
-      setCatalog(getCatalog());
-      setLibraryStats(getLibraryStats());
+      // Stage 2: persistent node ID (needed by heartbeat)
+      try {
+        await loadNodeIdFromDisk();
+      } catch (e) {
+        console.warn('[App] Node ID load failed (non-critical):', e);
+      }
 
       // Normalize server mode keys to app keys. Legacy server values
       // (e.g. *_PRIMARY / *_ONLY from the pre-BitTorrent era) map onto the
@@ -133,6 +146,7 @@ export default function App() {
 
       // Start heartbeat with remote config + content pack callbacks
       // Note: getStats callback is called fresh each heartbeat so it always gets current values
+      try {
       startHeartbeat(() => {
         const freshStats = getLibraryStats();
         return {
@@ -167,6 +181,9 @@ export default function App() {
           return sermon ? { title: sermon.title, speaker: sermon.speaker, type: sermon.type } : null;
         },
       });
+      } catch (e) {
+        console.error('[App] Heartbeat start failed (non-critical):', e);
+      }
 
       // Start the BitTorrent node by default (with 30s timeout for DHT/UPnP init)
       try {
@@ -190,7 +207,7 @@ export default function App() {
         setP2pRunning(false);
       }
     }
-    init();
+    init().catch(e => console.error('[App] init crashed:', e));
 
     // Notify server when app is closing/navigating away
     const handleBeforeUnload = () => {
