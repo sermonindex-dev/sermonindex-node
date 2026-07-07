@@ -167,7 +167,7 @@ async function hashFromUrl(url, onProgress) {
 
 // ─── Torrent + magnet construction ──────────────────────────────────────────
 
-function buildTorrent(entry, hashed) {
+function buildTorrent(entry, hashed, hashedUrl) {
   const info = {
     length: hashed.length,
     name: entry.filename,
@@ -182,7 +182,9 @@ function buildTorrent(entry, hashed) {
     'created by': 'SermonIndex canonical generator',
     'creation date': Math.floor(Date.now() / 1000),
     info,
-    'url-list': entry.sources, // BEP19 webseeds — CDN is the seed of last resort
+    // BEP19 webseed — ONLY the URL we actually hashed. The CDN and Archive
+    // copies may be different encodings; a webseed must be byte-identical.
+    'url-list': [hashedUrl],
   };
   return { bytes: bencode(torrent), infoHash };
 }
@@ -230,15 +232,15 @@ async function main() {
       for (const url of entry.sources) {
         try {
           const hashed = await hashFromUrl(url);
-          const { bytes, infoHash } = buildTorrent(entry, hashed);
+          const { bytes, infoHash } = buildTorrent(entry, hashed, url);
           writeFileSync(join(OUT_DIR, 'torrents', `${entry.id}.torrent`), bytes);
           master.entries[entry.id] = {
             name: entry.filename,
             size: hashed.length,
             info_hash: infoHash,
-            magnet: buildMagnet(infoHash, entry.filename, entry.sources),
+            magnet: buildMagnet(infoHash, entry.filename, [url]),
             torrent_url: `${TORRENT_PUBLIC_BASE}/${entry.id}.torrent`,
-            webseeds: entry.sources,
+            webseeds: [url],
           };
           if (entry.expectedSize && Math.abs(hashed.length - entry.expectedSize) > entry.expectedSize * 0.5) {
             console.warn(`  size mismatch ${entry.id}: catalog ${entry.expectedSize}, actual ${hashed.length}`);
