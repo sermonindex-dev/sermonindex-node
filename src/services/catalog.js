@@ -39,6 +39,27 @@ function resolveSpeakerImage(img) {
   return `${SI_SITE_BASE}${img}`;
 }
 
+/**
+ * Candidate portrait URLs for a speaker, most-likely first.
+ * The site has two slug conventions (compact "mikebullmore" and hyphenated
+ * "mike-bullmore") and not every referenced file actually exists — the UI
+ * tries each candidate in order, then falls back to initials.
+ */
+export function speakerImageCandidates(name, primary) {
+  const out = [];
+  const add = (u) => { if (u && !out.includes(u)) out.push(u); };
+  if (primary && !primary.includes('default-si-speaker')) {
+    add(primary.startsWith('http') ? primary : `${SI_SITE_BASE}${primary}`);
+  }
+  const lower = (name || '').toLowerCase();
+  const compact = lower.replace(/[^a-z0-9]/g, '');
+  const hyphen = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (compact) add(`${SI_SITE_BASE}/images/speakers/${compact[0]}/${compact}.png`);
+  if (hyphen && hyphen !== compact) add(`${SI_SITE_BASE}/images/speakers/${hyphen[0]}/${hyphen}.png`);
+  add(`${CDN_AUDIO_BASE}/default-si-speaker.png`);
+  return out;
+}
+
 function buildArchiveUrl(code, isVideo) {
   if (!code) return '';
   if (isVideo) return `${ARCHIVE_BASE}/SERMONINDEX_${code}/${code}.mp4`;

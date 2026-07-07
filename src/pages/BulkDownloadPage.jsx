@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { markDownloaded } from '../services/catalog.js';
+import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
@@ -7,10 +8,6 @@ function formatBytes(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-function getInitials(name) {
-  return name.split(' ').map(w => w[0]).join('').slice(0, 2);
 }
 
 export default function BulkDownloadPage({ catalog, downloadManager, downloadStates, onCatalogUpdate }) {
@@ -178,13 +175,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
               className={`bulk-speaker-row ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''}`}
               style={{ opacity: isDisabled ? 0.5 : 1, pointerEvents: isDisabled ? 'none' : 'auto' }}
             >
-              <div className="bulk-speaker-avatar">
-                {speaker.image ? (
-                  <img src={speaker.image} alt={speaker.name} onError={e => { e.target.style.display = 'none'; e.target.parentNode.textContent = getInitials(speaker.name); }} />
-                ) : (
-                  getInitials(speaker.name)
-                )}
-              </div>
+              <SpeakerAvatar speaker={speaker.name} image={speaker.image} className="bulk-speaker-avatar" />
 
               <div className="bulk-speaker-info">
                 <div className="bulk-speaker-name">{speaker.name}</div>

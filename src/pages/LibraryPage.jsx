@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 
 const PAGE_SIZE = 50;
 
@@ -19,20 +20,7 @@ const iconPin = <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stro
 const iconFilm = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>;
 const iconHeadphones = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" /></svg>;
 
-function getInitials(name) {
-  return name.split(' ').map(w => w[0]).join('').slice(0, 2);
-}
-
-function SpeakerAvatar({ speaker, image }) {
-  if (image) {
-    return (
-      <div className="sermon-speaker-avatar">
-        <img src={image} alt={speaker} loading="lazy" onError={e => { e.target.style.display = 'none'; e.target.parentNode.textContent = getInitials(speaker); }} />
-      </div>
-    );
-  }
-  return <div className="sermon-speaker-avatar">{getInitials(speaker)}</div>;
-}
+// SpeakerAvatar now shared — tries multiple site image conventions before initials
 
 function DownloadProgress({ dlState }) {
   if (!dlState) return null;
