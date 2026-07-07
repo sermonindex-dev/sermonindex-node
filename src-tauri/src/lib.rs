@@ -8,6 +8,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tokio::sync::Mutex;
 
+mod natpmp;
 mod torrent_node;
 
 /// Global state for the BitTorrent session handle.
@@ -437,6 +438,7 @@ async fn torrent_status(
             tcp_listen_port: None,
             uptime_secs: 0,
             torrent_count: 0,
+            natpmp: "inactive".to_string(),
         }),
     }
 }

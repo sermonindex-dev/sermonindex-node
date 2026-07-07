@@ -44,6 +44,8 @@ const LISTEN_PORT_RANGE: std::ops::Range<u16> = 42800..42840;
 pub struct TorrentHandle {
     pub session: Arc<Session>,
     started_at: Instant,
+    /// NAT-PMP/PCP mapping status: "trying" | "mapped via <gw>" | "unavailable"
+    natpmp_status: Arc<std::sync::Mutex<String>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -52,6 +54,8 @@ pub struct SessionInfo {
     pub tcp_listen_port: Option<u16>,
     pub uptime_secs: u64,
     pub torrent_count: usize,
+    /// "trying" | "mapped via <gateway>" | "unavailable"
+    pub natpmp: String,
 }
 
 #[derive(Serialize)]
@@ -139,9 +143,40 @@ pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHa
         session.tcp_listen_port()
     );
 
+    // NAT-PMP/PCP fallback: librqbit already tries UPnP; many routers
+    // (especially with UPnP disabled) accept NAT-PMP/PCP instead.
+    // Runs in the background and renews the mapping every hour.
+    let natpmp_status = Arc::new(std::sync::Mutex::new("trying".to_string()));
+    if let Some(port) = session.tcp_listen_port() {
+        let status = natpmp_status.clone();
+        tokio::spawn(async move {
+            loop {
+                match crate::natpmp::try_mapping(port, port).await {
+                    Some(m) => {
+                        log::info!(
+                            "[Torrent] NAT-PMP/PCP mapped port {} via {}",
+                            m.tcp_external_port, m.gateway
+                        );
+                        *status.lock().unwrap() = format!("mapped via {}", m.gateway);
+                        // Mapping lifetime is 2h — renew hourly.
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                    }
+                    None => {
+                        *status.lock().unwrap() = "unavailable".to_string();
+                        // Router may appear later (network change) — retry in 30 min.
+                        tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+                    }
+                }
+            }
+        });
+    } else {
+        *natpmp_status.lock().unwrap() = "unavailable".to_string();
+    }
+
     Ok(TorrentHandle {
         session,
         started_at: Instant::now(),
+        natpmp_status,
     })
 }
 
@@ -157,6 +192,7 @@ impl TorrentHandle {
             tcp_listen_port: self.session.tcp_listen_port(),
             uptime_secs: self.started_at.elapsed().as_secs(),
             torrent_count,
+            natpmp: self.natpmp_status.lock().unwrap().clone(),
         }
     }
 

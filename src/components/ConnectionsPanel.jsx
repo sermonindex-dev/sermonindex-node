@@ -10,108 +10,32 @@ function useCopiedTooltip(timeout = 1500) {
 /**
  * ConnectionsPanel — Real-time P2P (BitTorrent) connectivity dashboard
  *
- * Two-column layout on wide screens:
- * LEFT:  Network Health, Connection Layers, Active Torrents
- * RIGHT: Live Logs (newest at bottom, auto-scroll), Actions
- *
- * Bottom of left column aligns with bottom of right column.
+ * Design principle: tell the truth, simply.
+ * Three statuses that matter: Peer discovery, Reachability, Seeding.
+ * Regular users never need to configure anything — reachability is a
+ * "help the network more" upgrade, not a requirement.
  */
 
-// Connection layers — what the native BitTorrent node provides
-const LAYERS = [
-  {
-    id: 'tcp',
-    label: 'TCP Listener',
-    desc: 'Incoming peer connections — other clients connect to you over TCP',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 12h14" /><path d="M12 5l7 7-7 7" />
-      </svg>
-    ),
-  },
-  {
-    id: 'dht',
-    label: 'Mainline DHT',
-    desc: 'Trackerless peer discovery — millions of nodes, no central servers',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-      </svg>
-    ),
-  },
-  {
-    id: 'trackers',
-    label: 'Public Trackers',
-    desc: 'Second peer-discovery mechanism — announces your torrents to trackers',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 12.55a11 11 0 0 1 14.08 0" /><path d="M1.42 9a16 16 0 0 1 21.16 0" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" y1="20" x2="12.01" y2="20" />
-      </svg>
-    ),
-  },
-  {
-    id: 'upnp',
-    label: 'UPnP Port Forwarding',
-    desc: 'Automatic router port mapping — makes you reachable from the internet',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="6" width="20" height="12" rx="2" /><path d="M12 12h.01" /><path d="M17 12h.01" /><path d="M7 12h.01" />
-      </svg>
-    ),
-  },
-  {
-    id: 'swarm',
-    label: 'Peer Swarm',
-    desc: 'Live peer connections across all your torrents',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-  },
-  {
-    id: 'seeding',
-    label: 'Seeding',
-    desc: 'Fully-downloaded sermons being shared back to the network',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
-      </svg>
-    ),
-  },
+// Same trackers the Rust node announces to (keep in sync with torrent_node.rs)
+const TRACKERS = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.demonii.com:1337/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://exodus.desync.com:6969/announce',
 ];
 
-const STATUS_COLORS = {
-  connected: 'var(--green)',
-  connecting: 'var(--gold-text)',
-  disconnected: 'var(--text-muted)',
-  error: 'var(--red)',
-  listening: 'var(--green)',
-  active: 'var(--green)',
-  enabled: 'var(--green)',
-  inactive: 'var(--text-muted)',
-  idle: 'var(--text-muted)',
-};
+function buildMagnet(infoHash, name) {
+  let m = `magnet:?xt=urn:btih:${infoHash}`;
+  if (name) m += `&dn=${encodeURIComponent(name)}`;
+  for (const t of TRACKERS) m += `&tr=${encodeURIComponent(t)}`;
+  return m;
+}
 
-const STATUS_LABELS = {
-  connected: 'Connected',
-  connecting: 'Connecting...',
-  disconnected: 'Disconnected',
-  error: 'Error',
-  listening: 'Listening',
-  active: 'Active',
-  enabled: 'Enabled',
-  inactive: 'Inactive',
-  idle: 'Idle',
-};
+// Optional central probe endpoint (may not be deployed yet — degrades gracefully)
+const PROBE_URL = 'https://app.sermonindex.net/api/probe';
 
 // Max log entries to keep in memory
 const MAX_LOG_ENTRIES = 150;
-
-const OFFLINE_LAYERS = {
-  tcp: 'disconnected', dht: 'disconnected', trackers: 'inactive',
-  upnp: 'inactive', swarm: 'disconnected', seeding: 'inactive',
-};
 
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return '0 B';
@@ -121,14 +45,33 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+const icons = {
+  discovery: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  ),
+  reach: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14" /><path d="M12 5l7 7-7 7" />
+    </svg>
+  ),
+  seeding: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  ),
+};
+
 export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }) {
-  const [status, setStatus] = useState(null);        // { running, tcp_listen_port, uptime_secs, torrent_count }
+  const [status, setStatus] = useState(null);        // { running, tcp_listen_port, uptime_secs, torrent_count, natpmp }
   const [torrents, setTorrents] = useState([]);      // [{ id, info_hash, name, stats }]
-  const [layerStatus, setLayerStatus] = useState(OFFLINE_LAYERS);
   const [connectionLog, setConnectionLog] = useState([]);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copiedShow, fireCopied] = useCopiedTooltip();
+  // Reachability test result: null | {checking:true} | {open:boolean}
+  const [reach, setReach] = useState(null);
   const pollRef = useRef(null);
   const torrentModRef = useRef(null);
   const logEndRef = useRef(null);
@@ -176,31 +119,11 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   const seededCount = torrents.filter(t => t.stats?.finished).length;
   const uploadedTotal = torrents.reduce((n, t) => n + (t.stats?.uploaded_bytes || 0), 0);
 
-  // Determine layer statuses from session status + torrent stats
-  const analyzeConnections = useCallback((st, list) => {
-    if (!st || !st.running) {
-      setLayerStatus(OFFLINE_LAYERS);
-      return;
-    }
-    const peers = list.reduce((n, t) => n + (t.stats?.live?.snapshot?.peer_stats?.live || 0), 0);
-    const hasTorrents = list.length > 0;
-    const hasSeeds = list.some(t => t.stats?.finished);
-    setLayerStatus({
-      tcp: st.tcp_listen_port ? 'listening' : 'connecting',
-      dht: peers > 0 ? 'connected' : 'connecting',
-      trackers: hasTorrents ? 'active' : 'idle',
-      upnp: 'enabled', // librqbit requests UPnP mappings automatically while running
-      swarm: peers > 0 ? 'connected' : (hasTorrents ? 'connecting' : 'idle'),
-      seeding: hasSeeds ? 'active' : 'idle',
-    });
-  }, []);
-
   // Poll torrent session status + per-torrent stats
   useEffect(() => {
     if (!p2pRunning) {
       setStatus(null);
       setTorrents([]);
-      setLayerStatus(OFFLINE_LAYERS);
       return;
     }
 
@@ -213,7 +136,6 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         const list = st?.running ? await torrent.listTorrents().catch(() => []) : [];
         setStatus(st);
         setTorrents(list);
-        analyzeConnections(st, list);
 
         // Ingest new torrent-service log entries into the Live Log
         if (torrent.getLogs) {
@@ -235,11 +157,41 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
       }
     };
 
-    addLog('Polling P2P node status...', 'info');
     poll();
     pollRef.current = setInterval(poll, 4000);
     return () => clearInterval(pollRef.current);
-  }, [p2pRunning, getTorrent, analyzeConnections, addLog]);
+  }, [p2pRunning, getTorrent, addLog]);
+
+  // ─── Honest status derivation ───────────────────────────────────────────
+
+  const natpmp = status?.natpmp || 'inactive';
+
+  // Peer discovery: DHT + trackers are automatic once the session runs.
+  const discovery = !status?.running
+    ? { label: 'Offline', color: 'var(--text-muted)', on: false }
+    : torrents.length === 0
+      ? { label: 'Ready — nothing to announce yet', color: 'var(--text-muted)', on: true }
+      : livePeers > 0
+        ? { label: 'Working — peers found', color: 'var(--green)', on: true }
+        : { label: 'Announcing to DHT + trackers', color: 'var(--gold-text)', on: true };
+
+  // Reachability: only claim what we can actually verify.
+  const reachability = (() => {
+    if (!status?.running) return { key: 'off', label: 'Offline', color: 'var(--text-muted)', on: false };
+    if (uploadedTotal > 0) return { key: 'ok', label: 'Working — peers have downloaded from you', color: 'var(--green)', on: true };
+    if (reach?.checking) return { key: 'checking', label: 'Testing…', color: 'var(--gold-text)', on: true };
+    if (reach?.open === true) return { key: 'ok', label: 'Reachable from the internet ✓', color: 'var(--green)', on: true };
+    if (reach?.open === false) return { key: 'closed', label: 'Not reachable from outside', color: 'var(--orange)', on: true };
+    if (natpmp.startsWith('mapped')) return { key: 'ok', label: 'Port opened automatically (NAT-PMP)', color: 'var(--green)', on: true };
+    if (natpmp === 'trying') return { key: 'unknown', label: 'Trying automatic setup (UPnP / NAT-PMP)…', color: 'var(--gold-text)', on: true };
+    return { key: 'unknown', label: 'Unknown — automatic setup not confirmed', color: 'var(--gold-text)', on: true };
+  })();
+
+  const seeding = !status?.running
+    ? { label: 'Offline', color: 'var(--text-muted)', on: false }
+    : seededCount > 0
+      ? { label: `Sharing ${seededCount} sermon${seededCount === 1 ? '' : 's'}`, color: 'var(--green)', on: true }
+      : { label: 'Nothing to share yet', color: 'var(--text-muted)', on: true };
 
   // Overall health score — mirrors the TopBar score in App.jsx
   const healthScore = (() => {
@@ -257,6 +209,43 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   const healthLabel = healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore >= 20 ? 'Fair' : 'Offline';
   const healthColor = healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore >= 20 ? 'var(--orange)' : 'var(--text-muted)';
 
+  // ─── Reachability test ──────────────────────────────────────────────────
+  // Tries the SermonIndex probe endpoint; if it isn't deployed yet, falls
+  // back to opening canyouseeme.org in the browser with the port logged.
+  const handleTestReachability = useCallback(async () => {
+    const port = status?.tcp_listen_port;
+    if (!port) return;
+    setReach({ checking: true });
+    addLog(`Testing whether port ${port} is reachable from the internet...`);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(PROBE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const d = await res.json();
+        if (typeof d.open === 'boolean') {
+          setReach({ open: d.open });
+          addLog(d.open ? `Port ${port} is OPEN — you are reachable ✓` : `Port ${port} is CLOSED — see "Help the network more" below`, d.open ? 'success' : 'warn');
+          return;
+        }
+      }
+      throw new Error('probe unavailable');
+    } catch {
+      setReach(null);
+      addLog(`Automatic test not available yet — opening canyouseeme.org (check port ${port})`, 'warn');
+      try {
+        const tauri = await import('@tauri-apps/api/core');
+        await tauri.invoke('open_url', { url: 'https://canyouseeme.org/' });
+      } catch {}
+    }
+  }, [status, addLog]);
+
   // Restart handler
   const handleReconnect = useCallback(async () => {
     setIsReconnecting(true);
@@ -264,17 +253,14 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     try {
       const torrent = await getTorrent();
       if (torrent) {
-        addLog('Stopping session...');
         await torrent.stopSession();
-        addLog('Session stopped — waiting for port release...');
         await new Promise(r => setTimeout(r, 2000));
-        addLog('Restarting session...');
         const st = await torrent.startSession();
         addLog(`Session restarted (port ${st?.tcp_listen_port ?? '?'}, ${st?.torrent_count ?? 0} torrents)`, 'success');
+        setReach(null);
       }
     } catch (err) {
       addLog(`Restart failed: ${err.message}`, 'error');
-      // Try to recover — startSession is idempotent
       try {
         const torrent = await getTorrent();
         if (torrent) {
@@ -288,12 +274,12 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     setIsReconnecting(false);
   }, [getTorrent, addLog]);
 
-  // Copy a magnet link for a seeded torrent (from the torrent list)
+  // Copy magnet links for all seeded torrents (full magnets incl. trackers)
   const handleCopyMagnets = useCallback(async () => {
     try {
       const lines = torrents
         .filter(t => t.stats?.finished)
-        .map(t => `${t.name}\nmagnet:?xt=urn:btih:${t.info_hash}`);
+        .map(t => `${t.name || t.info_hash}\n${buildMagnet(t.info_hash, t.name)}`);
       if (lines.length === 0) {
         addLog('No seeded torrents to copy yet', 'warn');
         return;
@@ -305,10 +291,16 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     }
   }, [torrents, addLog]);
 
+  const rows = [
+    { id: 'discovery', icon: icons.discovery, label: 'Finding peers', desc: 'DHT + public trackers announce your sermons automatically', st: discovery },
+    { id: 'reach', icon: icons.reach, label: 'Incoming connections', desc: 'Whether other people can connect directly to your node', st: reachability, action: 'test' },
+    { id: 'seeding', icon: icons.seeding, label: 'Sharing back', desc: 'Downloaded sermons being served to the network', st: seeding },
+  ];
+
   // Render — two-column layout with aligned bottoms
   return (
     <div className="connections-layout">
-      {/* ── LEFT COLUMN: Health + Layers + Active Torrents ── */}
+      {/* ── LEFT COLUMN: Health + Status + Active Torrents ── */}
       <div className="connections-left">
         {/* Health overview */}
         <div className="seed-card">
@@ -325,12 +317,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
           </div>
 
           {/* Health bar */}
-          <div style={{
-            height: 6, borderRadius: 3,
-            background: 'var(--border)',
-            overflow: 'hidden',
-            marginBottom: '12px',
-          }}>
+          <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden', marginBottom: '12px' }}>
             <div style={{
               height: '100%', borderRadius: 3,
               width: `${healthScore}%`,
@@ -354,6 +341,10 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               <div style={{ fontSize: '1.1rem', fontWeight: 700, color: seededCount > 0 ? 'var(--green)' : 'var(--text-primary)' }}>{seededCount}</div>
             </div>
             <div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Uploaded</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{formatBytes(uploadedTotal)}</div>
+            </div>
+            <div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Uptime</div>
               <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {status?.uptime_secs ? formatUptime(status.uptime_secs) : '—'}
@@ -361,86 +352,86 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
             </div>
           </div>
 
-          {/* Native node extras */}
           {status?.running && (
-            <div style={{ marginTop: '12px', padding: '10px 12px', background: 'rgba(78, 203, 113, 0.06)', borderRadius: '8px', border: '1px solid rgba(78, 203, 113, 0.15)', overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--green)', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Native BitTorrent Node — DHT + Trackers + UPnP
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                <span>Listen port: <strong style={{ color: 'var(--text-primary)' }}>{status.tcp_listen_port || 'binding...'}</strong></span>
-                <span>Uploaded: <strong style={{ color: 'var(--text-primary)' }}>{formatBytes(uploadedTotal)}</strong></span>
-              </div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                Seeded sermons are also downloadable with any standard client (qBittorrent, Transmission).
-              </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '12px' }}>
+              Listening on port <strong style={{ color: 'var(--text-primary)' }}>{status.tcp_listen_port || '…'}</strong>.
+              Seeded sermons are downloadable with any torrent client (qBittorrent, Transmission).
             </div>
           )}
         </div>
 
-        {/* Connection layers */}
+        {/* Status — three things that matter */}
         <div className="seed-card">
-          <h3>Connection Layers</h3>
+          <h3>Node Status</h3>
           <p style={{ marginBottom: '8px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-            Peer discovery and reachability mechanisms. Each layer works automatically.
+            Everything is automatic — nothing here needs configuring to use SermonIndex.
           </p>
 
-          {LAYERS.map((layer, i) => {
-            const status_ = layerStatus[layer.id];
-            const color = STATUS_COLORS[status_] || 'var(--text-muted)';
-            const label = STATUS_LABELS[status_] || status_;
-            // "Active" = actually carrying traffic or providing a service right now
-            const isActive = ['connected', 'listening', 'active', 'enabled'].includes(status_);
-            return (
-              <div key={layer.id}
-                className="settings-row"
-                style={{
-                  ...(i === LAYERS.length - 1 ? { border: 'none' } : {}),
-                  // Highlight active layers with a subtle background
-                  ...(isActive ? {
-                    background: 'rgba(78, 203, 113, 0.04)',
-                    borderRadius: '6px',
-                    marginLeft: '-8px',
-                    marginRight: '-8px',
-                    paddingLeft: '8px',
-                    paddingRight: '8px',
-                  } : {
-                    opacity: 0.55,
-                  }),
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    width: 32, height: 32, borderRadius: '8px',
-                    background: 'var(--bg-hover)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                    color: isActive ? 'var(--text-secondary)' : 'var(--text-muted)',
-                  }}>
-                    {layer.icon}
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 500, fontSize: '0.85rem' }}>{layer.label}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{layer.desc}</div>
-                  </div>
+          {rows.map((row, i) => (
+            <div key={row.id} className="settings-row" style={i === rows.length - 1 ? { border: 'none' } : {}}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: '8px',
+                  background: 'var(--bg-hover)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                  color: row.st.on ? 'var(--text-secondary)' : 'var(--text-muted)',
+                }}>
+                  {row.icon}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: color,
-                    boxShadow: isActive ? `0 0 6px ${color}` : 'none',
-                  }} />
-                  <span style={{
-                    fontSize: '0.76rem', fontWeight: 500,
-                    color: color,
-                    minWidth: '90px',
-                  }}>
-                    {label}
-                  </span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: '0.85rem' }}>{row.label}</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{row.desc}</div>
                 </div>
               </div>
-            );
-          })}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <div style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: row.st.color,
+                  boxShadow: row.st.on ? `0 0 6px ${row.st.color}` : 'none',
+                }} />
+                <span style={{ fontSize: '0.76rem', fontWeight: 500, color: row.st.color, maxWidth: '220px', textAlign: 'right' }}>
+                  {row.st.label}
+                </span>
+                {row.action === 'test' && status?.running && reachability.key !== 'ok' && (
+                  <button
+                    className="btn btn-outline"
+                    style={{ fontSize: '0.72rem', padding: '3px 10px', whiteSpace: 'nowrap' }}
+                    onClick={handleTestReachability}
+                    disabled={!!reach?.checking}
+                  >
+                    {reach?.checking ? 'Testing…' : 'Test'}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Plain-language help — only relevant if not confirmed reachable */}
+          <details style={{ marginTop: '10px' }}>
+            <summary style={{ fontSize: '0.78rem', color: 'var(--gold-text)', cursor: 'pointer', fontWeight: 600 }}>
+              Help the network more (optional)
+            </summary>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6, padding: '10px 2px 2px' }}>
+              <p style={{ marginBottom: '8px' }}>
+                You can download and share sermons without changing anything. But if other people can
+                connect <em>directly</em> to your node, you become part of the network's backbone —
+                especially valuable for seed nodes.
+              </p>
+              <p style={{ marginBottom: '8px' }}>
+                The app tries to open its port automatically (UPnP and NAT-PMP). If the test above says
+                you're not reachable, the usual fix is one of:
+              </p>
+              <p style={{ marginBottom: '8px' }}>
+                1. In your router's settings, turn on <strong>UPnP</strong>, then restart this app.<br />
+                2. Or add a port forward: <strong>TCP {status?.tcp_listen_port || '42800'}</strong> (or the
+                range 42800–42839) to this computer.
+              </p>
+              <p style={{ marginBottom: 0, color: 'var(--text-muted)' }}>
+                Not reachable? You still help — your node uploads to every peer it can reach.
+              </p>
+            </div>
+          </details>
         </div>
 
         {/* Active Torrents */}
@@ -534,7 +525,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                     {copiedShow && (
                       <span style={{
                         position: 'absolute', bottom: '110%', left: '50%', transform: 'translateX(-50%)',
-                        background: '#2d7ff9', color: '#fff', fontSize: '0.65rem', fontWeight: 600,
+                        background: 'var(--olive)', color: '#fff', fontSize: '0.65rem', fontWeight: 600,
                         padding: '3px 10px', borderRadius: '4px', whiteSpace: 'nowrap',
                         pointerEvents: 'none', zIndex: 10,
                         boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
@@ -602,6 +593,24 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         {/* Actions */}
         <div className="seed-card">
           <h3>Actions</h3>
+
+          {/* Test reachability */}
+          <div className="settings-row">
+            <div>
+              <div style={{ fontWeight: 500, fontSize: '0.85rem' }}>Test Reachability</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                Check whether other peers can connect directly to your node
+              </div>
+            </div>
+            <button
+              className="btn btn-outline"
+              style={{ fontSize: '0.78rem', padding: '5px 14px', whiteSpace: 'nowrap' }}
+              onClick={handleTestReachability}
+              disabled={!p2pRunning || !!reach?.checking}
+            >
+              {reach?.checking ? 'Testing…' : 'Test'}
+            </button>
+          </div>
 
           {/* Restart */}
           <div className="settings-row">
