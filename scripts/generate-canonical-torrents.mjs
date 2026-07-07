@@ -54,6 +54,14 @@ const ARCHIVE_BASE = 'https://archive.org/download';
 // Where the .torrent files will live once uploaded (used in the master list)
 const TORRENT_PUBLIC_BASE = 'https://sermonindex1.b-cdn.net/torrents';
 
+// Bunny caps objects per folder (10k). Shard torrents into subfolders by the
+// first TWO characters of the sermon ID → ~3,965 folders, ~9 files each.
+// DO NOT change this scheme once published — URLs live in the master list.
+function shardOf(id) {
+  const clean = (c) => (/^[a-zA-Z0-9]$/.test(c || '') ? c : '_');
+  return clean(id[0]) + clean(id[1]);
+}
+
 // ─── CLI args ───────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -233,13 +241,15 @@ async function main() {
         try {
           const hashed = await hashFromUrl(url);
           const { bytes, infoHash } = buildTorrent(entry, hashed, url);
-          writeFileSync(join(OUT_DIR, 'torrents', `${entry.id}.torrent`), bytes);
+          const shard = shardOf(entry.id);
+          mkdirSync(join(OUT_DIR, 'torrents', shard), { recursive: true });
+          writeFileSync(join(OUT_DIR, 'torrents', shard, `${entry.id}.torrent`), bytes);
           master.entries[entry.id] = {
             name: entry.filename,
             size: hashed.length,
             info_hash: infoHash,
             magnet: buildMagnet(infoHash, entry.filename, [url]),
-            torrent_url: `${TORRENT_PUBLIC_BASE}/${entry.id}.torrent`,
+            torrent_url: `${TORRENT_PUBLIC_BASE}/${shard}/${entry.id}.torrent`,
             webseeds: [url],
           };
           if (entry.expectedSize && Math.abs(hashed.length - entry.expectedSize) > entry.expectedSize * 0.5) {

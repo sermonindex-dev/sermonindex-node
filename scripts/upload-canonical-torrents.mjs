@@ -83,7 +83,24 @@ async function main() {
     process.exit(1);
   }
 
-  const files = readdirSync(torrentsDir).filter((f) => f.endsWith('.torrent'));
+  // Walk shard subfolders (torrents/<xx>/<id>.torrent). Flat legacy files at
+  // the root are rejected — regenerate with the current (sharded) generator.
+  const files = []; // relative paths like "6H/6Hr0UUXmARn8H0bk.torrent"
+  let legacyFlat = 0;
+  for (const entry of readdirSync(torrentsDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      for (const f of readdirSync(join(torrentsDir, entry.name))) {
+        if (f.endsWith('.torrent')) files.push(`${entry.name}/${f}`);
+      }
+    } else if (entry.name.endsWith('.torrent')) {
+      legacyFlat++;
+    }
+  }
+  if (legacyFlat > 0) {
+    console.error(`Found ${legacyFlat} un-sharded .torrent files at the root of ${torrentsDir}.`);
+    console.error('These are from an old generator run — delete canonical-output/ and regenerate.');
+    process.exit(1);
+  }
   const queue = files.filter((f) => !uploaded[f]);
   console.log(`Torrent files: ${files.length} total · already uploaded: ${files.length - queue.length} · this run: ${queue.length}`);
 
@@ -94,7 +111,7 @@ async function main() {
     while (queue.length > 0) {
       const f = queue.shift();
       try {
-        const bytes = readFileSync(join(torrentsDir, f));
+        const bytes = readFileSync(join(torrentsDir, f)); // f includes the shard folder
         await put(`${REMOTE_DIR}/${f}`, bytes);
         uploaded[f] = Date.now();
         done++;
