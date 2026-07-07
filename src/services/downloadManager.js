@@ -117,12 +117,24 @@ async function loadTorrent() {
  * Returns { id, info_hash, magnet, torrent_file, name } or null on failure.
  * Fire-and-forget — a seeding failure must never break the download flow.
  */
-async function trySeedTorrent(filename) {
+async function trySeedTorrent(filename, sermon = null) {
   try {
     const mod = await loadTorrent();
     if (!mod) return null;
     await mod.startSession(); // idempotent
-    // Keep the default torrent name (= filename) so the sermon ID stays recoverable
+
+    // TRUST RULE: if the master list gave this sermon a canonical torrent,
+    // seed THAT (librqbit hash-checks the file we just downloaded against the
+    // official fingerprint, then joins the one canonical swarm). The file is
+    // already in the session's default output folder, so nothing re-downloads.
+    if (sermon?.torrentUrl || sermon?.magnet?.startsWith('magnet:')) {
+      const source = sermon.torrentUrl || sermon.magnet;
+      const res = await mod.addTorrent(source);
+      return { magnet: sermon.magnet, info_hash: sermon.infoHash || res?.info_hash, id: res?.id };
+    }
+
+    // No canonical entry (master list not published / new file) — legacy
+    // self-generated torrent so the file is at least shareable.
     return await mod.seedDownloaded(filename);
   } catch (e) {
     console.warn('[DL] Torrent seeding skipped:', e?.message || e);
@@ -258,7 +270,7 @@ class DownloadManager {
     entry.state = DL_STATE.SEEDING;
     this._notify(sermon.id, entry);
 
-    trySeedTorrent(filename)
+    trySeedTorrent(filename, sermon)
       .then((seedInfo) => {
         if (seedInfo && seedInfo.magnet) {
           entry.magnet = seedInfo.magnet;

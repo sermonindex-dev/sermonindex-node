@@ -221,7 +221,47 @@ export async function initCatalog() {
   // Try API update in background (for new sermons added after app was built)
   fetchCatalogUpdate().catch(() => {});
 
+  // Load the canonical torrent MASTER LIST in the background.
+  // This is the trust anchor: sermons gain magnet/infoHash/torrentUrl fields
+  // and the app only ever joins those official swarms.
+  fetchMasterList().catch(() => {});
+
   return catalog;
+}
+
+// Published by scripts/generate-canonical-torrents.mjs (see that file's header)
+const MASTER_LIST_URL = 'https://sermonindex1.b-cdn.net/torrents/master-list.json';
+let _masterListLoaded = false;
+
+export function hasMasterList() {
+  return _masterListLoaded;
+}
+
+async function fetchMasterList() {
+  try {
+    const res = await fetch(MASTER_LIST_URL, { cache: 'no-cache' });
+    if (!res.ok) return; // not published yet — app works without it
+    const data = await res.json();
+    if (!data || !data.entries) return;
+    let merged = 0;
+    for (const s of catalog) {
+      const m = data.entries[s.id];
+      if (m && m.info_hash) {
+        s.magnet = m.magnet;
+        s.infoHash = m.info_hash;
+        s.torrentUrl = m.torrent_url;
+        s.verifiedSize = m.size; // actual byte size, hashed — catalog sizes are unreliable
+        merged++;
+      }
+    }
+    _masterListLoaded = merged > 0;
+    console.log(`[Catalog] Master list loaded — ${merged} sermons have canonical torrents`);
+    if (merged > 0 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('si-master-list', { detail: { merged } }));
+    }
+  } catch {
+    // Master list not reachable — HTTP downloads still work fine
+  }
 }
 
 /**

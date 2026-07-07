@@ -209,6 +209,13 @@ export default function App() {
     }
     init().catch(e => console.error('[App] init crashed:', e));
 
+    // Refresh sermon list when the canonical master list arrives (adds magnets)
+    const handleMasterList = () => {
+      setCatalog(getCatalog());
+      console.log('[App] Catalog refreshed with canonical torrent links');
+    };
+    window.addEventListener('si-master-list', handleMasterList);
+
     // Notify server when app is closing/navigating away
     const handleBeforeUnload = () => {
       stopHeartbeat();
@@ -217,6 +224,7 @@ export default function App() {
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('si-master-list', handleMasterList);
       stopHeartbeat();
     };
   }, []);
