@@ -39,6 +39,10 @@ const getArg = (name, dflt) => {
   return i >= 0 ? args[i + 1] : dflt;
 };
 const DRY_RUN = args.includes('--dry-run');
+// --verify: ignore the local log; HEAD every file's public URL and re-upload
+// any that the CDN doesn't actually have. Slower but heals any drift.
+const VERIFY = args.includes('--verify');
+const PUBLIC_BASE = 'https://sermonindex1.b-cdn.net';
 const OUT_DIR = getArg('out', join(__dirname, '..', 'canonical-output'));
 const REMOTE_DIR = getArg('remote-dir', 'torrents'); // path inside the storage zone
 const CONCURRENCY = Math.max(1, parseInt(getArg('concurrency', '8'), 10));
@@ -101,8 +105,37 @@ async function main() {
     console.error('These are from an old generator run — delete canonical-output/ and regenerate.');
     process.exit(1);
   }
-  const queue = files.filter((f) => !uploaded[f]);
-  console.log(`Torrent files: ${files.length} total · already uploaded: ${files.length - queue.length} · this run: ${queue.length}`);
+  let queue;
+  if (VERIFY) {
+    console.log(`VERIFY mode: checking all ${files.length} public URLs against the CDN...`);
+    const missing = [];
+    let checked = 0, qi = 0;
+    async function checker() {
+      while (qi < files.length) {
+        const f = files[qi++];
+        try {
+          const c = new AbortController();
+          const t = setTimeout(() => c.abort(), 8000);
+          const res = await fetch(`${PUBLIC_BASE}/${REMOTE_DIR}/${f}?verify=${Date.now()}`, { method: 'HEAD', signal: c.signal });
+          clearTimeout(t);
+          if (res.status === 200) uploaded[f] = uploaded[f] || Date.now();
+          else missing.push(f);
+        } catch {
+          missing.push(f); // unreachable — treat as missing, re-upload is harmless
+        }
+        checked++;
+        if (checked % 2000 === 0) console.log(`  verified ${checked}/${files.length} (${missing.length} missing so far)`);
+      }
+    }
+    await Promise.all(Array.from({ length: 24 }, checker));
+    for (const f of missing) delete uploaded[f];
+    writeFileSync(logPath, JSON.stringify(uploaded, null, 1));
+    console.log(`Verification done: ${files.length - missing.length} live, ${missing.length} missing → re-uploading those`);
+    queue = missing;
+  } else {
+    queue = files.filter((f) => !uploaded[f]);
+  }
+  console.log(`Torrent files: ${files.length} total · confirmed: ${files.length - queue.length} · this run: ${queue.length}`);
 
   let done = 0, failed = 0;
   const persist = () => writeFileSync(logPath, JSON.stringify(uploaded, null, 1));
