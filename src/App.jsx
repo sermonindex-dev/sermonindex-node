@@ -273,16 +273,23 @@ export default function App() {
     let cancelled = false;
     const poll = async () => {
       try {
+        const hb = await import('./services/heartbeat.js').catch(() => null);
         const [seeds, mapNodes] = await Promise.all([
           fetchSeeds().catch(() => []),
-          import('./services/heartbeat.js').then(m => m.fetchNodeMap()).catch(() => []),
+          hb?.fetchNodeMap ? hb.fetchNodeMap().catch(() => []) : Promise.resolve([]),
         ]);
         if (cancelled) return;
+        // Exclude OUR OWN node from the seed count. Otherwise a volunteer who ran
+        // the reachability test on the Seed Node page (which registers them in the
+        // directory) sees "[1]" that is really just themselves — not a backbone
+        // seed they can rely on. The server already filters to reachable-only;
+        // this drops self so the badge reflects OTHER reachable seed nodes.
+        let selfShort = '';
+        try { selfShort = String(hb?.getNodeId?.() || '').slice(0, 8); } catch {}
+        const otherSeeds = selfShort ? seeds.filter(s => s.node !== selfShort) : seeds;
         const count = Math.max(seeds.length, Array.isArray(mapNodes) ? mapNodes.length : 0);
         setNodesOnline(count);
-        // Reachable seed nodes = entries in the seed directory (they registered
-        // via the seed page's reachability test).
-        setSeedsOnline(seeds.length);
+        setSeedsOnline(otherSeeds.length);
       } catch { /* keep last value */ }
     };
     const t = setTimeout(poll, 5000);   // first check shortly after launch

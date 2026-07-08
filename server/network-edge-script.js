@@ -131,8 +131,12 @@ BunnySDK.net.http.serve(async (request) => {
 
       if (request.method === "GET") {
         const nodes = await loadSeeds();
+        // A backbone seed only counts if it is BOTH recently seen AND actually
+        // reachable from the internet. A node with a closed port (reachable:false)
+        // can still leech/seed as a leaf, but it is not part of the reliable
+        // backbone, so it must not appear in this directory or the menu count.
         const seeds = Object.values(nodes)
-          .filter((n) => now - (n.last_seen || 0) < STALE_MS)
+          .filter((n) => n.reachable && now - (n.last_seen || 0) < STALE_MS)
           .map((n) => ({
             node: String(n.node || "").slice(0, 8),
             ip: n.ip, port: n.port, scope: n.scope,
