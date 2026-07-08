@@ -10,3 +10,7 @@ ipfs_debug.log
 # Never commit signing keys
 *.key
 *.key.pub
+
+# Bundled speaker portraits — fetched locally via scripts/fetch-speaker-images.mjs
+# (run before building a release; the app falls back to the CDN if absent)
+public/images/speakers/

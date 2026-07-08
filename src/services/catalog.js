@@ -48,15 +48,31 @@ function resolveSpeakerImage(img) {
 export function speakerImageCandidates(name, primary) {
   const out = [];
   const add = (u) => { if (u && !out.includes(u)) out.push(u); };
+  // Try a LOCAL bundled copy FIRST (served from public/, zero network → instant,
+  // offline, never broken), then the remote CDN as a fallback for portraits not
+  // yet fetched into the app. scripts/fetch-speaker-images.mjs mirrors portraits
+  // into public/images/speakers/<letter>/<slug>.png, so the bare site path (e.g.
+  // /images/speakers/a/x.png) resolves against the app's own origin.
+  const addLocalFirst = (path) => {
+    if (!path) return;
+    add(path);                      // local (bundled in public/)
+    add(`${SI_SITE_BASE}${path}`);  // remote fallback
+  };
   if (primary && !primary.includes('default-si-speaker')) {
-    add(primary.startsWith('http') ? primary : `${SI_SITE_BASE}${primary}`);
+    if (primary.startsWith('http')) {
+      // Full URL — prefer a local mirror of its path, then the URL itself.
+      try { add(new URL(primary).pathname); } catch { /* not a parseable URL */ }
+      add(primary);
+    } else {
+      addLocalFirst(primary);
+    }
   }
   const lower = (name || '').toLowerCase();
   const compact = lower.replace(/[^a-z0-9]/g, '');
   const hyphen = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  if (compact) add(`${SI_SITE_BASE}/images/speakers/${compact[0]}/${compact}.png`);
-  if (hyphen && hyphen !== compact) add(`${SI_SITE_BASE}/images/speakers/${hyphen[0]}/${hyphen}.png`);
-  // NOTE: no remote placeholder here on purpose. For the ~420 speakers with no
+  if (compact) addLocalFirst(`/images/speakers/${compact[0]}/${compact}.png`);
+  if (hyphen && hyphen !== compact) addLocalFirst(`/images/speakers/${hyphen[0]}/${hyphen}.png`);
+  // NOTE: no remote placeholder here on purpose. For the ~440 speakers with no
   // portrait, hitting a remote CDN default caused visible lag/flicker on every
   // render. SpeakerAvatar's <img> onError chain lands on a bundled local asset
   // (then initials) instead — zero network requests for the placeholder.

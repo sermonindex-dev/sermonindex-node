@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "fetch-images": "node scripts/fetch-speaker-images.mjs"
   },
   "keywords": [
     "sermonindex",
