@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { getCatalog } from '../services/catalog.js';
 
 // Tiny "Copied!" tooltip state hook
 function useCopiedTooltip(timeout = 1500) {
@@ -274,12 +275,24 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     setIsReconnecting(false);
   }, [getTorrent, addLog]);
 
-  // Copy magnet links for all seeded torrents (full magnets incl. trackers)
+  // Copy magnet links for all seeded torrents. Prefers the CANONICAL magnet
+  // from the master list (includes the CDN webseed — works anywhere, even
+  // with zero peers); falls back to a tracker-only magnet.
   const handleCopyMagnets = useCallback(async () => {
     try {
+      const byId = new Map();
+      try {
+        for (const s of getCatalog()) {
+          if (s.magnet && s.magnet.startsWith('magnet:')) byId.set(s.id, s.magnet);
+        }
+      } catch {}
       const lines = torrents
         .filter(t => t.stats?.finished)
-        .map(t => `${t.name || t.info_hash}\n${buildMagnet(t.info_hash, t.name)}`);
+        .map(t => {
+          const id = (t.name || '').replace(/\.(mp3|mp4)$/i, '');
+          const magnet = byId.get(id) || buildMagnet(t.info_hash, t.name);
+          return `${t.name || t.info_hash}\n${magnet}`;
+        });
       if (lines.length === 0) {
         addLog('No seeded torrents to copy yet', 'warn');
         return;
