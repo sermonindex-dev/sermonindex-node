@@ -211,8 +211,28 @@ export async function initCatalog() {
             }
           }
         }
-        if (removed > 0 || incomplete > 0) {
-          console.log(`[Catalog] Cleaned ${removed} stale entries, found ${incomplete} incomplete downloads`);
+        // ── ADOPT ORPHANS: the folder is the source of truth ──
+        // Any <id>.<ext> file on disk that maps to a catalog sermon but isn't
+        // in downloadState gets added (this recovers downloads whose state was
+        // lost, so My Downloads always matches the actual folder contents).
+        let adopted = 0;
+        for (const filename of files) {
+          const base = filename.replace(/\.(mp3|mp4)$/i, '');
+          if (base === filename) continue; // not a sermon media file
+          if (!validIds.has(base)) continue; // unknown id — leave foreign files alone
+          if (!downloadState[base]?.downloaded) {
+            let diskSize = 0;
+            try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch {}
+            downloadState[base] = {
+              downloaded: true,
+              magnet: downloadState[base]?.magnet || `local-${base}`,
+              diskSize: diskSize || downloadState[base]?.diskSize || 0,
+            };
+            adopted++;
+          }
+        }
+        if (removed > 0 || incomplete > 0 || adopted > 0) {
+          console.log(`[Catalog] Reconciled downloads: ${removed} stale removed, ${adopted} orphan files adopted`);
           _persistDownloadState();
         }
       } else if (files !== null && files.length === 0 && dlCount > 2) {
@@ -419,7 +439,20 @@ export async function revalidateDownloads() {
       return false;
     }
     const fileSet = new Set(files);
+    const validIds = new Set(catalog.map(s => s.id));
     let changed = 0;
+    // Adopt orphan files on disk (folder = source of truth) so My Downloads
+    // always matches the actual folder — recovers downloads whose state was lost.
+    for (const filename of files) {
+      const base = filename.replace(/\.(mp3|mp4)$/i, '');
+      if (base === filename || !validIds.has(base)) continue;
+      if (!downloadState[base]?.downloaded) {
+        let diskSize = 0;
+        try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch {}
+        downloadState[base] = { downloaded: true, magnet: downloadState[base]?.magnet || `local-${base}`, diskSize: diskSize || 0 };
+        changed++;
+      }
+    }
     for (const id of Object.keys(downloadState)) {
       if (!downloadState[id].downloaded) continue;
       const sermon = catalog.find(s => s.id === id);
