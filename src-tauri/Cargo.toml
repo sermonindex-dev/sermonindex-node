@@ -38,5 +38,7 @@ urlencoding = "2"
 crab_nat = "0.2"
 # Native HTTP fetch for the master list (webview fetch is blocked by CDN CORS)
 reqwest = "0.12"
+# Prevent two copies running at once (duplicate instances corrupt session state)
+tauri-plugin-single-instance = "2"
 
 tokio = { version = "1", features = ["full"] }

@@ -537,6 +537,15 @@ pub fn run() {
     let torrent_state = Arc::new(Mutex::new(TorrentState::new()));
 
     tauri::Builder::default()
+        // MUST be first: if another instance is already running, this one exits
+        // and the existing window is shown instead (duplicate sessions corrupt
+        // torrent state and confuse volunteers).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(torrent_state)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(

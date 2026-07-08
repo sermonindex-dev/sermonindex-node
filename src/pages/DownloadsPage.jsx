@@ -29,6 +29,7 @@ const iconFolder = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" s
 export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPlay, onRemove, onExport, onRedownload, onOpenFolder, downloadStates }) {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [sortBy, setSortBy] = useState('recent'); // 'recent' (default) | 'speaker' | 'title'
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [expandedId, setExpandedId] = useState(null);
 
@@ -62,6 +63,13 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
   if (filterType) {
     filtered = filtered.filter(s => s.type === filterType);
   }
+  if (sortBy === 'speaker') {
+    filtered = [...filtered].sort((a, b) =>
+      a.speaker.localeCompare(b.speaker) || a.title.localeCompare(b.title));
+  } else if (sortBy === 'title') {
+    filtered = [...filtered].sort((a, b) => a.title.localeCompare(b.title));
+  }
+  // 'recent' keeps the natural order (as downloaded)
 
   const displayed = filtered.slice(0, visibleCount);
   const hasMore = visibleCount < filtered.length;
@@ -115,6 +123,16 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           <option value="">All Types</option>
           <option value="audio">Audio Only</option>
           <option value="video">Video Only</option>
+        </select>
+
+        <select
+          value={sortBy}
+          onChange={e => { setSortBy(e.target.value); setVisibleCount(PAGE_SIZE); }}
+          className="filter-select"
+        >
+          <option value="recent">Sort: Recent</option>
+          <option value="speaker">Sort: Speaker A–Z</option>
+          <option value="title">Sort: Title A–Z</option>
         </select>
 
         <span className="filter-count">{filtered.length} results · showing {displayed.length}</span>
