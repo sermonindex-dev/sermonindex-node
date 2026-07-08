@@ -32,8 +32,7 @@ function buildMagnet(infoHash, name) {
   return m;
 }
 
-// Optional central probe endpoint (may not be deployed yet — degrades gracefully)
-const PROBE_URL = 'https://app.sermonindex.net/api/probe';
+import { probeReachability } from '../services/network.js';
 
 // Max log entries to keep in memory
 const MAX_LOG_ENTRIES = 150;
@@ -219,33 +218,19 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     if (!port) return;
     setReach({ checking: true });
     addLog(`Testing whether port ${port} is reachable from the internet...`);
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(PROBE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const d = await res.json();
-        if (typeof d.open === 'boolean') {
-          setReach({ open: d.open });
-          addLog(d.open ? `Port ${port} is OPEN — you are reachable ✓` : `Port ${port} is CLOSED — see "Help the network more" below`, d.open ? 'success' : 'warn');
-          return;
-        }
-      }
-      throw new Error('probe unavailable');
-    } catch {
-      setReach(null);
-      addLog(`Automatic test not available yet — opening canyouseeme.org (check port ${port})`, 'warn');
-      try {
-        const tauri = await import('@tauri-apps/api/core');
-        await tauri.invoke('open_url', { url: 'https://canyouseeme.org/' });
-      } catch {}
+    const result = await probeReachability(port);
+    if (result) {
+      setReach({ open: result.open });
+      addLog(result.open ? `Port ${port} is OPEN — you are reachable ✓` : `Port ${port} is CLOSED — see "Help the network more" below`, result.open ? 'success' : 'warn');
+      return;
     }
+    // Probe service not configured/reachable — fall back to canyouseeme.org.
+    setReach(null);
+    addLog(`Automatic test not available yet — opening canyouseeme.org (check port ${port})`, 'warn');
+    try {
+      const tauri = await import('@tauri-apps/api/core');
+      await tauri.invoke('open_url', { url: 'https://canyouseeme.org/' });
+    } catch {}
   }, [status, addLog]);
 
   // Restart handler

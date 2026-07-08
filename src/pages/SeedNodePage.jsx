@@ -1,12 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { probeReachability, registerSeed } from '../services/network.js';
+import { getNodeId } from '../services/heartbeat.js';
 
 const FORUMS_HARDWARE_GUIDE = 'https://www.sermonindex.net/forums/hardware-guide';
 const SEED_CONTACT_EMAIL = 'sermonindex@gmail.com';
-
-// Central probe endpoint used to test whether the node's TCP port is reachable
-// from the internet (same approach as ConnectionsPanel). Degrades gracefully to
-// canyouseeme.org if the probe isn't deployed.
-const PROBE_URL = 'https://app.sermonindex.net/api/probe';
 
 // ── Library sizing, split by scope ─────────────────────────────────────────
 // Audio-only is the practical common choice: ~412 GB fits on a cheap external
@@ -283,32 +280,22 @@ export default function SeedNodePage({
     }
     setReachPort(port);
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(PROBE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const d = await res.json();
-        if (typeof d.open === 'boolean') {
-          setReach({ open: d.open, port });
-          return;
-        }
-      }
-      throw new Error('probe unavailable');
-    } catch {
-      // Probe endpoint unavailable / errored — fall back to canyouseeme.org so
-      // the seed node can still confirm the port manually.
-      setReach({ open: false, port, manual: true });
-      await ensureTauri();
-      if (tauriInvoke) {
-        try { await tauriInvoke('open_url', { url: 'https://canyouseeme.org/' }); } catch {}
-      }
+    const result = await probeReachability(port);
+    if (result) {
+      setReach({ open: result.open, port });
+      // Register in the backbone directory so new users can find reachable seeds.
+      try {
+        const scope = (() => { try { return localStorage.getItem('si-seed-scope') || 'audio'; } catch { return 'audio'; } })();
+        registerSeed(getNodeId(), port, scope).catch(() => {});
+      } catch {}
+      return;
+    }
+    // Probe service unavailable — fall back to canyouseeme.org so the seed
+    // node can still confirm the port manually.
+    setReach({ open: false, port, manual: true });
+    await ensureTauri();
+    if (tauriInvoke) {
+      try { await tauriInvoke('open_url', { url: 'https://canyouseeme.org/' }); } catch {}
     }
   }, [reachPort]);
 
