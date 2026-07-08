@@ -172,15 +172,22 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                   <span className="seed-badge incomplete" style={{ color: 'var(--orange)', borderColor: 'rgba(230,126,34,0.3)', background: 'rgba(230,126,34,0.1)' }}>
                     {iconWarning} <span style={{ marginLeft: '3px' }}>Incomplete — {sermon.diskSize ? formatStorage(sermon.diskSize) : '?'} / {sermon.sizeFormatted}</span>
                   </span>
-                ) : (
+                ) : (() => {
+                  // Prefer the CANONICAL magnet from the master list (has trackers
+                  // + CDN webseed, works in any client anywhere) over the legacy
+                  // locally-generated one. Same infohash either way.
+                  const magnet = (sermon.magnet && sermon.magnet.startsWith('magnet:')) ? sermon.magnet
+                    : (sermon.localMagnet && sermon.localMagnet.startsWith('magnet:')) ? sermon.localMagnet
+                    : null;
+                  return (
                   <span
                     className="seed-badge local"
-                    style={{ cursor: sermon.localMagnet && sermon.localMagnet.startsWith('magnet:') ? 'pointer' : 'default' }}
-                    data-tooltip={sermon.localMagnet && sermon.localMagnet.startsWith('magnet:') ? 'Copy Magnet Link' : 'Seeded locally'}
+                    style={{ cursor: magnet ? 'pointer' : 'default' }}
+                    data-tooltip={magnet ? 'Copy Magnet Link' : 'Seeded locally'}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (sermon.localMagnet && sermon.localMagnet.startsWith('magnet:')) {
-                        const link = sermon.localMagnet;
+                      if (magnet) {
+                        const link = magnet;
                         const el = e.currentTarget;
                         const showCopied = () => {
                           const origTooltip = el.getAttribute('data-tooltip');
@@ -223,7 +230,8 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                       }
                     }}
                   >{iconPin} <span style={{ marginLeft: '3px' }}>Seeded</span></span>
-                )}
+                  );
+                })()}
               </div>
               <div className="sermon-actions">
                 <button
