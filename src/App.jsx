@@ -279,19 +279,30 @@ export default function App() {
         const torrents = status?.running ? await torrent.listTorrents().catch(() => []) : [];
         if (cancelled) return;
         const livePeers = torrents.reduce((n, t) => n + (t.stats?.live?.snapshot?.peer_stats?.live || 0), 0);
+        const uploaded = torrents.reduce((n, t) => n + (t.stats?.uploaded_bytes || 0), 0);
 
-        // Match ConnectionsPanel health score exactly
-        let score = 0;
-        if (status?.running) score += 20;                       // Session up
-        if (status?.tcp_listen_port) score += 15;               // TCP listener bound
-        if ((status?.torrent_count || 0) > 0) score += 15;      // Seeding/leeching something
-        if (torrents.some(t => t.stats?.finished)) score += 10; // At least one full seed
-        if (livePeers >= 1) score += 20;
-        if (livePeers >= 5) score += 10;
-        if (livePeers >= 10) score += 10;
-        score = Math.min(100, score);
-        const label = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score >= 20 ? 'Fair' : 'Offline';
-        const color = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--gold-text)' : score >= 20 ? 'var(--orange)' : 'var(--text-muted)';
+        // Reachability = the primary health axis (see ConnectionsPanel). Read
+        // the last probe result (written by the Connections page) if it's fresh.
+        let reachOpen = null;
+        try {
+          const raw = localStorage.getItem('si-reach');
+          if (raw) {
+            const r = JSON.parse(raw);
+            if (r && Date.now() - (r.ts || 0) < 30 * 60 * 1000) reachOpen = !!r.open;
+          }
+        } catch {}
+        const serving = livePeers >= 1 || uploaded > 0;
+
+        // Mirror ConnectionsPanel tiers exactly.
+        let score;
+        if (!status?.running) score = 0;
+        else if (reachOpen === true && serving) score = 100;
+        else if (reachOpen === true) score = 75;
+        else if (serving) score = 60;
+        else if (reachOpen === false) score = 35;
+        else score = 45;
+        const label = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score > 0 ? 'Fair' : 'Offline';
+        const color = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--gold-text)' : score > 0 ? 'var(--orange)' : 'var(--text-muted)';
         setNetworkHealth({ label, color, score });
       } catch {}
     };

@@ -162,6 +162,21 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     return () => clearInterval(pollRef.current);
   }, [p2pRunning, getTorrent, addLog]);
 
+  // Auto-check reachability once when the panel opens (and after a restart, which
+  // resets `reach` to null) so Network Health reflects real internet
+  // reachability without needing a manual "Test" click.
+  useEffect(() => {
+    if (!p2pRunning || !status?.tcp_listen_port || reach) return;
+    let cancelled = false;
+    (async () => {
+      const r = await probeReachability(status.tcp_listen_port);
+      if (cancelled || !r) return;
+      setReach({ open: r.open });
+      try { localStorage.setItem('si-reach', JSON.stringify({ open: r.open, ts: Date.now() })); } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [p2pRunning, status?.tcp_listen_port, reach]);
+
   // ─── Honest status derivation ───────────────────────────────────────────
 
   const natpmp = status?.natpmp || 'inactive';
@@ -196,15 +211,22 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   // Overall health score — mirrors the TopBar score in App.jsx
   const healthScore = (() => {
     if (!p2pRunning || !status?.running) return 0;
-    // Stable, meaningful tiers based on what the node IS doing — not on the
-    // live peer count (which flaps 0↔1↔2 and made the label jump every poll):
+    // Health = how well your node participates on the internet. The key axis is
+    // REACHABILITY (can other peers connect to you), not whether you've
+    // downloaded anything or your upload speed:
     //   Offline    — session not running
-    //   Fair       — running, but not hosting any sermons yet
-    //   Good       — seeding at least one sermon (holding + offering copies)
-    //   Excellent  — seeding AND actively serving (a peer connected, or bytes uploaded)
-    if (seededCount > 0 && (livePeers >= 1 || uploadedTotal > 0)) return 100;
-    if (seededCount > 0) return 60;
-    return 30;
+    //   Fair       — running, but not reachable from outside (still works as a
+    //                "leaf": you download and upload OUT to reachable peers)
+    //   Good       — reachable from the internet (peers can connect to you)
+    //   Excellent  — reachable AND actively serving (a peer connected / bytes uploaded)
+    const reachable = reach?.open === true;
+    const closed = reach?.open === false;
+    const serving = livePeers >= 1 || uploadedTotal > 0;
+    if (reachable && serving) return 100;   // Excellent
+    if (reachable) return 75;               // Good — backbone-ready
+    if (serving) return 60;                 // Good — serving out even if reachability unconfirmed
+    if (closed) return 35;                  // Fair — works, but not reachable (leaf)
+    return 45;                              // Fair — running, reachability not confirmed yet
   })();
 
   const healthLabel = healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore > 0 ? 'Fair' : 'Offline';
@@ -221,6 +243,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     const result = await probeReachability(port);
     if (result) {
       setReach({ open: result.open });
+      try { localStorage.setItem('si-reach', JSON.stringify({ open: result.open, ts: Date.now() })); } catch {}
       addLog(result.open ? `Port ${port} is OPEN — you are reachable ✓` : `Port ${port} is CLOSED — see "Help the network more" below`, result.open ? 'success' : 'warn');
       return;
     }
