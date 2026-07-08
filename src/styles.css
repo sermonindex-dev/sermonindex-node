@@ -260,6 +260,29 @@ body {
   animation: nav-badge-pop 150ms ease-out;
 }
 
+/* Live node count beside Node Map — muted pill with a green "live" dot */
+.nav-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-dim);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.4;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.nav-count-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 5px var(--green);
+}
+
 @keyframes nav-badge-pop {
   from { transform: scale(0.8); }
   to { transform: scale(1); }

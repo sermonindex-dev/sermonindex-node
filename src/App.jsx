@@ -62,6 +62,7 @@ import { getStoragePath } from './services/tauriStore.js';
 import { startHeartbeat, stopHeartbeat, fetchConfig, loadNodeIdFromDisk } from './services/heartbeat.js';
 import { checkForUpdates } from './services/updater.js';
 import { fetchUnreadCount, chatPrefs } from './services/chatNotify.js';
+import { fetchSeeds } from './services/network.js';
 
 export default function App() {
   const [page, setPage] = useState('library');
@@ -97,6 +98,7 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState(null);       // which settings sub-tab to open
   const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
   const [unreadChat, setUnreadChat] = useState(0);             // unread community messages (sidebar badge)
+  const [nodesOnline, setNodesOnline] = useState(null);        // live nodes online (sidebar count beside Node Map)
   const [chatNotify, setChatNotify] = useState(() => chatPrefs().notify); // show unread badge
   const [chatShow, setChatShow] = useState(() => chatPrefs().show);       // show Community page at all
   const audioRef = useRef(null);
@@ -262,6 +264,26 @@ export default function App() {
       window.removeEventListener('si-update-ready', handleUpdateReady);
       stopHeartbeat();
     };
+  }, []);
+
+  // Poll the live node count for the sidebar (reachable backbone from the seed
+  // directory, plus any nodes the analytics map reports — whichever is larger).
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const [seeds, mapNodes] = await Promise.all([
+          fetchSeeds().catch(() => []),
+          import('./services/heartbeat.js').then(m => m.fetchNodeMap()).catch(() => []),
+        ]);
+        if (cancelled) return;
+        const count = Math.max(seeds.length, Array.isArray(mapNodes) ? mapNodes.length : 0);
+        setNodesOnline(count);
+      } catch { /* keep last value */ }
+    };
+    const t = setTimeout(poll, 5000);   // first check shortly after launch
+    const iv = setInterval(poll, 60000); // then every minute
+    return () => { cancelled = true; clearTimeout(t); clearInterval(iv); };
   }, []);
 
   // Poll network health for TopBar indicator
@@ -952,6 +974,7 @@ export default function App() {
         announcement={announcement}
         unreadChat={chatShow && chatNotify ? unreadChat : 0}
         chatShow={chatShow}
+        nodesOnline={nodesOnline}
       />
       <div className="main-content">
         <TopBar contentMode={contentMode} announcement={announcement} onNavigate={navigateTo} networkHealth={networkHealth} />
