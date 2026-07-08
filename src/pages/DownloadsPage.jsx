@@ -173,21 +173,24 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                     {iconWarning} <span style={{ marginLeft: '3px' }}>Incomplete — {sermon.diskSize ? formatStorage(sermon.diskSize) : '?'} / {sermon.sizeFormatted}</span>
                   </span>
                 ) : (() => {
-                  // Prefer the CANONICAL magnet from the master list (has trackers
-                  // + CDN webseed, works in any client anywhere) over the legacy
-                  // locally-generated one. Same infohash either way.
-                  const magnet = (sermon.magnet && sermon.magnet.startsWith('magnet:')) ? sermon.magnet
+                  // Best shareable link, in order:
+                  // 1. canonical .torrent URL — contains metadata + CDN webseed,
+                  //    works in ANY client even with zero peers (magnets need a
+                  //    live peer to fetch metadata first)
+                  // 2. canonical magnet (works once reachable peers exist)
+                  // 3. legacy local magnet
+                  const link = (sermon.torrentUrl && sermon.torrentUrl.startsWith('http')) ? sermon.torrentUrl
+                    : (sermon.magnet && sermon.magnet.startsWith('magnet:')) ? sermon.magnet
                     : (sermon.localMagnet && sermon.localMagnet.startsWith('magnet:')) ? sermon.localMagnet
                     : null;
                   return (
                   <span
                     className="seed-badge local"
-                    style={{ cursor: magnet ? 'pointer' : 'default' }}
-                    data-tooltip={magnet ? 'Copy Magnet Link' : 'Seeded locally'}
+                    style={{ cursor: link ? 'pointer' : 'default' }}
+                    data-tooltip={link ? (link.startsWith('http') ? 'Copy Torrent Link' : 'Copy Magnet Link') : 'Seeded locally'}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (magnet) {
-                        const link = magnet;
+                      if (link) {
                         const el = e.currentTarget;
                         const showCopied = () => {
                           const origTooltip = el.getAttribute('data-tooltip');
