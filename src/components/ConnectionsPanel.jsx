@@ -197,18 +197,19 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   // Overall health score — mirrors the TopBar score in App.jsx
   const healthScore = (() => {
     if (!p2pRunning || !status?.running) return 0;
-    let score = 20; // session up
-    if (status.tcp_listen_port) score += 15;
-    if ((status.torrent_count || 0) > 0) score += 15;
-    if (seededCount > 0) score += 10;
-    if (livePeers >= 1) score += 20;
-    if (livePeers >= 5) score += 10;
-    if (livePeers >= 10) score += 10;
-    return Math.min(100, score);
+    // Stable, meaningful tiers based on what the node IS doing — not on the
+    // live peer count (which flaps 0↔1↔2 and made the label jump every poll):
+    //   Offline    — session not running
+    //   Fair       — running, but not hosting any sermons yet
+    //   Good       — seeding at least one sermon (holding + offering copies)
+    //   Excellent  — seeding AND actively serving (a peer connected, or bytes uploaded)
+    if (seededCount > 0 && (livePeers >= 1 || uploadedTotal > 0)) return 100;
+    if (seededCount > 0) return 60;
+    return 30;
   })();
 
-  const healthLabel = healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore >= 20 ? 'Fair' : 'Offline';
-  const healthColor = healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore >= 20 ? 'var(--orange)' : 'var(--text-muted)';
+  const healthLabel = healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore > 0 ? 'Fair' : 'Offline';
+  const healthColor = healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore > 0 ? 'var(--orange)' : 'var(--text-muted)';
 
   // ─── Reachability test ──────────────────────────────────────────────────
   // Tries the SermonIndex probe endpoint; if it isn't deployed yet, falls

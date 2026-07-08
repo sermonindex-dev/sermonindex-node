@@ -1,13 +1,10 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { fetchNodeMap, fetchNetworkStats, getNodeId, getCachedGeo } from '../services/heartbeat.js';
 
-const SAMPLE_NODES = [
-  { id: 'seed-sf', lat: 37.77, lon: -122.42, city: 'San Francisco', country: 'US', coverage: 100, type: 'seed' },
-  { id: 'seed-ny', lat: 40.71, lon: -74.01, city: 'New York', country: 'US', coverage: 100, type: 'seed' },
-  { id: 'seed-ldn', lat: 51.51, lon: -0.13, city: 'London', country: 'GB', coverage: 100, type: 'seed' },
-  { id: 'seed-nrb', lat: -1.29, lon: 36.82, city: 'Nairobi', country: 'KE', coverage: 100, type: 'seed' },
-  { id: 'seed-syd', lat: -33.87, lon: 151.21, city: 'Sydney', country: 'AU', coverage: 100, type: 'seed' },
-];
+// No fake/demo nodes — the map shows only real nodes reported by the
+// heartbeat server, plus your own node. (Previously this held 5 sample seed
+// locations that flashed on screen and looked like a live network.)
+const SAMPLE_NODES = [];
 
 const COUNTRY_NAMES = {
   US: 'United States', GB: 'United Kingdom', KE: 'Kenya', AU: 'Australia',
@@ -400,7 +397,7 @@ export default function NetworkPage({ nodeStats }) {
           <span className="net-stat-mini-val green">{avgCoverage}%</span>
           <span className="net-stat-mini-label">Avg Coverage</span>
         </div>
-        {!isLiveData && <span className="net-sample-badge">Sample Data</span>}
+        {!isLiveData && <span className="net-sample-badge">Your node</span>}
       </div>
 
       {/* Tab bar with 3 tabs */}
