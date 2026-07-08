@@ -10,8 +10,8 @@
  * hostname (same as we did for the community chat).
  */
 
-// ⚠️ Replace with the deployed network Edge Script hostname (no trailing slash).
-export const NETWORK_API = 'https://REPLACE-WITH-NETWORK-SCRIPT.bunny.run';
+// Deployed network Edge Script (see server/network-edge-script.js).
+export const NETWORK_API = 'https://app-endpoints-gkb5p.bunny.run';
 
 const isConfigured = () => !NETWORK_API.includes('REPLACE-WITH');
 

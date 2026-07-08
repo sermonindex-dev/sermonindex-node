@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https://*.sermonindex.net https://*.b-cdn.net data: asset: https://asset.localhost; connect-src 'self' https://*.sermonindex.net https://*.b-cdn.net https://*.archive.org https://community-chat-z71kj.bunny.run https://ipapi.co https://ipwho.is http://ip-api.com; media-src 'self' https://*.sermonindex.net https://*.b-cdn.net https://*.archive.org blob: asset: https://asset.localhost"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https://*.sermonindex.net https://*.b-cdn.net data: asset: https://asset.localhost; connect-src 'self' https://*.sermonindex.net https://*.b-cdn.net https://*.archive.org https://community-chat-z71kj.bunny.run https://app-endpoints-gkb5p.bunny.run https://ipapi.co https://ipwho.is http://ip-api.com; media-src 'self' https://*.sermonindex.net https://*.b-cdn.net https://*.archive.org blob: asset: https://asset.localhost"
     }
   },
   "bundle": {
