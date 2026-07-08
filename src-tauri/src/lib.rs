@@ -277,6 +277,27 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Fetch a URL as text via the native HTTP client — bypasses webview CORS.
+/// Restricted to SermonIndex-controlled hosts (used for the torrent master list).
+#[tauri::command]
+async fn fetch_text(url: String) -> Result<String, String> {
+    const ALLOWED: &[&str] = &[
+        "https://sermonindex1.b-cdn.net/",
+        "https://sermonindex2.b-cdn.net/",
+        "https://www.sermonindex.net/",
+        "https://app.sermonindex.net/",
+        "https://analytics.sermonindex.net/",
+    ];
+    if !ALLOWED.iter().any(|p| url.starts_with(p)) {
+        return Err("URL not allowed".to_string());
+    }
+    let resp = reqwest::get(&url).await.map_err(|e| format!("fetch failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.text().await.map_err(|e| format!("read failed: {e}"))
+}
+
 /// Open a URL in the system default browser (used by the Donate banner)
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -636,6 +657,7 @@ pub fn run() {
             check_disk_space,
             open_folder,
             open_url,
+            fetch_text,
             save_sermon_file,
             create_sermon_file,
             append_sermon_chunk,

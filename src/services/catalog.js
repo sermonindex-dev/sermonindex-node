@@ -239,9 +239,20 @@ export function hasMasterList() {
 
 async function fetchMasterList() {
   try {
-    const res = await fetch(MASTER_LIST_URL, { cache: 'no-cache' });
-    if (!res.ok) return; // not published yet — app works without it
-    const data = await res.json();
+    // Native fetch first (Rust reqwest — immune to CDN CORS policy, which
+    // blocks the webview from reading .json cross-origin). Browser fetch as
+    // fallback for dev-in-browser mode.
+    let data = null;
+    try {
+      const tauri = await import('@tauri-apps/api/core');
+      const text = await tauri.invoke('fetch_text', { url: MASTER_LIST_URL });
+      data = JSON.parse(text);
+    } catch (nativeErr) {
+      console.warn('[Catalog] Native master-list fetch unavailable, trying browser fetch:', nativeErr?.message || nativeErr);
+      const res = await fetch(MASTER_LIST_URL, { cache: 'no-cache' });
+      if (!res.ok) return; // not published yet — app works without it
+      data = await res.json();
+    }
     if (!data || !data.entries) return;
     let merged = 0;
     for (const s of catalog) {

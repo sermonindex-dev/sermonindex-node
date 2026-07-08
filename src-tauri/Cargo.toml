@@ -36,5 +36,7 @@ url = "2"
 urlencoding = "2"
 # NAT-PMP + PCP port mapping — succeeds on many routers where UPnP is off/unsupported
 crab_nat = "0.2"
+# Native HTTP fetch for the master list (webview fetch is blocked by CDN CORS)
+reqwest = "0.12"
 
 tokio = { version = "1", features = ["full"] }
