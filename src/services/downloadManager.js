@@ -151,7 +151,10 @@ async function trySeedTorrent(filename, sermon = null) {
     if (fresh?.torrentUrl || fresh?.magnet?.startsWith('magnet:')) {
       try {
         const source = fresh.torrentUrl || fresh.magnet;
-        const res = await mod.addTorrent(source);
+        // Pass the filename so the native side points librqbit at this file's
+        // shard folder — it then verifies the bytes we just downloaded and seeds,
+        // rather than re-fetching them from the CDN webseed.
+        const res = await mod.addTorrent(source, filename);
         return { magnet: fresh.magnet, info_hash: fresh.infoHash || res?.info_hash, id: res?.id };
       } catch (canonErr) {
         console.warn('[DL] Canonical seed failed, falling back to local torrent:', canonErr?.message || canonErr);

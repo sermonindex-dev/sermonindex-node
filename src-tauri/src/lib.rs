@@ -60,6 +60,56 @@ fn downloads_dir() -> PathBuf {
     get_app_data_dir().join("downloads")
 }
 
+// ── Local storage sharding ──────────────────────────────────────────────────
+// Group downloaded files into subfolders by the first two alphanumeric chars of
+// their id (the filename stem), e.g. downloads/ar/aRkm….mp3. A flat folder of
+// 33k+ files is slow to enumerate — badly so on the exFAT external drives seed
+// nodes use, and FAT32 has a hard ~65k-per-folder limit. Sharding keeps any one
+// folder to a few thousand entries.
+//
+// This is a LOCAL detail only. A single-file torrent's `name` is the basename,
+// so the folder a file lives in NEVER affects the infohash — the swarm identity
+// is byte-for-byte identical whether the file is stored flat or sharded. The
+// seed path points librqbit at the shard folder so it verifies existing bytes
+// instead of re-fetching them.
+
+/// Two-character shard folder name for a given filename.
+pub(crate) fn shard_for(filename: &str) -> String {
+    let stem = std::path::Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    let mut chars = stem.chars().filter(|c| c.is_ascii_alphanumeric());
+    let a = chars.next().unwrap_or('0').to_ascii_lowercase();
+    let b = chars.next().unwrap_or('0').to_ascii_lowercase();
+    let mut s = String::with_capacity(2);
+    s.push(a);
+    s.push(b);
+    s
+}
+
+/// Path a NEW download should be written to (sharded), creating the shard dir.
+fn target_path(filename: &str) -> PathBuf {
+    let dir = downloads_dir().join(shard_for(filename));
+    let _ = fs::create_dir_all(&dir);
+    dir.join(filename)
+}
+
+/// Resolve an EXISTING download, tolerant of both layouts: prefer the sharded
+/// path, fall back to the legacy flat path (files downloaded before sharding),
+/// and if neither exists yet return the sharded target so callers can create it.
+fn resolve_path(filename: &str) -> PathBuf {
+    let sharded = downloads_dir().join(shard_for(filename)).join(filename);
+    if sharded.exists() {
+        return sharded;
+    }
+    let flat = downloads_dir().join(filename);
+    if flat.exists() {
+        return flat;
+    }
+    sharded
+}
+
 /// Get the downloads storage path
 #[tauri::command]
 fn get_storage_path() -> Result<String, String> {
@@ -131,9 +181,8 @@ fn get_storage_dir() -> String {
 #[tauri::command]
 fn save_sermon_file(filename: String, data_b64: String) -> Result<String, String> {
     use base64::Engine;
-    let path = downloads_dir();
-    fs::create_dir_all(&path).map_err(|e| format!("Failed to create downloads dir: {}", e))?;
-    let file_path = path.join(&filename);
+    // Sharded write target (creates downloads/<shard>/ as needed).
+    let file_path = target_path(&filename);
     let bytes = base64::engine::general_purpose::STANDARD.decode(&data_b64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
     fs::write(&file_path, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
@@ -143,9 +192,8 @@ fn save_sermon_file(filename: String, data_b64: String) -> Result<String, String
 /// Create/truncate a file for chunked writing (used for large files)
 #[tauri::command]
 fn create_sermon_file(filename: String) -> Result<String, String> {
-    let path = downloads_dir();
-    fs::create_dir_all(&path).map_err(|e| format!("Failed to create downloads dir: {}", e))?;
-    let file_path = path.join(&filename);
+    // Sharded write target (creates downloads/<shard>/ as needed).
+    let file_path = target_path(&filename);
     // Create or truncate the file
     fs::File::create(&file_path).map_err(|e| format!("Failed to create file: {}", e))?;
     Ok(file_path.to_string_lossy().to_string())
@@ -156,7 +204,7 @@ fn create_sermon_file(filename: String) -> Result<String, String> {
 fn append_sermon_chunk(filename: String, chunk_b64: String) -> Result<(), String> {
     use base64::Engine;
     use std::io::Write;
-    let file_path = downloads_dir().join(&filename);
+    let file_path = resolve_path(&filename);
     let bytes = base64::engine::general_purpose::STANDARD.decode(&chunk_b64)
         .map_err(|e| format!("Failed to decode base64 chunk: {}", e))?;
     let mut file = fs::OpenOptions::new()
@@ -170,8 +218,8 @@ fn append_sermon_chunk(filename: String, chunk_b64: String) -> Result<(), String
 /// Check if a downloaded file exists on disk
 #[tauri::command]
 fn check_file_exists(filename: String) -> bool {
-    let path = downloads_dir().join(&filename);
-    path.exists()
+    // Sharded location OR legacy flat location.
+    resolve_path(&filename).exists()
 }
 
 /// List all downloaded files on disk
@@ -182,12 +230,31 @@ fn list_downloaded_files() -> Result<Vec<String>, String> {
         return Ok(vec![]);
     }
     let mut files = vec![];
+    let mut seen = std::collections::HashSet::new();
     if let Ok(entries) = fs::read_dir(&path) {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata() {
                 if meta.is_file() {
+                    // Legacy flat file in the downloads root.
                     if let Some(name) = entry.file_name().to_str() {
-                        files.push(name.to_string());
+                        if seen.insert(name.to_string()) {
+                            files.push(name.to_string());
+                        }
+                    }
+                } else if meta.is_dir() {
+                    // One level deep: a shard subfolder (downloads/<shard>/<file>).
+                    if let Ok(sub) = fs::read_dir(entry.path()) {
+                        for e2 in sub.flatten() {
+                            if let Ok(m2) = e2.metadata() {
+                                if m2.is_file() {
+                                    if let Some(n2) = e2.file_name().to_str() {
+                                        if seen.insert(n2.to_string()) {
+                                            files.push(n2.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -382,7 +449,7 @@ async fn fetch_text(url: String) -> Result<String, String> {
 /// hardlinks cost zero extra disk space and are freely shareable/deletable.
 #[tauri::command]
 fn organize_file(filename: String, speaker: String, title: String) -> Result<String, String> {
-    let src = downloads_dir().join(&filename);
+    let src = resolve_path(&filename);
     if !src.exists() {
         return Err("source file missing".to_string());
     }
@@ -434,9 +501,14 @@ fn open_url(url: String) -> Result<(), String> {
 /// Delete a downloaded sermon file
 #[tauri::command]
 fn delete_sermon_file(filename: String) -> Result<(), String> {
-    let path = downloads_dir().join(&filename);
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {}", e))?;
+    // Remove from BOTH possible layouts so a file can't linger in one and be
+    // re-adopted as an orphan. Deletion is idempotent — absent is not an error.
+    let sharded = downloads_dir().join(shard_for(&filename)).join(&filename);
+    let flat = downloads_dir().join(&filename);
+    for p in [sharded, flat] {
+        if p.exists() {
+            fs::remove_file(&p).map_err(|e| format!("Failed to delete file: {}", e))?;
+        }
     }
     Ok(())
 }
@@ -444,7 +516,7 @@ fn delete_sermon_file(filename: String) -> Result<(), String> {
 /// Get file size of a downloaded sermon (for integrity checks)
 #[tauri::command]
 fn get_file_size(filename: String) -> Result<u64, String> {
-    let path = downloads_dir().join(&filename);
+    let path = resolve_path(&filename);
     if !path.exists() {
         return Err("File not found".to_string());
     }
@@ -455,7 +527,7 @@ fn get_file_size(filename: String) -> Result<u64, String> {
 /// Get the absolute file path of a downloaded sermon (for local playback via asset protocol)
 #[tauri::command]
 fn get_sermon_file_path(filename: String) -> Result<String, String> {
-    let path = downloads_dir().join(&filename);
+    let path = resolve_path(&filename);
     if !path.exists() {
         return Err("File not found".to_string());
     }
@@ -465,7 +537,7 @@ fn get_sermon_file_path(filename: String) -> Result<String, String> {
 /// Export a downloaded sermon file to the user's Desktop with a readable name
 #[tauri::command]
 fn export_sermon_file(filename: String, dest_name: String) -> Result<String, String> {
-    let src = downloads_dir().join(&filename);
+    let src = resolve_path(&filename);
     if !src.exists() {
         return Err("Source file not found".to_string());
     }
@@ -507,7 +579,7 @@ fn export_base_dir() -> PathBuf {
 /// Copies (not hardlinks) so it works across drives; returns the speaker folder.
 #[tauri::command]
 fn export_sermon(filename: String, speaker: String, title: String) -> Result<String, String> {
-    let src = downloads_dir().join(&filename);
+    let src = resolve_path(&filename);
     if !src.exists() {
         return Err("Source file not found".to_string());
     }
@@ -547,7 +619,7 @@ fn export_speaker(speaker: String, items: Vec<ExportItem>) -> Result<ExportResul
     let mut exported = 0usize;
     let mut failed = 0usize;
     for it in &items {
-        let src = downloads_dir().join(&it.filename);
+        let src = resolve_path(&it.filename);
         if !src.exists() {
             failed += 1;
             continue;
@@ -571,6 +643,50 @@ fn export_speaker(speaker: String, items: Vec<ExportItem>) -> Result<ExportResul
         exported,
         failed,
     })
+}
+
+/// Migrate any legacy flat files in the downloads root into their shard
+/// subfolders. Uses rename (instant on the same volume — no copy, no extra
+/// space), skips a file if the destination already exists, and never touches
+/// files already inside shard folders. Returns how many were moved. Safe to run
+/// repeatedly. Restart afterward so the torrent session reseeds from the new
+/// locations cleanly.
+#[tauri::command]
+fn reshard_downloads() -> Result<usize, String> {
+    let root = downloads_dir();
+    if !root.exists() {
+        return Ok(0);
+    }
+    let entries: Vec<_> = fs::read_dir(&root)
+        .map_err(|e| format!("read downloads dir: {e}"))?
+        .flatten()
+        .collect();
+    let mut moved = 0usize;
+    for entry in entries {
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !meta.is_file() {
+            continue; // already-sharded subfolders and anything else are left alone
+        }
+        let name = match entry.file_name().to_str() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let dest_dir = root.join(shard_for(&name));
+        if fs::create_dir_all(&dest_dir).is_err() {
+            continue;
+        }
+        let dest = dest_dir.join(&name);
+        if dest.exists() {
+            continue; // don't clobber an existing sharded copy
+        }
+        if fs::rename(entry.path(), &dest).is_ok() {
+            moved += 1;
+        }
+    }
+    Ok(moved)
 }
 
 /// Check available disk space at a given path
@@ -694,7 +810,10 @@ async fn torrent_seed_downloaded(
     name: Option<String>,
 ) -> Result<torrent_node::SeedResult, String> {
     let handle = get_torrent_handle(&state).await?;
-    let file_path = downloads_dir().join(&filename);
+    // Resolve to wherever the file actually is (shard or legacy flat). seed_file
+    // uses this file's parent as librqbit's output folder, so seeding is
+    // self-consistent with the shard layout.
+    let file_path = resolve_path(&filename);
     let torrents_dir = get_app_data_dir().join("torrents");
     handle.seed_file(&file_path, name, &torrents_dir).await
 }
@@ -705,9 +824,20 @@ async fn torrent_seed_downloaded(
 async fn torrent_add(
     state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
     source: String,
+    filename: Option<String>,
 ) -> Result<torrent_node::AddResult, String> {
     let handle = get_torrent_handle(&state).await?;
-    handle.add(&source, None).await
+    // When we know the target filename (seeding a file we just downloaded), point
+    // librqbit at THAT file's shard folder so it verifies the existing bytes and
+    // seeds, instead of re-downloading them from the CDN webseed into the flat
+    // root. Without a filename (e.g. a pasted magnet), use the session default.
+    let output_folder = filename.as_ref().map(|f| {
+        resolve_path(f)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| downloads_dir().to_string_lossy().to_string())
+    });
+    handle.add(&source, output_folder).await
 }
 
 /// List all torrents with live stats (progress, speeds, peers)
@@ -930,6 +1060,7 @@ pub fn run() {
             export_sermon_file,
             export_sermon,
             export_speaker,
+            reshard_downloads,
             // ── BitTorrent commands ──
             torrent_start,
             torrent_stop,

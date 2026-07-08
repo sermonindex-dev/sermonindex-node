@@ -124,11 +124,16 @@ export async function seedDownloaded(filename, name = null) {
 /**
  * Add a torrent by magnet link, .torrent URL, or local .torrent path.
  * Downloads into the app downloads folder, then seeds.
+ *
+ * `filename` (optional): when seeding a file we just downloaded, pass its id
+ * filename (e.g. "aRkm….mp3") so the native side points librqbit at that file's
+ * shard folder and verifies the existing bytes instead of re-downloading them.
+ * Omit it for arbitrary magnets/torrents (unknown target name).
  * Returns { id, info_hash, name }.
  */
-export async function addTorrent(source) {
+export async function addTorrent(source, filename = null) {
   try {
-    const res = await invoke('torrent_add', { source });
+    const res = await invoke('torrent_add', { source, filename });
     torrentLog.info(`[Torrent] Added: ${res?.name} (${res?.info_hash})`);
     return res;
   } catch (err) {

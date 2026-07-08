@@ -356,8 +356,12 @@ impl TorrentHandle {
         let to_remove: Vec<usize> = self.session.with_torrents(|iter| {
             iter.filter_map(|(id, t)| {
                 let name = t.name()?;
-                let path = downloads_dir.join(&name);
-                if path.exists() {
+                // The file may live in the legacy flat root OR in its shard
+                // subfolder (downloads/<shard>/<name>). Present in EITHER means
+                // keep the torrent — only prune when it exists in neither.
+                let flat = downloads_dir.join(&name);
+                let sharded = downloads_dir.join(crate::shard_for(&name)).join(&name);
+                if flat.exists() || sharded.exists() {
                     None
                 } else {
                     Some(id)

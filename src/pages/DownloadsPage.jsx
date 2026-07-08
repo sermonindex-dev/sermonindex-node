@@ -111,6 +111,23 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     }
   }, [storageDir]);
 
+  // ── Organize existing flat files into shard subfolders ──────────────────────
+  // New downloads shard automatically; this migrates any pre-existing flat files
+  // (e.g. a seed node's already-downloaded 33k). Fast rename, no extra space.
+  const [reshard, setReshard] = useState(null); // { state, moved }
+  const organizeFolders = useCallback(async () => {
+    await ensureTauri();
+    if (!tauriInvoke) return;
+    setReshard({ state: 'working' });
+    try {
+      const moved = await tauriInvoke('reshard_downloads');
+      setReshard({ state: 'done', moved: moved ?? 0 });
+    } catch (e) {
+      console.warn('[Downloads] Organize into folders failed:', e);
+      setReshard({ state: 'error' });
+    }
+  }, []);
+
   // ── Export a whole speaker → Desktop/<Speaker>/<Title>.<ext> ────────────────
   // Copies every complete download by this speaker into one Desktop folder with
   // proper filenames. Status is tracked per speaker for inline feedback.
@@ -397,7 +414,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
               {storageDir || 'Not set'}
             </div>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-              New downloads go here. Existing files stay where they are.
+              New downloads go here, auto-sorted into folders. Existing files stay where they are.
+              {reshard?.state === 'done' && <span style={{ color: '#3ca35b' }}> · Organized {reshard.moved} file{reshard.moved === 1 ? '' : 's'} — restart to finish.</span>}
+              {reshard?.state === 'error' && <span style={{ color: 'var(--orange)' }}> · Organize failed.</span>}
             </div>
           </div>
           <button
@@ -414,6 +433,15 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
             style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: storageDir ? 'pointer' : 'default', fontSize: '0.75rem', flexShrink: 0, opacity: storageDir ? 1 : 0.4 }}
           >
             Open
+          </button>
+          <button
+            className="btn"
+            onClick={organizeFolders}
+            disabled={reshard?.state === 'working'}
+            data-tooltip="Move any loose files already downloaded into folders (fast, no extra space)"
+            style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: reshard?.state === 'working' ? 'default' : 'pointer', fontSize: '0.75rem', flexShrink: 0, opacity: reshard?.state === 'working' ? 0.6 : 1 }}
+          >
+            {reshard?.state === 'working' ? 'Organizing…' : 'Organize into folders'}
           </button>
         </div>
       )}
