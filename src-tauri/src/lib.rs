@@ -645,50 +645,6 @@ fn export_speaker(speaker: String, items: Vec<ExportItem>) -> Result<ExportResul
     })
 }
 
-/// Migrate any legacy flat files in the downloads root into their shard
-/// subfolders. Uses rename (instant on the same volume — no copy, no extra
-/// space), skips a file if the destination already exists, and never touches
-/// files already inside shard folders. Returns how many were moved. Safe to run
-/// repeatedly. Restart afterward so the torrent session reseeds from the new
-/// locations cleanly.
-#[tauri::command]
-fn reshard_downloads() -> Result<usize, String> {
-    let root = downloads_dir();
-    if !root.exists() {
-        return Ok(0);
-    }
-    let entries: Vec<_> = fs::read_dir(&root)
-        .map_err(|e| format!("read downloads dir: {e}"))?
-        .flatten()
-        .collect();
-    let mut moved = 0usize;
-    for entry in entries {
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if !meta.is_file() {
-            continue; // already-sharded subfolders and anything else are left alone
-        }
-        let name = match entry.file_name().to_str() {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        let dest_dir = root.join(shard_for(&name));
-        if fs::create_dir_all(&dest_dir).is_err() {
-            continue;
-        }
-        let dest = dest_dir.join(&name);
-        if dest.exists() {
-            continue; // don't clobber an existing sharded copy
-        }
-        if fs::rename(entry.path(), &dest).is_ok() {
-            moved += 1;
-        }
-    }
-    Ok(moved)
-}
-
 /// Check available disk space at a given path
 #[tauri::command]
 fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
@@ -1060,7 +1016,6 @@ pub fn run() {
             export_sermon_file,
             export_sermon,
             export_speaker,
-            reshard_downloads,
             // ── BitTorrent commands ──
             torrent_start,
             torrent_stop,
