@@ -54,12 +54,13 @@ const ARCHIVE_BASE = 'https://archive.org/download';
 // Where the .torrent files will live once uploaded (used in the master list)
 const TORRENT_PUBLIC_BASE = 'https://sermonindex1.b-cdn.net/torrents';
 
-// Bunny caps objects per folder (10k). Shard torrents into subfolders by the
-// first TWO characters of the sermon ID → ~3,965 folders, ~9 files each.
+// Bunny caps objects per folder (10k) AND merges folder names case-
+// insensitively on write while serving case-sensitively — so shard names must
+// contain no letter-case information at all. We use the first two hex chars
+// of md5(sermonId): 256 lowercase-hex folders, ~130 files each.
 // DO NOT change this scheme once published — URLs live in the master list.
 function shardOf(id) {
-  const clean = (c) => (/^[a-zA-Z0-9]$/.test(c || '') ? c : '_');
-  return clean(id[0]) + clean(id[1]);
+  return createHash('md5').update(id).digest('hex').slice(0, 2);
 }
 
 // ─── CLI args ───────────────────────────────────────────────────────────────
