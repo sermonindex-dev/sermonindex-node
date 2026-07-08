@@ -10,6 +10,7 @@ import SeedNodePage from './pages/SeedNodePage';
 import SettingsPage from './pages/SettingsPage';
 import ConnectionsPage from './pages/ConnectionsPage';
 import NetworkPage from './pages/NetworkPage';
+import CommunityPage from './pages/CommunityPage';
 
 // Error boundary to prevent full app crashes
 class ErrorBoundary extends Component {
@@ -749,6 +750,8 @@ export default function App() {
         return <BulkDownloadPage catalog={getCatalog()} downloadManager={downloadManager} downloadStates={downloadStates} onCatalogUpdate={() => { setCatalog(getCatalog()); setLibraryStats(getLibraryStats()); }} />;
       case 'network':
         return <NetworkPage nodeStats={realStats} />;
+      case 'community':
+        return <CommunityPage />;
       case 'connections':
         return <ConnectionsPage p2pRunning={p2pRunning} p2pEnabled={p2pEnabled} onP2pToggle={handleP2pToggle} />;
       case 'settings':

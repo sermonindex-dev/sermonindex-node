@@ -33,6 +33,11 @@ const icons = {
       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   ),
+  chat: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
   connections: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="2" /><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" />
@@ -79,6 +84,9 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
           </div>
           <div className={`nav-item ${page === 'seed' ? 'active' : ''}`} onClick={() => onNavigate('seed')}>
             <span className="icon">{icons.seed}</span> Seed Node
+          </div>
+          <div className={`nav-item ${page === 'community' ? 'active' : ''}`} onClick={() => onNavigate('community')}>
+            <span className="icon">{icons.chat}</span> Community
           </div>
         </div>
 
