@@ -561,6 +561,17 @@ async fn torrent_remove(
     handle.remove(id, delete_files).await
 }
 
+/// Prune persisted torrents whose backing file is no longer on disk.
+/// Returns the number of torrents removed from the session.
+#[tauri::command]
+async fn torrent_prune_missing(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+) -> Result<usize, String> {
+    let handle = get_torrent_handle(&state).await?;
+    let downloads_dir = get_app_data_dir().join("downloads");
+    handle.remove_missing(&downloads_dir).await
+}
+
 /// Session-wide stats (speeds, peer counts, uptime)
 #[tauri::command]
 async fn torrent_session_stats(
@@ -731,6 +742,7 @@ pub fn run() {
             torrent_add,
             torrent_list,
             torrent_remove,
+            torrent_prune_missing,
             torrent_session_stats,
         ])
         .run(tauri::generate_context!())

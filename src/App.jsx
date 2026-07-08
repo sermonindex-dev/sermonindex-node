@@ -207,6 +207,17 @@ export default function App() {
           setP2pRunning(true);
           setNodeOnline(true);
           console.log('[App] P2P node started successfully');
+          // Reconcile the persisted torrent list against disk: drop any
+          // torrents whose file the user has since deleted (librqbit resumes
+          // them on restart, so they'd otherwise seed/list phantom sermons at
+          // 0.0% forever). Fire-and-forget — never block startup on this.
+          try {
+            torrentModule.pruneMissing()
+              .then((n) => { if (n) console.log(`[App] Pruned ${n} missing torrent(s) on startup`); })
+              .catch((e) => console.warn('[App] Torrent prune (startup) failed:', e?.message || e));
+          } catch (e) {
+            console.warn('[App] Torrent prune (startup) threw:', e?.message || e);
+          }
         }
       } catch (e) {
         console.error('[App] P2P node failed to start (non-critical):', e.message, e.stack);
@@ -701,6 +712,17 @@ export default function App() {
     markRemoved(sermonId);
     setCatalog(getCatalog());
     setLibraryStats(getLibraryStats());
+    // The file is gone from disk — prune its torrent so the session stops
+    // seeding/listing it immediately (otherwise it lingers until next restart).
+    // Fire-and-forget: deletion already succeeded regardless of this.
+    (async () => {
+      try {
+        const torrentModule = await import('./services/torrent.js').catch(() => null);
+        if (torrentModule) await torrentModule.pruneMissing();
+      } catch (e) {
+        console.warn('[App] Torrent prune after remove failed:', e?.message || e);
+      }
+    })();
   }, []);
 
   // ── Re-download (for incomplete files) ────────────────────────────────

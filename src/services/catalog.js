@@ -56,7 +56,10 @@ export function speakerImageCandidates(name, primary) {
   const hyphen = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (compact) add(`${SI_SITE_BASE}/images/speakers/${compact[0]}/${compact}.png`);
   if (hyphen && hyphen !== compact) add(`${SI_SITE_BASE}/images/speakers/${hyphen[0]}/${hyphen}.png`);
-  add(`${CDN_AUDIO_BASE}/default-si-speaker.png`);
+  // NOTE: no remote placeholder here on purpose. For the ~420 speakers with no
+  // portrait, hitting a remote CDN default caused visible lag/flicker on every
+  // render. SpeakerAvatar's <img> onError chain lands on a bundled local asset
+  // (then initials) instead — zero network requests for the placeholder.
   return out;
 }
 
@@ -184,24 +187,26 @@ export async function initCatalog() {
           if (sermon) {
             const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
             const filename = `${id}.${ext}`;
+            // CONSERVATIVE: only delete when the file is definitively absent from
+            // a SUCCESSFUL, NON-EMPTY listing. Both are already guaranteed here
+            // (files !== null and the empty-with-entries case was excluded above).
             if (!fileSet.has(filename)) {
               delete downloadState[id];
               removed++;
             } else {
-              // Store actual disk size for accurate display
-              // Note: catalog sizeKB is often wrong — we trust the actual file on disk
+              // File is present on disk — keep the entry. Refresh the disk size
+              // for accurate display, but NEVER delete based on get_file_size:
+              // a 0-byte read or a thrown error is a transient/read failure, not
+              // proof the download is bad (the file is in the listing).
               try {
                 const diskSize = await tauriMod.invoke('get_file_size', { filename });
-                downloadState[id].diskSize = diskSize;
-                // A file with 0 bytes is definitely broken
-                if (diskSize === 0) {
-                  delete downloadState[id];
-                  removed++;
-                } else {
+                if (diskSize > 0) {
+                  downloadState[id].diskSize = diskSize;
                   if (downloadState[id].incomplete) delete downloadState[id].incomplete;
                 }
+                // diskSize === 0 → leave the existing entry untouched (keep it).
               } catch {
-                // get_file_size failed — keep the entry, file might still be valid
+                // get_file_size failed — keep the entry, file is still listed.
               }
             }
           }
@@ -425,13 +430,13 @@ export async function revalidateDownloads() {
           delete downloadState[id];
           changed++;
         } else {
-          // Refresh actual disk size for accurate stats
+          // File is present in a successful, non-empty listing — keep the entry.
+          // Refresh disk size for accurate stats, but NEVER delete on a 0-byte
+          // read or a get_file_size error (transient read failure, not proof
+          // the file is bad — it is still in the listing).
           try {
             const diskSize = await tauriMod.invoke('get_file_size', { filename });
-            if (diskSize === 0) {
-              delete downloadState[id];
-              changed++;
-            } else if (downloadState[id].diskSize !== diskSize) {
+            if (diskSize > 0 && downloadState[id].diskSize !== diskSize) {
               downloadState[id].diskSize = diskSize;
               changed++;
             }

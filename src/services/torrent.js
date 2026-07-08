@@ -132,7 +132,17 @@ export async function addTorrent(source) {
     torrentLog.info(`[Torrent] Added: ${res?.name} (${res?.info_hash})`);
     return res;
   } catch (err) {
-    torrentLog.error('[Torrent] Add failed:', err);
+    // A canonical .torrent that 404s is expected for the handful of sermons
+    // whose .torrent was never uploaded — the downloadManager falls through to
+    // legacy self-seeding, so this isn't a real failure. Downgrade it from a
+    // red error to a warn so it doesn't look alarming in the Live Log. Still
+    // rethrow: other callers rely on the rejection to drive their fallback.
+    const msg = String(err?.message || err);
+    if (msg.includes('404')) {
+      torrentLog.warn('[Torrent] Add failed (canonical .torrent 404, using fallback):', err);
+    } else {
+      torrentLog.error('[Torrent] Add failed:', err);
+    }
     throw err;
   }
 }
@@ -147,6 +157,16 @@ export async function removeTorrent(id, deleteFiles = false) {
   const res = await invoke('torrent_remove', { id, deleteFiles });
   torrentLog.info(`[Torrent] Removed torrent ${id}${deleteFiles ? ' (files deleted)' : ''}`);
   return res;
+}
+
+/**
+ * Remove any persisted torrents whose backing file no longer exists on disk.
+ * librqbit persists its torrent list across restarts, so torrents for sermons
+ * the user has deleted otherwise linger forever (often showing 0.0%). Returns
+ * the number of torrents removed.
+ */
+export async function pruneMissing() {
+  return invoke('torrent_prune_missing');
 }
 
 /** Session-wide stats (speeds, peers, uptime). */

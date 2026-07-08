@@ -339,6 +339,45 @@ impl TorrentHandle {
             .map_err(|e| format!("delete failed: {e:#}"))
     }
 
+    /// Reconcile the persisted torrent list against files on disk.
+    ///
+    /// librqbit resumes its whole torrent list on restart (Json persistence),
+    /// so torrents whose backing file the user has since deleted linger and
+    /// show "Downloading 0.0%" forever. For each managed torrent whose expected
+    /// file (`downloads_dir/<name>`) is missing, remove it from the session
+    /// (without deleting files — there are none). Returns the count removed.
+    pub async fn remove_missing(&self, downloads_dir: &Path) -> Result<usize, String> {
+        // Collect the IDs to drop first: `delete` is async, so we can't await
+        // inside the `with_torrents` closure. A torrent with no name can't be
+        // located on disk, so we leave it alone (conservative).
+        let to_remove: Vec<usize> = self.session.with_torrents(|iter| {
+            iter.filter_map(|(id, t)| {
+                let name = t.name()?;
+                let path = downloads_dir.join(&name);
+                if path.exists() {
+                    None
+                } else {
+                    Some(id)
+                }
+            })
+            .collect()
+        });
+
+        let mut removed = 0usize;
+        for id in to_remove {
+            match self.session.delete(TorrentIdOrHash::Id(id), false).await {
+                Ok(()) => {
+                    removed += 1;
+                    log::info!("[Torrent] Pruned missing torrent id={id} (file deleted)");
+                }
+                Err(e) => {
+                    log::warn!("[Torrent] Failed to prune torrent id={id}: {e:#}");
+                }
+            }
+        }
+        Ok(removed)
+    }
+
     /// Session-wide stats (download/upload speeds, peers, uptime).
     pub fn session_stats(&self) -> serde_json::Value {
         serde_json::to_value(self.session.stats_snapshot()).unwrap_or(serde_json::Value::Null)
