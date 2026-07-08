@@ -576,7 +576,7 @@ pub fn run() {
             )?;
 
             // System tray — app keeps running in background when window is closed
-            let node_status_item = MenuItemBuilder::with_id("node_status", "Node Running")
+            let node_status_item = MenuItemBuilder::with_id("node_status", "🟢 Node Running")
                 .enabled(false)
                 .build(app)?;
             let show_item = MenuItemBuilder::with_id("show", "Show SermonIndex")
@@ -607,6 +607,9 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
+                // Template icon: macOS renders it black and auto-inverts on
+                // dark menu bars, matching every native menu bar item.
+                .icon_as_template(true)
                 .tooltip("SermonIndex Node Software — Running")
                 .menu(&tray_menu)
                 .on_menu_event(move |app_handle, event| {
