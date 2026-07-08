@@ -83,7 +83,7 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
             <span className="icon">{icons.globe}</span> Node Map
             {nodesOnline !== null && (
               <span className="nav-count" title={`${nodesOnline} node${nodesOnline === 1 ? '' : 's'} online`}>
-                <span className="nav-count-dot" /> {nodesOnline}
+                [{nodesOnline}]
               </span>
             )}
           </div>
