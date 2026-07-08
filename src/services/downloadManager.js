@@ -146,10 +146,16 @@ async function trySeedTorrent(filename, sermon = null) {
     // seed THAT (librqbit hash-checks the file we just downloaded against the
     // official fingerprint, then joins the one canonical swarm). The file is
     // already in the session's default output folder, so nothing re-downloads.
+    // If the canonical .torrent is unreachable (CDN hiccup), fall through to
+    // legacy self-seeding — deterministic hashing puts it in the SAME swarm.
     if (fresh?.torrentUrl || fresh?.magnet?.startsWith('magnet:')) {
-      const source = fresh.torrentUrl || fresh.magnet;
-      const res = await mod.addTorrent(source);
-      return { magnet: fresh.magnet, info_hash: fresh.infoHash || res?.info_hash, id: res?.id };
+      try {
+        const source = fresh.torrentUrl || fresh.magnet;
+        const res = await mod.addTorrent(source);
+        return { magnet: fresh.magnet, info_hash: fresh.infoHash || res?.info_hash, id: res?.id };
+      } catch (canonErr) {
+        console.warn('[DL] Canonical seed failed, falling back to local torrent:', canonErr?.message || canonErr);
+      }
     }
 
     // No canonical entry (master list not published / new file) — legacy
