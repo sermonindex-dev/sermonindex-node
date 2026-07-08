@@ -99,6 +99,7 @@ export default function App() {
   const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
   const [unreadChat, setUnreadChat] = useState(0);             // unread community messages (sidebar badge)
   const [nodesOnline, setNodesOnline] = useState(null);        // live nodes online (sidebar count beside Node Map)
+  const [seedsOnline, setSeedsOnline] = useState(null);        // reachable seed nodes online (beside Seed Node)
   const [chatNotify, setChatNotify] = useState(() => chatPrefs().notify); // show unread badge
   const [chatShow, setChatShow] = useState(() => chatPrefs().show);       // show Community page at all
   const audioRef = useRef(null);
@@ -279,6 +280,9 @@ export default function App() {
         if (cancelled) return;
         const count = Math.max(seeds.length, Array.isArray(mapNodes) ? mapNodes.length : 0);
         setNodesOnline(count);
+        // Reachable seed nodes = entries in the seed directory (they registered
+        // via the seed page's reachability test).
+        setSeedsOnline(seeds.length);
       } catch { /* keep last value */ }
     };
     const t = setTimeout(poll, 5000);   // first check shortly after launch
@@ -975,6 +979,7 @@ export default function App() {
         unreadChat={chatShow && chatNotify ? unreadChat : 0}
         chatShow={chatShow}
         nodesOnline={nodesOnline}
+        seedsOnline={seedsOnline}
       />
       <div className="main-content">
         <TopBar contentMode={contentMode} announcement={announcement} onNavigate={navigateTo} networkHealth={networkHealth} />

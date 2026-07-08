@@ -529,4 +529,37 @@ export function getLibraryStats() {
   };
 }
 
+/**
+ * Seed-node validation, measured from what's actually complete on disk
+ * (the downloads folder is the source of truth). `scope` is 'audio' | 'full'.
+ * Returns how much of the chosen library this node genuinely hosts, and a
+ * boolean `verified` (a real seed node hosts ~all of its scope).
+ */
+export const SEED_VERIFY_THRESHOLD = 0.95; // ≥95% of the scope = verified seed
+
+export function getSeedProgress(scope = 'audio') {
+  const inScope = (s) => (scope === 'full' ? true : s.type === 'audio');
+  let total = 0, downloaded = 0, bytes = 0;
+  for (const s of catalog) {
+    if (!inScope(s)) continue;
+    total++;
+    const st = downloadState[s.id];
+    if (st?.downloaded && !st.incomplete) {
+      downloaded++;
+      bytes += st.diskSize || 0;
+    }
+  }
+  const pct = total > 0 ? downloaded / total : 0;
+  return {
+    scope,
+    total,
+    downloaded,
+    remaining: total - downloaded,
+    pct: Math.round(pct * 1000) / 10, // one decimal, e.g. 97.4
+    bytes,
+    sizeFormatted: formatBytes(bytes),
+    verified: total > 0 && pct >= SEED_VERIFY_THRESHOLD,
+  };
+}
+
 export { catalog };

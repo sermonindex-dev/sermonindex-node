@@ -672,6 +672,37 @@ export default function SeedNodePage({
       {/* Status */}
       <div className="seed-card">
         <h3>Your Seed Node Status</h3>
+
+        {/* Verified badge — a real seed node holds ~all of its scope on disk AND
+            is reachable so peers can actually pull from it. Both are measured,
+            not claimed: coverage from files on disk, reachability from the probe. */}
+        {(() => {
+          const verified = scopeTotal > 0 && (scopePercent >= 95) && reach?.open === true;
+          const nearly = scopeTotal > 0 && scopePercent >= 95 && reach?.open !== true;
+          return (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '12px 14px', marginBottom: '14px', borderRadius: 'var(--radius)',
+              background: verified ? 'rgba(61,138,65,0.10)' : 'var(--bg-tertiary)',
+              border: `1px solid ${verified ? 'rgba(61,138,65,0.35)' : 'var(--border)'}`,
+            }}>
+              <span style={{ fontSize: '1.4rem' }}>{verified ? '✓' : '◐'}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: verified ? 'var(--green)' : 'var(--text-primary)' }}>
+                  {verified ? 'Verified Seed Node' : nearly ? 'Library complete — not yet reachable' : 'Not yet a full seed node'}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {verified
+                    ? `Hosting ${scopePercent.toFixed(1)}% of the ${scopeInfo.label.toLowerCase()} and reachable from the internet — you are backbone.`
+                    : nearly
+                      ? `You hold ${scopePercent.toFixed(1)}% of the ${scopeInfo.label.toLowerCase()}, but your port isn't reachable. Forward the port (Step 3) to become verified.`
+                      : `${scopePercent.toFixed(1)}% of the ${scopeInfo.label.toLowerCase()} downloaded. A verified seed node holds ~95%+ and is reachable.`}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="settings-row">
           <div>
             <div style={{ fontWeight: 500 }}>Hosting</div>

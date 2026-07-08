@@ -50,7 +50,7 @@ const icons = {
   ),
 };
 
-export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement, unreadChat = 0, chatShow = true, nodesOnline = null }) {
+export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement, unreadChat = 0, chatShow = true, nodesOnline = null, seedsOnline = null }) {
   const coverage = libraryStats ? libraryStats.coverage : 0;
 
   return (
@@ -89,6 +89,11 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
           </div>
           <div className={`nav-item ${page === 'seed' ? 'active' : ''}`} onClick={() => onNavigate('seed')}>
             <span className="icon">{icons.seed}</span> Seed Node
+            {seedsOnline !== null && (
+              <span className="nav-count" title={`${seedsOnline} seed node${seedsOnline === 1 ? '' : 's'} online`}>
+                [{seedsOnline}]
+              </span>
+            )}
           </div>
           {chatShow && (
             <div className={`nav-item ${page === 'community' ? 'active' : ''}`} onClick={() => onNavigate('community')}>
