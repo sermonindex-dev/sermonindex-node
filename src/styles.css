@@ -246,6 +246,25 @@ body {
   stroke: var(--gold);
 }
 
+/* Unread-count pill on a nav item (right-aligned via the nav-item flexbox) */
+.nav-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--gold);
+  color: var(--text-on-gold);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.4;
+  border-radius: 999px;
+  padding: 1px 7px;
+  animation: nav-badge-pop 150ms ease-out;
+}
+
+@keyframes nav-badge-pop {
+  from { transform: scale(0.8); }
+  to { transform: scale(1); }
+}
+
 /* Sidebar footer — node status */
 .sidebar-footer {
   padding: 12px 16px;

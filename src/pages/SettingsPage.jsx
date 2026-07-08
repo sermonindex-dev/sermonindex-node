@@ -15,6 +15,10 @@ export default function SettingsPage({
   onStorageLimitChange,
   backgroundMode,
   onBackgroundModeChange,
+  chatNotify,
+  onChatNotifyChange,
+  chatShow,
+  onChatShowChange,
   nodeStats,
 }) {
   const [nodeId, setNodeId] = useState('');
@@ -214,6 +218,36 @@ export default function SettingsPage({
                 Mode updated successfully
               </div>
             )}
+          </div>
+
+          <div className="seed-card">
+            <h3>Community</h3>
+
+            <div className="settings-row">
+              <div>
+                <div style={{ fontWeight: 500 }}>Community notifications</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Show an unread-message count beside Community in the sidebar
+                </div>
+              </div>
+              <div
+                className={`toggle ${chatNotify ? 'on' : ''}`}
+                onClick={() => onChatNotifyChange(!chatNotify)}
+              ></div>
+            </div>
+
+            <div className="settings-row" style={{ border: 'none' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>Show Community page</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Hide the community chat entirely if you prefer no interaction
+                </div>
+              </div>
+              <div
+                className={`toggle ${chatShow ? 'on' : ''}`}
+                onClick={() => onChatShowChange(!chatShow)}
+              ></div>
+            </div>
           </div>
         </div>
 

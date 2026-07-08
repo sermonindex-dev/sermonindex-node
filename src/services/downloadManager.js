@@ -296,6 +296,19 @@ class DownloadManager {
     // ── Release download slot — other queued downloads can proceed now ──
     this.activeDownloads--;
 
+    // Human-readable library: hardlink downloads/<id>.ext into
+    // Library/<Speaker>/<Title>.ext (zero extra disk; fire-and-forget)
+    (async () => {
+      try {
+        const tauri = await import('@tauri-apps/api/core');
+        await tauri.invoke('organize_file', {
+          filename,
+          speaker: sermon.speaker || 'Unknown',
+          title: sermon.title || sermon.id,
+        });
+      } catch (e) { /* non-critical */ }
+    })();
+
     // ── PHASE 2: Seed the file to the torrent swarm (fire-and-forget) ──
     // Hashing large files can take a while, so we don't block completion on
     // it. When seeding finishes, the entry is updated with magnet/info_hash

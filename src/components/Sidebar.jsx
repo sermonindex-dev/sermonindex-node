@@ -50,7 +50,7 @@ const icons = {
   ),
 };
 
-export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement }) {
+export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement, unreadChat = 0, chatShow = true }) {
   const coverage = libraryStats ? libraryStats.coverage : 0;
 
   return (
@@ -85,9 +85,14 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
           <div className={`nav-item ${page === 'seed' ? 'active' : ''}`} onClick={() => onNavigate('seed')}>
             <span className="icon">{icons.seed}</span> Seed Node
           </div>
-          <div className={`nav-item ${page === 'community' ? 'active' : ''}`} onClick={() => onNavigate('community')}>
-            <span className="icon">{icons.chat}</span> Community
-          </div>
+          {chatShow && (
+            <div className={`nav-item ${page === 'community' ? 'active' : ''}`} onClick={() => onNavigate('community')}>
+              <span className="icon">{icons.chat}</span> Community
+              {unreadChat > 0 && (
+                <span className="nav-badge">{unreadChat > 99 ? '99+' : unreadChat}</span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="nav-section">

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getNodeId } from '../services/heartbeat.js';
+import { getLastRead, setLastRead } from '../services/chatNotify.js';
 
 // Bunny Edge Script endpoint (see server/chat-edge-script.js)
 const CHAT_API = 'https://community-chat-z71kj.bunny.run/';
@@ -29,8 +30,17 @@ function fmtTime(ts) {
     : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
 }
 
+// Module-level cache: remounting the page shows last-known messages instantly
+let _msgCache = [];
+
 export default function CommunityPage() {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessagesRaw] = useState(_msgCache);
+  const [loadedOnce, setLoadedOnce] = useState(_msgCache.length > 0);
+  const setMessages = (v) => setMessagesRaw((prev) => {
+    const next = typeof v === 'function' ? v(prev) : v;
+    _msgCache = next;
+    return next;
+  });
   const [savedName, setSavedName] = useState(loadSavedName);
   const [nameDraft, setNameDraft] = useState('');
   const [editingName, setEditingName] = useState(false);
@@ -40,7 +50,7 @@ export default function CommunityPage() {
   const [notice, setNotice] = useState(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const listRef = useRef(null);
-  const lastIdRef = useRef(0);
+  const lastIdRef = useRef(_msgCache.reduce((m, x) => Math.max(m, x.id), 0));
 
   // Fetch messages newer than the highest id we've seen; dedupe by id.
   // A "full" fetch (since=0) REPLACES the list — this is how moderator
@@ -74,7 +84,7 @@ export default function CommunityPage() {
     const poll = async () => {
       let ok = false;
       // Every 6th poll (~1 min) is a full re-sync so deletions propagate
-      try { await fetchNew(count % 6 === 0); ok = true; } catch {}
+      try { await fetchNew(count % 6 === 0); ok = true; setLoadedOnce(true); } catch {}
       count += 1;
       if (cancelled) return;
       setOffline(!ok);
@@ -90,6 +100,17 @@ export default function CommunityPage() {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages, autoScroll]);
+
+  // Everything on screen counts as read — persist the highest id and tell
+  // the app shell so the sidebar unread badge clears (see services/chatNotify.js)
+  useEffect(() => {
+    if (!messages.length) return;
+    const maxId = messages.reduce((m, x) => Math.max(m, x.id), 0);
+    if (maxId > getLastRead()) {
+      setLastRead(maxId);
+      window.dispatchEvent(new CustomEvent('si-chat-read'));
+    }
+  }, [messages]);
 
   const handleListScroll = useCallback(() => {
     const el = listRef.current;
@@ -211,7 +232,7 @@ export default function CommunityPage() {
             >
               {messages.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  No messages yet — be the first to say hello.
+                  {loadedOnce ? 'No messages yet — be the first to say hello.' : 'Loading messages…'}
                 </div>
               ) : messages.map((m) => (
                 // One row per message: muted identity | larger text | faint time

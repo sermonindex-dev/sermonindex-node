@@ -298,6 +298,44 @@ async fn fetch_text(url: String) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("read failed: {e}"))
 }
 
+/// Create a human-readable hardlink for a downloaded sermon:
+///   ~/.sermonindex/Library/<Speaker>/<Title>.<ext>
+/// The flat downloads/ folder stays untouched (canonical torrents need it);
+/// hardlinks cost zero extra disk space and are freely shareable/deletable.
+#[tauri::command]
+fn organize_file(filename: String, speaker: String, title: String) -> Result<String, String> {
+    let src = get_app_data_dir().join("downloads").join(&filename);
+    if !src.exists() {
+        return Err("source file missing".to_string());
+    }
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mp3")
+        .to_string();
+    let sane = |s: &str| -> String {
+        let cleaned: String = s
+            .chars()
+            .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
+            .collect();
+        let trimmed = cleaned.trim().trim_matches('.').to_string();
+        let mut out = if trimmed.is_empty() { "Unknown".to_string() } else { trimmed };
+        out.truncate(120);
+        out
+    };
+    let dir = get_app_data_dir().join("Library").join(sane(&speaker));
+    fs::create_dir_all(&dir).map_err(|e| format!("create dir: {e}"))?;
+    let dest = dir.join(format!("{}.{}", sane(&title), ext));
+    if dest.exists() {
+        return Ok(dest.to_string_lossy().to_string());
+    }
+    // Hardlink (same bytes, no extra space); copy as fallback for odd filesystems
+    if fs::hard_link(&src, &dest).is_err() {
+        fs::copy(&src, &dest).map_err(|e| format!("copy: {e}"))?;
+    }
+    Ok(dest.to_string_lossy().to_string())
+}
+
 /// Open a URL in the system default browser (used by the Donate banner)
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -674,6 +712,7 @@ pub fn run() {
             open_folder,
             open_url,
             fetch_text,
+            organize_file,
             save_sermon_file,
             create_sermon_file,
             append_sermon_chunk,

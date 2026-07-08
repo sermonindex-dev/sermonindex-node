@@ -61,6 +61,7 @@ import downloadManager, { DL_STATE, SOURCE_MODE } from './services/downloadManag
 import { getStoragePath } from './services/tauriStore.js';
 import { startHeartbeat, stopHeartbeat, fetchConfig, loadNodeIdFromDisk } from './services/heartbeat.js';
 import { checkForUpdates } from './services/updater.js';
+import { fetchUnreadCount, chatPrefs } from './services/chatNotify.js';
 
 export default function App() {
   const [page, setPage] = useState('library');
@@ -95,6 +96,9 @@ export default function App() {
   const [availablePacks, setAvailablePacks] = useState([]);   // content packs from server
   const [settingsTab, setSettingsTab] = useState(null);       // which settings sub-tab to open
   const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
+  const [unreadChat, setUnreadChat] = useState(0);             // unread community messages (sidebar badge)
+  const [chatNotify, setChatNotify] = useState(() => chatPrefs().notify); // show unread badge
+  const [chatShow, setChatShow] = useState(() => chatPrefs().show);       // show Community page at all
   const audioRef = useRef(null);
   const videoRef = useRef(null);
 
@@ -285,6 +289,49 @@ export default function App() {
     const iv = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(iv); };
   }, [p2pRunning]);
+
+  // ── Community chat unread badge ──────────────────────────────────────────
+  // Poll the chat server for unread messages — light touch: first check ~10s
+  // after mount, then every 60s. Skipped while the Community page is open
+  // (it marks messages read itself) or when disabled in Settings.
+  useEffect(() => {
+    if (!chatNotify || !chatShow || page === 'community') return;
+    let cancelled = false;
+    const check = async () => {
+      const n = await fetchUnreadCount();
+      if (!cancelled) setUnreadChat(n);
+    };
+    const first = setTimeout(check, 10000);
+    const iv = setInterval(check, 60000);
+    return () => { cancelled = true; clearTimeout(first); clearInterval(iv); };
+  }, [page, chatNotify, chatShow]);
+
+  // Opening the Community page clears the badge immediately
+  useEffect(() => {
+    if (page === 'community') setUnreadChat(0);
+  }, [page]);
+
+  // CommunityPage dispatches this after marking new messages as read
+  useEffect(() => {
+    const onChatRead = () => setUnreadChat(0);
+    window.addEventListener('si-chat-read', onChatRead);
+    return () => window.removeEventListener('si-chat-read', onChatRead);
+  }, []);
+
+  // If the Community page gets hidden in Settings while open, leave it
+  useEffect(() => {
+    if (!chatShow && page === 'community') setPage('library');
+  }, [chatShow, page]);
+
+  const handleChatNotifyChange = useCallback((enabled) => {
+    setChatNotify(enabled);
+    try { localStorage.setItem('si-chat-notify', enabled ? '1' : '0'); } catch {}
+  }, []);
+
+  const handleChatShowChange = useCallback((enabled) => {
+    setChatShow(enabled);
+    try { localStorage.setItem('si-chat-show', enabled ? '1' : '0'); } catch {}
+  }, []);
 
   // Handle P2P node toggle
   const handleP2pToggle = useCallback(async (enabled) => {
@@ -755,7 +802,7 @@ export default function App() {
       case 'connections':
         return <ConnectionsPage p2pRunning={p2pRunning} p2pEnabled={p2pEnabled} onP2pToggle={handleP2pToggle} />;
       case 'settings':
-        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} nodeStats={realStats} />;
+        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} />;
       default:
         return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} search={search} onSearch={setSearch} />;
     }
@@ -871,6 +918,8 @@ export default function App() {
         seedUnlocked={seedUnlocked}
         libraryStats={libraryStats}
         announcement={announcement}
+        unreadChat={chatShow && chatNotify ? unreadChat : 0}
+        chatShow={chatShow}
       />
       <div className="main-content">
         <TopBar contentMode={contentMode} announcement={announcement} onNavigate={navigateTo} networkHealth={networkHealth} />
