@@ -154,6 +154,49 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     }
   }, []);
 
+  // Download-location bar (Tauri only). Defined here — before the empty-state
+  // early return — so it renders whether or not any sermons are downloaded yet.
+  const locationBar = tauriReady ? (
+    <div className="seed-card" style={{ marginBottom: '12px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <span style={{ display: 'inline-flex', color: 'var(--text-muted)', flexShrink: 0 }}>{iconFolder}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '1px' }}>Download location</div>
+        <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={storageDir || undefined}>
+          {storageDir || 'Not set'}
+        </div>
+        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+          New downloads go here, auto-sorted into folders. Existing files stay where they are.
+          {reshard?.state === 'done' && <span style={{ color: '#3ca35b' }}> · Organized {reshard.moved} file{reshard.moved === 1 ? '' : 's'} — restart to finish.</span>}
+          {reshard?.state === 'error' && <span style={{ color: 'var(--orange)' }}> · Organize failed.</span>}
+        </div>
+      </div>
+      <button
+        className="btn"
+        onClick={changeStorageDir}
+        style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', flexShrink: 0 }}
+      >
+        Change…
+      </button>
+      <button
+        className="btn"
+        onClick={openStorageDir}
+        disabled={!storageDir}
+        style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: storageDir ? 'pointer' : 'default', fontSize: '0.75rem', flexShrink: 0, opacity: storageDir ? 1 : 0.4 }}
+      >
+        Open
+      </button>
+      <button
+        className="btn"
+        onClick={organizeFolders}
+        disabled={reshard?.state === 'working'}
+        data-tooltip="Move any loose files already downloaded into folders (fast, no extra space)"
+        style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: reshard?.state === 'working' ? 'default' : 'pointer', fontSize: '0.75rem', flexShrink: 0, opacity: reshard?.state === 'working' ? 0.6 : 1 }}
+      >
+        {reshard?.state === 'working' ? 'Organizing…' : 'Organize into folders'}
+      </button>
+    </div>
+  ) : null;
+
   if (sermons.length === 0) {
     return (
       <>
@@ -161,6 +204,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           <h2>My Downloads</h2>
           <p>Sermons you've downloaded are stored locally and shared with the peer network</p>
         </div>
+        {locationBar}
         <div className="seed-card" style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ fontSize: '2.5rem', marginBottom: '16px', opacity: 0.4 }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
@@ -404,47 +448,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         <p>{sermons.length} sermons ({audioCount} audio, {videoCount} video) · {formatStorage(totalBytes)} stored</p>
       </div>
 
-      {/* Task 1 — Download location bar (Tauri only) */}
-      {tauriReady && (
-        <div className="seed-card" style={{ marginBottom: '12px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ display: 'inline-flex', color: 'var(--text-muted)', flexShrink: 0 }}>{iconFolder}</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '1px' }}>Download location</div>
-            <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={storageDir || undefined}>
-              {storageDir || 'Not set'}
-            </div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-              New downloads go here, auto-sorted into folders. Existing files stay where they are.
-              {reshard?.state === 'done' && <span style={{ color: '#3ca35b' }}> · Organized {reshard.moved} file{reshard.moved === 1 ? '' : 's'} — restart to finish.</span>}
-              {reshard?.state === 'error' && <span style={{ color: 'var(--orange)' }}> · Organize failed.</span>}
-            </div>
-          </div>
-          <button
-            className="btn"
-            onClick={changeStorageDir}
-            style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', flexShrink: 0 }}
-          >
-            Change…
-          </button>
-          <button
-            className="btn"
-            onClick={openStorageDir}
-            disabled={!storageDir}
-            style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: storageDir ? 'pointer' : 'default', fontSize: '0.75rem', flexShrink: 0, opacity: storageDir ? 1 : 0.4 }}
-          >
-            Open
-          </button>
-          <button
-            className="btn"
-            onClick={organizeFolders}
-            disabled={reshard?.state === 'working'}
-            data-tooltip="Move any loose files already downloaded into folders (fast, no extra space)"
-            style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: reshard?.state === 'working' ? 'default' : 'pointer', fontSize: '0.75rem', flexShrink: 0, opacity: reshard?.state === 'working' ? 0.6 : 1 }}
-          >
-            {reshard?.state === 'working' ? 'Organizing…' : 'Organize into folders'}
-          </button>
-        </div>
-      )}
+      {locationBar}
 
       <div className="seed-card" style={{ marginBottom: '16px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <p style={{ fontSize: '0.78rem', margin: 0, color: 'var(--text-muted)', lineHeight: 1.5, flex: 1 }}>
