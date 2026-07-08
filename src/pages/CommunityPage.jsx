@@ -42,12 +42,20 @@ export default function CommunityPage() {
   const listRef = useRef(null);
   const lastIdRef = useRef(0);
 
-  // Fetch messages newer than the highest id we've seen; dedupe by id
-  const fetchNew = useCallback(async () => {
-    const res = await fetch(`${CHAT_API}?since=${lastIdRef.current}`, { signal: AbortSignal.timeout(8000) });
+  // Fetch messages newer than the highest id we've seen; dedupe by id.
+  // A "full" fetch (since=0) REPLACES the list — this is how moderator
+  // deletions disappear from screens that are already open.
+  const fetchNew = useCallback(async (full = false) => {
+    const since = full ? 0 : lastIdRef.current;
+    const res = await fetch(`${CHAT_API}?since=${since}`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.ok || !Array.isArray(data.messages)) throw new Error('bad payload');
+    if (full) {
+      lastIdRef.current = data.messages.reduce((m, x) => Math.max(m, x.id), 0);
+      setMessages(data.messages.slice(-MAX_KEPT));
+      return;
+    }
     if (data.messages.length) {
       lastIdRef.current = data.messages.reduce((m, x) => Math.max(m, x.id), lastIdRef.current);
       setMessages(prev => {
@@ -62,9 +70,12 @@ export default function CommunityPage() {
   useEffect(() => {
     let cancelled = false;
     let timer = null;
+    let count = 0;
     const poll = async () => {
       let ok = false;
-      try { await fetchNew(); ok = true; } catch {}
+      // Every 6th poll (~1 min) is a full re-sync so deletions propagate
+      try { await fetchNew(count % 6 === 0); ok = true; } catch {}
+      count += 1;
       if (cancelled) return;
       setOffline(!ok);
       timer = setTimeout(poll, ok ? POLL_MS : POLL_MS_OFFLINE);
