@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ADMIN_KEY    = 'CHANGE_ME'; // ← set a long random secret before deploying
+const ADMIN_KEY    = process.env.ADMIN_KEY || 'CHANGE_ME'; // env var, or edit here — must not stay CHANGE_ME
 const PORT         = Number(process.env.CHAT_PORT) || 8787;
 const DATA_FILE    = path.join(path.dirname(fileURLToPath(import.meta.url)), 'chat-data.json');
 const MAX_TEXT     = 500;
