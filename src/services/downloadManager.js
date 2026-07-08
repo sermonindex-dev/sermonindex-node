@@ -123,14 +123,33 @@ async function trySeedTorrent(filename, sermon = null) {
     if (!mod) return null;
     await mod.startSession(); // idempotent
 
+    // Re-resolve the sermon from the LIVE catalog: the master list loads a few
+    // seconds after app start, and the sermon object captured when the download
+    // began may predate the merge (no magnet/torrentUrl yet). If the master
+    // list still hasn't arrived, wait up to 20s — canonical seeding is worth it.
+    let fresh = sermon;
+    try {
+      const cat = await import('./catalog.js');
+      const resolve = () => {
+        if (sermon?.id) fresh = cat.getCatalog().find((s) => s.id === sermon.id) || fresh;
+      };
+      resolve();
+      if (!(fresh?.torrentUrl || fresh?.magnet?.startsWith('magnet:'))) {
+        for (let i = 0; i < 10 && !cat.hasMasterList(); i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        resolve();
+      }
+    } catch { /* catalog unavailable — proceed with what we have */ }
+
     // TRUST RULE: if the master list gave this sermon a canonical torrent,
     // seed THAT (librqbit hash-checks the file we just downloaded against the
     // official fingerprint, then joins the one canonical swarm). The file is
     // already in the session's default output folder, so nothing re-downloads.
-    if (sermon?.torrentUrl || sermon?.magnet?.startsWith('magnet:')) {
-      const source = sermon.torrentUrl || sermon.magnet;
+    if (fresh?.torrentUrl || fresh?.magnet?.startsWith('magnet:')) {
+      const source = fresh.torrentUrl || fresh.magnet;
       const res = await mod.addTorrent(source);
-      return { magnet: sermon.magnet, info_hash: sermon.infoHash || res?.info_hash, id: res?.id };
+      return { magnet: fresh.magnet, info_hash: fresh.infoHash || res?.info_hash, id: res?.id };
     }
 
     // No canonical entry (master list not published / new file) — legacy

@@ -6,6 +6,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 /// Result of a successful port mapping attempt.
+#[allow(dead_code)] // udp_external_port kept for future QUIC/uTP use
 pub struct MappingResult {
     pub gateway: String,
     pub tcp_external_port: u16,
