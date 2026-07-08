@@ -24,7 +24,6 @@ use std::time::Instant;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{
     create_torrent, AddTorrent, AddTorrentOptions, CreateTorrentOptions, Session, SessionOptions,
-    SessionPersistenceConfig,
 };
 use serde::Serialize;
 
@@ -119,14 +118,18 @@ pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHa
     std::fs::create_dir_all(&persist_dir)
         .map_err(|e| format!("Failed to create session dir: {e}"))?;
 
+    let _ = &persist_dir; // retained for backward-compat cleanup; no longer written
     let opts = SessionOptions {
         disable_dht: false,
         disable_dht_persistence: false,
         fastresume: true,
-        // Persist torrent list — seeded sermons resume automatically on restart.
-        persistence: Some(SessionPersistenceConfig::Json {
-            folder: Some(persist_dir),
-        }),
+        // NO torrent-list persistence. librqbit's own persistence would resume
+        // every past torrent on start and RE-DOWNLOAD any file the user deleted
+        // (canonical torrents have CDN webseeds, so deleted files silently came
+        // back). Instead the app re-seeds exactly the files present on disk at
+        // startup (downloadManager.reseedExisting) — the downloads folder is the
+        // single source of truth, so deleting a file truly removes it.
+        persistence: None,
         listen_port_range: Some(LISTEN_PORT_RANGE),
         enable_upnp_port_forwarding: true,
         // Session-wide extra trackers, announced for every torrent.

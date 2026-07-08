@@ -258,6 +258,12 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         await new Promise(r => setTimeout(r, 2000));
         const st = await torrent.startSession();
         addLog(`Session restarted (port ${st?.tcp_listen_port ?? '?'}, ${st?.torrent_count ?? 0} torrents)`, 'success');
+        // Session no longer persists its list — re-seed exactly what's on disk.
+        try {
+          const [dm, cat] = await Promise.all([import('../services/downloadManager.js'), import('../services/catalog.js')]);
+          await dm.default.reseedExisting(cat.getDownloaded());
+          addLog('Re-seeded downloads present on disk', 'info');
+        } catch (e) { addLog(`Re-seed skipped: ${e?.message || e}`, 'warn'); }
         setReach(null);
       }
     } catch (err) {

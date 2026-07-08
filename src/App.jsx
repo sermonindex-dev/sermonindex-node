@@ -207,16 +207,15 @@ export default function App() {
           setP2pRunning(true);
           setNodeOnline(true);
           console.log('[App] P2P node started successfully');
-          // Reconcile the persisted torrent list against disk: drop any
-          // torrents whose file the user has since deleted (librqbit resumes
-          // them on restart, so they'd otherwise seed/list phantom sermons at
-          // 0.0% forever). Fire-and-forget — never block startup on this.
+          // The torrent session no longer persists its own list (that caused
+          // deleted files to be re-downloaded from their webseeds). Instead we
+          // re-seed exactly what's on disk RIGHT NOW — the downloads folder is
+          // the single source of truth. Fire-and-forget; never block startup.
           try {
-            torrentModule.pruneMissing()
-              .then((n) => { if (n) console.log(`[App] Pruned ${n} missing torrent(s) on startup`); })
-              .catch((e) => console.warn('[App] Torrent prune (startup) failed:', e?.message || e));
+            downloadManager.reseedExisting(getDownloaded())
+              .catch((e) => console.warn('[App] Re-seed on startup failed:', e?.message || e));
           } catch (e) {
-            console.warn('[App] Torrent prune (startup) threw:', e?.message || e);
+            console.warn('[App] Re-seed on startup threw:', e?.message || e);
           }
         }
       } catch (e) {

@@ -200,6 +200,31 @@ class DownloadManager {
     this.mode = mode;
   }
 
+  /**
+   * Re-seed the sermons the user actually has on disk. Called once at startup
+   * (the torrent session no longer persists its own list — see torrent_node.rs).
+   * Uses seedDownloaded, which builds the torrent from the EXISTING file
+   * (deterministic infohash = same canonical swarm) and never re-downloads.
+   * `sermons` should be the downloaded sermons (getDownloaded()).
+   */
+  async reseedExisting(sermons) {
+    if (!Array.isArray(sermons) || sermons.length === 0) return;
+    const mod = await loadTorrent();
+    if (!mod) return;
+    try { await mod.startSession(); } catch { return; }
+    for (const s of sermons) {
+      const ext = s.type === 'video' ? 'mp4' : 'mp3';
+      const filename = `${s.id}.${ext}`;
+      try {
+        await mod.seedDownloaded(filename);
+      } catch (e) {
+        // File may have just been removed, or hashing failed — skip quietly.
+        console.warn('[DL] reseed skipped', filename, e?.message || e);
+      }
+    }
+    console.log(`[DL] Re-seeded ${sermons.length} existing download(s)`);
+  }
+
   setBandwidthLimit(mbps) {
     this.bandwidthLimit = mbps > 0 ? mbps * 125000 : 0;
   }
