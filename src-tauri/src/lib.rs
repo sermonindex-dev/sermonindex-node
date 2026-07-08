@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tauri::Manager;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -39,13 +40,90 @@ fn get_app_data_dir() -> PathBuf {
     home.join(".sermonindex")
 }
 
+/// Process-global override for where downloaded sermons are written.
+/// When `None`, downloads default to `~/.sermonindex/downloads`. Seed nodes
+/// pick a large external drive via `set_storage_dir`, which sets this (and
+/// persists it to settings.json). `const Mutex::new` is valid since Rust
+/// 1.63; this crate targets 1.77, so it compiles.
+static STORAGE_OVERRIDE: StdMutex<Option<PathBuf>> = StdMutex::new(None);
+
+/// The directory downloaded sermons are written to. Honours the storage
+/// override (chosen drive) if one is set; otherwise the default downloads dir.
+/// Every command that touches the downloads folder routes through this so that
+/// changing the storage location takes effect everywhere at once.
+fn downloads_dir() -> PathBuf {
+    if let Ok(guard) = STORAGE_OVERRIDE.lock() {
+        if let Some(p) = guard.as_ref() {
+            return p.clone();
+        }
+    }
+    get_app_data_dir().join("downloads")
+}
+
 /// Get the downloads storage path
 #[tauri::command]
 fn get_storage_path() -> Result<String, String> {
-    let path = get_app_data_dir().join("downloads");
+    let path = downloads_dir();
     // Ensure the directory exists
     fs::create_dir_all(&path).map_err(|e| format!("Failed to create storage dir: {}", e))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Persist the chosen storage directory into settings.json (key "storage_dir"),
+/// preserving any other settings. Reuses the same settings.json file the
+/// frontend save_settings/load_settings commands read and write.
+fn persist_storage_dir_setting(path: &str) -> Result<(), String> {
+    let settings_path = get_app_data_dir().join("settings.json");
+    fs::create_dir_all(settings_path.parent().unwrap())
+        .map_err(|e| format!("Failed to create dir: {}", e))?;
+    // Read the current settings (default to an empty object) and set the key.
+    let mut value: serde_json::Value = if settings_path.exists() {
+        let text = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read settings: {}", e))?;
+        serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if !value.is_object() {
+        value = serde_json::json!({});
+    }
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("storage_dir".to_string(), serde_json::Value::String(path.to_string()));
+    }
+    let serialized = serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    fs::write(&settings_path, serialized)
+        .map_err(|e| format!("Failed to write settings: {}", e))?;
+    Ok(())
+}
+
+/// Set the storage directory downloads are written to. Validates the path,
+/// creates it, updates the process-global override, and persists it to
+/// settings.json so it survives restarts. Only affects FUTURE downloads —
+/// existing files are intentionally left where they are.
+#[tauri::command]
+fn set_storage_dir(path: String) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Storage path is empty".to_string());
+    }
+    let dir = PathBuf::from(trimmed);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create storage dir: {}", e))?;
+    // Update the in-memory override so all downloads_dir() callers pick it up.
+    if let Ok(mut guard) = STORAGE_OVERRIDE.lock() {
+        *guard = Some(dir.clone());
+    } else {
+        return Err("Failed to update storage override".to_string());
+    }
+    // Persist so the choice survives a restart (used by the setup closure).
+    persist_storage_dir_setting(trimmed)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Get the storage directory downloads are currently written to.
+#[tauri::command]
+fn get_storage_dir() -> String {
+    downloads_dir().to_string_lossy().to_string()
 }
 
 /// Save a downloaded sermon file to disk from base64-encoded data
@@ -53,7 +131,7 @@ fn get_storage_path() -> Result<String, String> {
 #[tauri::command]
 fn save_sermon_file(filename: String, data_b64: String) -> Result<String, String> {
     use base64::Engine;
-    let path = get_app_data_dir().join("downloads");
+    let path = downloads_dir();
     fs::create_dir_all(&path).map_err(|e| format!("Failed to create downloads dir: {}", e))?;
     let file_path = path.join(&filename);
     let bytes = base64::engine::general_purpose::STANDARD.decode(&data_b64)
@@ -65,7 +143,7 @@ fn save_sermon_file(filename: String, data_b64: String) -> Result<String, String
 /// Create/truncate a file for chunked writing (used for large files)
 #[tauri::command]
 fn create_sermon_file(filename: String) -> Result<String, String> {
-    let path = get_app_data_dir().join("downloads");
+    let path = downloads_dir();
     fs::create_dir_all(&path).map_err(|e| format!("Failed to create downloads dir: {}", e))?;
     let file_path = path.join(&filename);
     // Create or truncate the file
@@ -78,7 +156,7 @@ fn create_sermon_file(filename: String) -> Result<String, String> {
 fn append_sermon_chunk(filename: String, chunk_b64: String) -> Result<(), String> {
     use base64::Engine;
     use std::io::Write;
-    let file_path = get_app_data_dir().join("downloads").join(&filename);
+    let file_path = downloads_dir().join(&filename);
     let bytes = base64::engine::general_purpose::STANDARD.decode(&chunk_b64)
         .map_err(|e| format!("Failed to decode base64 chunk: {}", e))?;
     let mut file = fs::OpenOptions::new()
@@ -92,14 +170,14 @@ fn append_sermon_chunk(filename: String, chunk_b64: String) -> Result<(), String
 /// Check if a downloaded file exists on disk
 #[tauri::command]
 fn check_file_exists(filename: String) -> bool {
-    let path = get_app_data_dir().join("downloads").join(&filename);
+    let path = downloads_dir().join(&filename);
     path.exists()
 }
 
 /// List all downloaded files on disk
 #[tauri::command]
 fn list_downloaded_files() -> Result<Vec<String>, String> {
-    let path = get_app_data_dir().join("downloads");
+    let path = downloads_dir();
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -188,7 +266,7 @@ fn load_settings() -> Result<String, String> {
 /// Get disk usage of the sermon downloads directory
 #[tauri::command]
 fn get_storage_usage() -> Result<StorageInfo, String> {
-    let path = get_app_data_dir().join("downloads");
+    let path = downloads_dir();
     if !path.exists() {
         return Ok(StorageInfo {
             bytes: 0,
@@ -304,7 +382,7 @@ async fn fetch_text(url: String) -> Result<String, String> {
 /// hardlinks cost zero extra disk space and are freely shareable/deletable.
 #[tauri::command]
 fn organize_file(filename: String, speaker: String, title: String) -> Result<String, String> {
-    let src = get_app_data_dir().join("downloads").join(&filename);
+    let src = downloads_dir().join(&filename);
     if !src.exists() {
         return Err("source file missing".to_string());
     }
@@ -356,7 +434,7 @@ fn open_url(url: String) -> Result<(), String> {
 /// Delete a downloaded sermon file
 #[tauri::command]
 fn delete_sermon_file(filename: String) -> Result<(), String> {
-    let path = get_app_data_dir().join("downloads").join(&filename);
+    let path = downloads_dir().join(&filename);
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {}", e))?;
     }
@@ -366,7 +444,7 @@ fn delete_sermon_file(filename: String) -> Result<(), String> {
 /// Get file size of a downloaded sermon (for integrity checks)
 #[tauri::command]
 fn get_file_size(filename: String) -> Result<u64, String> {
-    let path = get_app_data_dir().join("downloads").join(&filename);
+    let path = downloads_dir().join(&filename);
     if !path.exists() {
         return Err("File not found".to_string());
     }
@@ -377,7 +455,7 @@ fn get_file_size(filename: String) -> Result<u64, String> {
 /// Get the absolute file path of a downloaded sermon (for local playback via asset protocol)
 #[tauri::command]
 fn get_sermon_file_path(filename: String) -> Result<String, String> {
-    let path = get_app_data_dir().join("downloads").join(&filename);
+    let path = downloads_dir().join(&filename);
     if !path.exists() {
         return Err("File not found".to_string());
     }
@@ -387,7 +465,7 @@ fn get_sermon_file_path(filename: String) -> Result<String, String> {
 /// Export a downloaded sermon file to the user's Desktop with a readable name
 #[tauri::command]
 fn export_sermon_file(filename: String, dest_name: String) -> Result<String, String> {
-    let src = get_app_data_dir().join("downloads").join(&filename);
+    let src = downloads_dir().join(&filename);
     if !src.exists() {
         return Err("Source file not found".to_string());
     }
@@ -465,7 +543,9 @@ async fn torrent_start(
         return Ok(handle.info());
     }
     let data_dir = get_app_data_dir();
-    let download_dir = data_dir.join("downloads");
+    // Route the torrent session's output through the configurable storage dir
+    // so seeded/downloaded torrents land on the seed node's chosen drive.
+    let download_dir = downloads_dir();
     let handle = torrent_node::start(data_dir, download_dir).await?;
     let info = handle.info();
     ts.handle = Some(Arc::new(handle));
@@ -525,7 +605,7 @@ async fn torrent_seed_downloaded(
     name: Option<String>,
 ) -> Result<torrent_node::SeedResult, String> {
     let handle = get_torrent_handle(&state).await?;
-    let file_path = get_app_data_dir().join("downloads").join(&filename);
+    let file_path = downloads_dir().join(&filename);
     let torrents_dir = get_app_data_dir().join("torrents");
     handle.seed_file(&file_path, name, &torrents_dir).await
 }
@@ -568,7 +648,7 @@ async fn torrent_prune_missing(
     state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
 ) -> Result<usize, String> {
     let handle = get_torrent_handle(&state).await?;
-    let downloads_dir = get_app_data_dir().join("downloads");
+    let downloads_dir = downloads_dir();
     handle.remove_missing(&downloads_dir).await
 }
 
@@ -611,6 +691,30 @@ pub fn run() {
             let _ = fs::create_dir_all(&data_dir);
             let _ = fs::create_dir_all(data_dir.join("downloads"));
             let _ = fs::create_dir_all(data_dir.join("torrents"));
+
+            // Restore the seed node's chosen storage directory (if any) BEFORE
+            // the torrent session can start, so downloads/seeding land on the
+            // selected drive. Reads settings.json → "storage_dir".
+            {
+                let settings_path = data_dir.join("settings.json");
+                if settings_path.exists() {
+                    if let Ok(text) = fs::read_to_string(&settings_path) {
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(dir) = value.get("storage_dir").and_then(|v| v.as_str()) {
+                                let dir = dir.trim();
+                                if !dir.is_empty() {
+                                    let path = PathBuf::from(dir);
+                                    let _ = fs::create_dir_all(&path);
+                                    if let Ok(mut guard) = STORAGE_OVERRIDE.lock() {
+                                        *guard = Some(path);
+                                    }
+                                    log::info!("[Storage] Using configured storage dir: {}", dir);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Enable logging in all builds (Info for release, Debug for dev)
             let log_level = if cfg!(debug_assertions) {
@@ -710,6 +814,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_storage_path,
+            set_storage_dir,
+            get_storage_dir,
             get_catalog_path,
             save_catalog,
             load_catalog,
