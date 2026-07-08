@@ -12,12 +12,12 @@ const iconChat = (
   </svg>
 );
 
-function defaultName() {
-  try {
-    const saved = localStorage.getItem('si-chat-name');
-    if (saved) return saved;
-  } catch {}
-  return 'Node-' + getNodeId().slice(-4);
+function loadSavedName() {
+  try { return localStorage.getItem('si-chat-name') || ''; } catch { return ''; }
+}
+
+function nodeShort() {
+  try { return String(getNodeId()).slice(0, 8); } catch { return 'node'; }
 }
 
 function fmtTime(ts) {
@@ -30,7 +30,9 @@ function fmtTime(ts) {
 
 export default function CommunityPage() {
   const [messages, setMessages] = useState([]);
-  const [name, setName] = useState(defaultName);
+  const [savedName, setSavedName] = useState(loadSavedName);
+  const [nameDraft, setNameDraft] = useState('');
+  const [editingName, setEditingName] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -83,10 +85,13 @@ export default function CommunityPage() {
     setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
   }, []);
 
-  const handleNameChange = (v) => {
-    const trimmed = v.slice(0, 24);
-    setName(trimmed);
-    try { localStorage.setItem('si-chat-name', trimmed); } catch {}
+  // Name is set once (with a small "change" escape hatch for typos)
+  const saveName = () => {
+    const clean = nameDraft.trim().slice(0, 24);
+    if (!clean) return;
+    setSavedName(clean);
+    setEditingName(false);
+    try { localStorage.setItem('si-chat-name', clean); } catch {}
   };
 
   const send = useCallback(async () => {
@@ -98,7 +103,7 @@ export default function CommunityPage() {
       const res = await fetch(CHAT_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ node_id: getNodeId(), name: name.trim() || defaultName(), text: text.slice(0, 500) }),
+        body: JSON.stringify({ node_id: getNodeId(), name: savedName || 'Node-' + nodeShort().slice(-4), text: text.slice(0, 500) }),
       });
       const data = await res.json().catch(() => ({}));
       if (data.ok) {
@@ -117,7 +122,7 @@ export default function CommunityPage() {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, name, fetchNew]);
+  }, [draft, sending, savedName, fetchNew]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -129,7 +134,7 @@ export default function CommunityPage() {
   const muted = { color: 'var(--text-muted)', fontSize: '0.7rem' };
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div style={{ maxWidth: 980, margin: '0 auto' }}>
       <div className="page-header">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconChat}</span> Community
@@ -137,17 +142,44 @@ export default function CommunityPage() {
         <p>Fellowship with other nodes keeping the vault alive</p>
       </div>
 
-      {/* Display name */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Display name</label>
-        <input
-          type="text"
-          value={name}
-          maxLength={24}
-          onChange={(e) => handleNameChange(e.target.value)}
-          style={{ maxWidth: 220 }}
-        />
-      </div>
+      {/* Identity — set once, shown as  #nodeid · Name  */}
+      {(!savedName || editingName) ? (
+        <div className="seed-card" style={{ padding: '14px 16px', marginBottom: '14px' }}>
+          <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Choose your display name</div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+            A first name is perfect. It appears next to your node ID, like{' '}
+            <span style={{ fontFamily: 'monospace' }}>#{nodeShort()}</span> · <span style={{ color: 'var(--gold-text)', fontWeight: 700 }}>{nameDraft.trim() || 'Greg'}</span>.
+            You set this once.
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <input
+              type="text"
+              autoFocus
+              placeholder="Your first name"
+              value={nameDraft}
+              maxLength={24}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }}
+              style={{ maxWidth: 240 }}
+            />
+            <button className="btn btn-gold" onClick={saveName} disabled={!nameDraft.trim()} style={{ opacity: nameDraft.trim() ? 1 : 0.6 }}>
+              Save name
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', fontSize: '0.82rem' }}>
+          <span style={{ color: 'var(--text-muted)' }}>Chatting as</span>
+          <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{nodeShort()}</span>
+          <span style={{ color: 'var(--gold-text)', fontWeight: 700 }}>· {savedName}</span>
+          <button
+            onClick={() => { setNameDraft(savedName); setEditingName(true); }}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.72rem', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'var(--font)' }}
+          >
+            change
+          </button>
+        </div>
+      )}
 
       {/* Message list */}
       <div className="seed-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column' }}>
@@ -163,7 +195,7 @@ export default function CommunityPage() {
             <div
               ref={listRef}
               onScroll={handleListScroll}
-              style={{ overflowY: 'auto', minHeight: 240, maxHeight: '46vh', display: 'flex', flexDirection: 'column', gap: '12px' }}
+              style={{ overflowY: 'auto', height: '62vh', minHeight: 480, display: 'flex', flexDirection: 'column', gap: '12px' }}
             >
               {messages.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -172,8 +204,8 @@ export default function CommunityPage() {
               ) : messages.map((m) => (
                 <div key={m.id}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                    <span title="node id" style={{ ...muted, fontFamily: 'monospace' }}>#{m.node}</span>
                     <span style={{ color: 'var(--gold-text)', fontWeight: 700, fontSize: '0.82rem' }}>{m.name}</span>
-                    <span title="node id" style={{ ...muted, fontFamily: 'monospace' }}>{m.node}</span>
                     <span style={muted}>{fmtTime(m.ts)}</span>
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem', color: 'var(--text-primary)', lineHeight: 1.5, marginTop: '2px', wordBreak: 'break-word' }}>
@@ -208,8 +240,8 @@ export default function CommunityPage() {
           rows={2}
           value={draft}
           maxLength={500}
-          disabled={sending}
-          placeholder="Write a message… (Enter to send, Shift+Enter for a new line)"
+          disabled={sending || !savedName}
+          placeholder={savedName ? 'Write a message… (Enter to send, Shift+Enter for a new line)' : 'Set your display name above to join the conversation'}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
           style={{
