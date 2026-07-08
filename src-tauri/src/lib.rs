@@ -484,6 +484,95 @@ fn export_sermon_file(filename: String, dest_name: String) -> Result<String, Str
     Ok(dest.to_string_lossy().to_string())
 }
 
+/// Sanitize a string so it's safe as a file/folder name on all platforms.
+fn sanitize_name(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').to_string();
+    let mut out = if trimmed.is_empty() { "Unknown".to_string() } else { trimmed };
+    out.truncate(120);
+    out
+}
+
+/// The base folder exports are written into (Desktop, or home if no Desktop).
+fn export_base_dir() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let desktop = home.join("Desktop");
+    if desktop.exists() { desktop } else { home }
+}
+
+/// Export ONE downloaded sermon into Desktop/<Speaker>/<Title>.<ext>.
+/// Copies (not hardlinks) so it works across drives; returns the speaker folder.
+#[tauri::command]
+fn export_sermon(filename: String, speaker: String, title: String) -> Result<String, String> {
+    let src = downloads_dir().join(&filename);
+    if !src.exists() {
+        return Err("Source file not found".to_string());
+    }
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mp3")
+        .to_string();
+    let dir = export_base_dir().join(sanitize_name(&speaker));
+    fs::create_dir_all(&dir).map_err(|e| format!("create dir: {e}"))?;
+    let dest = dir.join(format!("{}.{}", sanitize_name(&title), ext));
+    fs::copy(&src, &dest).map_err(|e| format!("Failed to export: {e}"))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[derive(Deserialize)]
+struct ExportItem {
+    filename: String,
+    title: String,
+}
+
+#[derive(Serialize)]
+struct ExportResult {
+    folder: String,
+    exported: usize,
+    failed: usize,
+}
+
+/// Export ALL of a speaker's downloaded sermons into one Desktop/<Speaker>/ folder,
+/// each named <Title>.<ext>. Titles that collide get the file id appended so
+/// nothing is silently overwritten. Missing source files are counted as failed
+/// rather than aborting the whole batch.
+#[tauri::command]
+fn export_speaker(speaker: String, items: Vec<ExportItem>) -> Result<ExportResult, String> {
+    let dir = export_base_dir().join(sanitize_name(&speaker));
+    fs::create_dir_all(&dir).map_err(|e| format!("create dir: {e}"))?;
+    let mut exported = 0usize;
+    let mut failed = 0usize;
+    for it in &items {
+        let src = downloads_dir().join(&it.filename);
+        if !src.exists() {
+            failed += 1;
+            continue;
+        }
+        let path = std::path::Path::new(&it.filename);
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("mp3").to_string();
+        let base = sanitize_name(&it.title);
+        let mut dest = dir.join(format!("{}.{}", base, ext));
+        if dest.exists() {
+            // Disambiguate duplicate titles with the (unique) file id stem.
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("copy");
+            dest = dir.join(format!("{} [{}].{}", base, stem, ext));
+        }
+        match fs::copy(&src, &dest) {
+            Ok(_) => exported += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    Ok(ExportResult {
+        folder: dir.to_string_lossy().to_string(),
+        exported,
+        failed,
+    })
+}
+
 /// Check available disk space at a given path
 #[tauri::command]
 fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
@@ -839,6 +928,8 @@ pub fn run() {
             get_file_size,
             get_sermon_file_path,
             export_sermon_file,
+            export_sermon,
+            export_speaker,
             // ── BitTorrent commands ──
             torrent_start,
             torrent_stop,

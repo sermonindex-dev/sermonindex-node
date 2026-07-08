@@ -321,18 +321,13 @@ class DownloadManager {
     // ── Release download slot — other queued downloads can proceed now ──
     this.activeDownloads--;
 
-    // Human-readable library: hardlink downloads/<id>.ext into
-    // Library/<Speaker>/<Title>.ext (zero extra disk; fire-and-forget)
-    (async () => {
-      try {
-        const tauri = await import('@tauri-apps/api/core');
-        await tauri.invoke('organize_file', {
-          filename,
-          speaker: sermon.speaker || 'Unknown',
-          title: sermon.title || sermon.id,
-        });
-      } catch (e) { /* non-critical */ }
-    })();
+    // NOTE: We intentionally do NOT auto-create a human-readable Library copy
+    // here anymore. Hardlinks only stay "free" on the SAME filesystem; once the
+    // download folder is an external drive (a common seed-node setup) the OS
+    // can't hardlink across volumes and silently falls back to a full COPY,
+    // doubling the space a volunteer needs (500 GB → 1 TB). Instead, readable
+    // copies are produced on demand via the Export buttons in My Downloads,
+    // which write into Desktop/<Speaker>/<Title>.<ext> only when the user asks.
 
     // ── PHASE 2: Seed the file to the torrent swarm (fire-and-forget) ──
     // Hashing large files can take a while, so we don't block completion on

@@ -808,10 +808,13 @@ export default function App() {
       if (tauriMod) {
         const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
         const filename = `${sermonId}.${ext}`;
-        // Clean title for filename
-        const cleanTitle = `${sermon.speaker} - ${sermon.title}`.replace(/[/\\:*?"<>|]/g, '_');
-        const destName = `${cleanTitle}.${ext}`;
-        await tauriMod.invoke('export_sermon_file', { filename, destName });
+        // Export into Desktop/<Speaker>/<Title>.<ext> — a per-speaker folder with
+        // a properly named file, so exports land organized by speaker.
+        await tauriMod.invoke('export_sermon', {
+          filename,
+          speaker: sermon.speaker || 'Unknown',
+          title: sermon.title || sermonId,
+        });
       }
     } catch (e) {
       console.warn('[App] Export failed:', e);

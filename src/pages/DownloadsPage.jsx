@@ -111,6 +111,32 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     }
   }, [storageDir]);
 
+  // ── Export a whole speaker → Desktop/<Speaker>/<Title>.<ext> ────────────────
+  // Copies every complete download by this speaker into one Desktop folder with
+  // proper filenames. Status is tracked per speaker for inline feedback.
+  const [exportStatus, setExportStatus] = useState({}); // name -> {state, exported, failed}
+  const exportSpeaker = useCallback(async (speaker) => {
+    await ensureTauri();
+    if (!tauriInvoke) return;
+    setExportStatus(prev => ({ ...prev, [speaker.name]: { state: 'working' } }));
+    try {
+      const items = speaker.sermons
+        .filter(s => !s.incomplete) // don't export half-downloaded files
+        .map(s => ({
+          filename: `${s.id}.${s.type === 'video' ? 'mp4' : 'mp3'}`,
+          title: s.title || s.id,
+        }));
+      const res = await tauriInvoke('export_speaker', { speaker: speaker.name, items });
+      setExportStatus(prev => ({
+        ...prev,
+        [speaker.name]: { state: 'done', exported: res?.exported ?? 0, failed: res?.failed ?? 0, folder: res?.folder },
+      }));
+    } catch (e) {
+      console.warn('[Downloads] Export speaker failed:', e);
+      setExportStatus(prev => ({ ...prev, [speaker.name]: { state: 'error' } }));
+    }
+  }, []);
+
   if (sermons.length === 0) {
     return (
       <>
@@ -394,7 +420,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
 
       <div className="seed-card" style={{ marginBottom: '16px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <p style={{ fontSize: '0.78rem', margin: 0, color: 'var(--text-muted)', lineHeight: 1.5, flex: 1 }}>
-          Downloaded files are stored locally and seeded to the P2P network. Use the <strong style={{ color: 'var(--text-primary)' }}>Export</strong> button on any sermon to save a readable copy to your Desktop.
+          Downloaded files are stored locally and seeded to the P2P network. Use <strong style={{ color: 'var(--text-primary)' }}>Export</strong> on any sermon — or <strong style={{ color: 'var(--text-primary)' }}>By Speaker → Export</strong> — to save readable copies into a Desktop folder named for the speaker.
         </p>
         {onOpenFolder && (
           <button
@@ -502,6 +528,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         <div className="bulk-speaker-list">
           {filteredSpeakers.map(speaker => {
             const isOpen = openSpeaker === speaker.name;
+            const exp = exportStatus[speaker.name];
             const metaText = speaker.videoCount > 0
               ? `${speaker.sermons.length} downloaded · ${speaker.audioCount} audio, ${speaker.videoCount} video`
               : `${speaker.sermons.length} downloaded`;
@@ -520,7 +547,26 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                     <div className="bulk-speaker-name">{speaker.name}</div>
                     <div className="bulk-speaker-meta">{metaText}</div>
                   </div>
-                  <div className="bulk-speaker-action">
+                  <div className="bulk-speaker-action" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {exp?.state === 'done' && (
+                      <span style={{ fontSize: '0.72rem', color: '#3ca35b', whiteSpace: 'nowrap' }}>
+                        Exported {exp.exported}{exp.failed ? ` · ${exp.failed} skipped` : ''}
+                      </span>
+                    )}
+                    {exp?.state === 'error' && (
+                      <span style={{ fontSize: '0.72rem', color: 'var(--orange)' }}>Export failed</span>
+                    )}
+                    {tauriReady && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); exportSpeaker(speaker); }}
+                        disabled={exp?.state === 'working'}
+                        data-tooltip="Copy all this speaker's downloads to Desktop, named properly"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: exp?.state === 'working' ? 'default' : 'pointer', fontSize: '0.72rem', opacity: exp?.state === 'working' ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                      >
+                        {exp?.state === 'working' ? 'Exporting…' : <>{iconExport} Export</>}
+                      </button>
+                    )}
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                       {isOpen ? 'Hide' : 'View'}
                     </span>
