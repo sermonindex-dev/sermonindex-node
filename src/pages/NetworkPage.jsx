@@ -41,8 +41,11 @@ export default function NetworkPage({ nodeStats }) {
 
   // Fetch live node data
   useEffect(() => {
+    let cancelled = false; // guards in-flight fetches after unmount
+
     async function loadNodes() {
       const liveNodes = await fetchNodeMap();
+      if (cancelled) return;
       const myId = getNodeId();
       const geo = getCachedGeo();
 
@@ -70,13 +73,13 @@ export default function NetworkPage({ nodeStats }) {
 
     async function loadStats() {
       const stats = await fetchNetworkStats();
-      if (stats) setNetStats(stats);
+      if (stats && !cancelled) setNetStats(stats);
     }
 
     loadNodes();
     loadStats();
     const refreshId = setInterval(() => { loadNodes(); loadStats(); }, 30000);
-    return () => clearInterval(refreshId);
+    return () => { cancelled = true; clearInterval(refreshId); };
   }, [nodeStats]);
 
   const countryBreakdown = useMemo(() => {

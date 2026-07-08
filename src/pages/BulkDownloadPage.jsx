@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { markDownloaded } from '../services/catalog.js';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 
@@ -16,6 +16,12 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
   const [batchProgress, setBatchProgress] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
   const isPausedRef = useRef(false);
+  // Track mount state so the pause-wait interval below can't outlive the page
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Group sermons by speaker with stats
   const speakerGroups = useMemo(() => {
@@ -66,13 +72,17 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
     let failed = 0;
 
     for (const sermon of toDownload) {
-      // Check pause using ref (avoids stale closure)
+      // Check pause using ref (avoids stale closure). The interval clears
+      // itself on resume OR unmount — otherwise it would poll forever after
+      // the user pauses and navigates away.
       if (isPausedRef.current) {
         await new Promise(r => {
           const check = setInterval(() => {
-            if (!isPausedRef.current) { clearInterval(check); r(); }
+            if (!isPausedRef.current || !mountedRef.current) { clearInterval(check); r(); }
           }, 500);
         });
+        // Page was closed while paused — stop queuing more downloads
+        if (!mountedRef.current) return;
       }
 
       try {
@@ -83,12 +93,14 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
         failed++;
       }
 
-      setBatchProgress({
-        completed,
-        total,
-        failed,
-        percent: (completed / total) * 100,
-      });
+      if (mountedRef.current) {
+        setBatchProgress({
+          completed,
+          total,
+          failed,
+          percent: (completed / total) * 100,
+        });
+      }
     }
 
     // Done

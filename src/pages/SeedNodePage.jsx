@@ -124,7 +124,7 @@ export default function SeedNodePage({
       try {
         const info = await tauriInvoke('check_disk_space', { path: storagePath });
         if (!info.has_enough) {
-          setStorageError(`Only ${info.available_formatted} available (${info.available_tb} TB). You need at least 2.2 TB of free space.`);
+          setStorageError(`Only ${info.available_formatted} available (${info.available_tb} TB). You need approximately 500 GB of free space.`);
           return;
         }
         setStorageError('');
@@ -225,7 +225,7 @@ export default function SeedNodePage({
           <p>
             SermonIndex is built on a peer-to-peer network where every user helps share sermon content.
             Regular users share the sermons they've listened to. <strong>Seed nodes</strong> go further — they download
-            and serve the <strong>entire library</strong> (~2.2 TB of audio and video).
+            and serve the <strong>entire library</strong> (approximately 500 GB of audio and video).
           </p>
           <p>
             This requires a larger disk or external hard drive. We recommend a dedicated NVMe or USB
@@ -263,7 +263,7 @@ export default function SeedNodePage({
       <div className="seed-card">
         <h3>Step 1: Set Your Storage Location</h3>
         <p>
-          Choose a folder on a drive with at least <strong style={{ color: 'var(--gold-text)' }}>2.2 TB</strong> of free space.
+          Choose a folder on a drive with at least <strong style={{ color: 'var(--gold-text)' }}>approximately 500 GB</strong> of free space.
           We recommend using a dedicated external NVMe or USB hard drive. See our{' '}
           <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold-text)' }}>
             hardware guide
@@ -297,7 +297,7 @@ export default function SeedNodePage({
         {storageError && <p style={{ color: 'var(--red)', fontSize: '0.82rem', marginTop: '8px' }}>{storageError}</p>}
         {storageVerified && (
           <p style={{ color: 'var(--green)', fontSize: '0.82rem', marginTop: '8px' }}>
-            ✓ Storage location set. You need at least 2.2 TB of free space.
+            ✓ Storage location set. You need approximately 500 GB of free space.
           </p>
         )}
       </div>
@@ -307,7 +307,7 @@ export default function SeedNodePage({
         <h3>Step 2: Download the Full Library</h3>
         <p>
           Download the complete SermonIndex library to your drive. The total size is approximately{' '}
-          <strong style={{ color: 'var(--gold-text)' }}>2.2 TB</strong> ({libraryStats?.totalFiles || 0} sermons).
+          <strong style={{ color: 'var(--gold-text)' }}>500 GB</strong> ({libraryStats?.totalFiles || 0} sermons).
         </p>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           This can take <strong>several days or weeks</strong> depending on your connection speed. The download will

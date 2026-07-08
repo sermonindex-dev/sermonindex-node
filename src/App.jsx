@@ -59,6 +59,7 @@ import {
 import downloadManager, { DL_STATE, SOURCE_MODE } from './services/downloadManager.js';
 import { getStoragePath } from './services/tauriStore.js';
 import { startHeartbeat, stopHeartbeat, fetchConfig, loadNodeIdFromDisk } from './services/heartbeat.js';
+import { checkForUpdates } from './services/updater.js';
 
 export default function App() {
   const [page, setPage] = useState('library');
@@ -206,6 +207,10 @@ export default function App() {
         console.error('[App] P2P node failed to start (non-critical):', e.message, e.stack);
         setP2pRunning(false);
       }
+
+      // Check for app updates (fire-and-forget — never throws, no-op in dev
+      // or while the updater pubkey placeholder hasn't been replaced yet)
+      checkForUpdates();
     }
     init().catch(e => console.error('[App] init crashed:', e));
 
@@ -216,6 +221,19 @@ export default function App() {
     };
     window.addEventListener('si-master-list', handleMasterList);
 
+    // Master list unreachable after all retries — inform the user, but never
+    // clobber a server-pushed announcement (only show if the banner is empty)
+    const handleMasterListFailed = () => {
+      setAnnouncement(prev => prev || 'P2P catalog temporarily unreachable — downloads still work normally.');
+    };
+    window.addEventListener('si-master-list-failed', handleMasterListFailed);
+
+    // Auto-update downloaded & installed — takes effect on next launch
+    const handleUpdateReady = () => {
+      setAnnouncement(prev => prev || 'Update installed — takes effect next launch.');
+    };
+    window.addEventListener('si-update-ready', handleUpdateReady);
+
     // Notify server when app is closing/navigating away
     const handleBeforeUnload = () => {
       stopHeartbeat();
@@ -225,6 +243,8 @@ export default function App() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('si-master-list', handleMasterList);
+      window.removeEventListener('si-master-list-failed', handleMasterListFailed);
+      window.removeEventListener('si-update-ready', handleUpdateReady);
       stopHeartbeat();
     };
   }, []);

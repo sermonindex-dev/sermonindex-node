@@ -237,41 +237,63 @@ export function hasMasterList() {
   return _masterListLoaded;
 }
 
+// Retry schedule when the master list can't be fetched/parsed (transient CDN
+// or network trouble is common right after wake-from-sleep / app launch).
+const MASTER_LIST_RETRY_DELAYS_MS = [30_000, 60_000, 120_000];
+
 async function fetchMasterList() {
-  try {
-    // Native fetch first (Rust reqwest — immune to CDN CORS policy, which
-    // blocks the webview from reading .json cross-origin). Browser fetch as
-    // fallback for dev-in-browser mode.
-    let data = null;
+  for (let attempt = 0; attempt <= MASTER_LIST_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const tauri = await import('@tauri-apps/api/core');
-      const text = await tauri.invoke('fetch_text', { url: MASTER_LIST_URL });
-      data = JSON.parse(text);
-    } catch (nativeErr) {
-      console.warn('[Catalog] Native master-list fetch unavailable, trying browser fetch:', nativeErr?.message || nativeErr);
-      const res = await fetch(MASTER_LIST_URL, { cache: 'no-cache' });
-      if (!res.ok) return; // not published yet — app works without it
-      data = await res.json();
-    }
-    if (!data || !data.entries) return;
-    let merged = 0;
-    for (const s of catalog) {
-      const m = data.entries[s.id];
-      if (m && m.info_hash) {
-        s.magnet = m.magnet;
-        s.infoHash = m.info_hash;
-        s.torrentUrl = m.torrent_url;
-        s.verifiedSize = m.size; // actual byte size, hashed — catalog sizes are unreliable
-        merged++;
+      await _fetchMasterListOnce();
+      return; // success
+    } catch (err) {
+      if (attempt < MASTER_LIST_RETRY_DELAYS_MS.length) {
+        const delay = MASTER_LIST_RETRY_DELAYS_MS[attempt];
+        console.warn(`[Catalog] Master list fetch failed (attempt ${attempt + 1}/${MASTER_LIST_RETRY_DELAYS_MS.length + 1}) — retrying in ${delay / 1000}s:`, err?.message || err);
+        await new Promise((r) => setTimeout(r, delay));
+      } else {
+        // Final failure — master list not reachable. HTTP downloads still work
+        // fine; surface it so the UI can tell the user (non-blocking banner).
+        console.warn('[Catalog] Master list unreachable after all retries:', err?.message || err);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('si-master-list-failed'));
+        }
       }
     }
-    _masterListLoaded = merged > 0;
-    console.log(`[Catalog] Master list loaded — ${merged} sermons have canonical torrents`);
-    if (merged > 0 && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('si-master-list', { detail: { merged } }));
+  }
+}
+
+async function _fetchMasterListOnce() {
+  // Native fetch first (Rust reqwest — immune to CDN CORS policy, which
+  // blocks the webview from reading .json cross-origin). Browser fetch as
+  // fallback for dev-in-browser mode.
+  let data = null;
+  try {
+    const tauri = await import('@tauri-apps/api/core');
+    const text = await tauri.invoke('fetch_text', { url: MASTER_LIST_URL });
+    data = JSON.parse(text);
+  } catch (nativeErr) {
+    console.warn('[Catalog] Native master-list fetch unavailable, trying browser fetch:', nativeErr?.message || nativeErr);
+    const res = await fetch(MASTER_LIST_URL, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching master list`);
+    data = await res.json();
+  }
+  if (!data || !data.entries) throw new Error('Master list malformed (missing entries)');
+  let merged = 0;
+  for (const s of catalog) {
+    const m = data.entries[s.id];
+    if (m && m.info_hash) {
+      s.magnet = m.magnet;
+      s.infoHash = m.info_hash;
+      s.torrentUrl = m.torrent_url;
+      s.verifiedSize = m.size; // actual byte size, hashed — catalog sizes are unreliable
+      merged++;
     }
-  } catch {
-    // Master list not reachable — HTTP downloads still work fine
+  }
+  _masterListLoaded = merged > 0;
+  console.log(`[Catalog] Master list loaded — ${merged} sermons have canonical torrents`);
+  if (merged > 0 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('si-master-list', { detail: { merged } }));
   }
 }
 

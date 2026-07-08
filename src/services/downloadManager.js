@@ -282,6 +282,14 @@ class DownloadManager {
       this._notify(sermon.id, entry);
       this.activeDownloads--;
       console.error(`[DL] Failed: "${sermon.title}":`, err);
+      // Best-effort: remove any partial file left on disk so a broken download
+      // can't linger, be mistaken for complete, or get seeded to the swarm
+      try {
+        const invoke = await loadTauri();
+        if (invoke) {
+          await invoke('delete_sermon_file', { filename }).catch(() => {});
+        }
+      } catch { /* best effort — never mask the original error */ }
       throw err;
     }
 

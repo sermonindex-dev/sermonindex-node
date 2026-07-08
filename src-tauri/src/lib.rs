@@ -401,7 +401,7 @@ fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
         available_bytes,
         available_formatted: format_bytes(available_bytes),
         available_tb: format!("{:.2}", available_tb),
-        has_enough: available_bytes >= 2_200_000_000_000, // 2.2 TB
+        has_enough: available_bytes >= 600_000_000_000, // 600 GB (library measured ~437 GB actual + headroom)
     })
 }
 
@@ -546,6 +546,10 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        // Auto-updater: checks the CDN endpoint for signed releases; the
+        // process plugin lets the frontend relaunch after installing one.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(torrent_state)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(

@@ -1,6 +1,6 @@
 {
   "name": "sermonindex-app",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SermonIndex Node Software — Decentralized P2P Sermon Library",
   "scripts": {
     "dev": "vite",
@@ -19,6 +19,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
     "@vitejs/plugin-react": "^4.3.4",
     "ogv": "^1.9.0",
     "react": "^19.0.0",

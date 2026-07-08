@@ -1,4 +1,5 @@
 import React from 'react';
+import logo from '../assets/sermon-index-white.png';
 
 // Clean SVG icons (Lucide-inspired, MIT license, single-color flat)
 const icons = {
@@ -51,8 +52,8 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
     <div className="sidebar">
       <div className="sidebar-header">
         <div className="sidebar-logo" aria-label="SermonIndex">
-          <span className="logo-pill">sermon</span>
-          <span className="logo-index">index</span>
+          {/* Official site wordmark — white PNG on the olive sidebar matches the site header */}
+          <img src={logo} alt="SermonIndex" style={{ height: 34 }} />
         </div>
         <div className="subtitle">Node Software</div>
       </div>

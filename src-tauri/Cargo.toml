@@ -40,5 +40,8 @@ crab_nat = "0.2"
 reqwest = "0.12"
 # Prevent two copies running at once (duplicate instances corrupt session state)
 tauri-plugin-single-instance = "2"
+# Auto-updater (signed releases from the CDN) + process restart support
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 tokio = { version = "1", features = ["full"] }
