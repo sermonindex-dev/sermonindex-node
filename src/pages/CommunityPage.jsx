@@ -214,15 +214,17 @@ export default function CommunityPage() {
                   No messages yet — be the first to say hello.
                 </div>
               ) : messages.map((m) => (
-                <div key={m.id}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
-                    <span title="node id" style={{ ...muted, fontFamily: 'monospace' }}>#{m.node}</span>
-                    <span style={{ color: 'var(--gold-text)', fontWeight: 700, fontSize: '0.82rem' }}>{m.name}</span>
-                    <span style={muted}>{fmtTime(m.ts)}</span>
-                  </div>
-                  <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem', color: 'var(--text-primary)', lineHeight: 1.5, marginTop: '2px', wordBreak: 'break-word' }}>
+                // One row per message: muted identity | larger text | faint time
+                <div key={m.id} style={{ display: 'flex', alignItems: 'baseline', gap: '14px' }}>
+                  <span title={`node ${m.node}`} style={{ color: 'var(--text-muted)', fontSize: '0.74rem', flexShrink: 0, width: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <span style={{ fontFamily: 'monospace', opacity: 0.7 }}>#{m.node}</span> · {m.name}
+                  </span>
+                  <span style={{ flex: 1, whiteSpace: 'pre-wrap', fontSize: '0.95rem', color: 'var(--text-primary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
                     {m.text}
-                  </div>
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', opacity: 0.55, fontSize: '0.68rem', flexShrink: 0 }}>
+                    {fmtTime(m.ts)}
+                  </span>
                 </div>
               ))}
             </div>
