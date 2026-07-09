@@ -264,8 +264,8 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
 
               <div className="sermon-actions">
                 {/* Video can't decode inline in the WebView → open in the native
-                    player. Audio plays inline once downloaded. */}
-                {sermon.type === 'video' && onOpenExternal && (
+                    player. Like audio, only available once downloaded. */}
+                {sermon.type === 'video' && sermon.downloaded && onOpenExternal && (
                   <button
                     onClick={() => onOpenExternal(sermon)}
                     data-tooltip="Open in your device's video player"
