@@ -49,24 +49,36 @@ const FORCE = args.has('--force');
  * Returns [{ url, dest }] — each saved to the local path matching its own URL,
  * so the app finds it via the matching candidate.
  */
+const EXTS = ['.png', '.jpg', '.jpeg'];
+
 function candidatePaths(name, img) {
   const out = [];
-  const add = (pathname) => {
-    if (!pathname || !pathname.includes('/images/speakers/')) return;
-    if (out.some((c) => c.pathname === pathname)) return;
-    out.push({ pathname, url: `${SITE_BASE}${pathname}`, dest: join(PUBLIC, pathname.replace(/^\//, '')) });
+  // For a slug, try each image extension — but ALWAYS save to the `.png` path
+  // the app looks for. (The browser detects image type by content, not by the
+  // filename, so a JPEG saved as `<slug>.png` still displays fine.)
+  const addSlug = (letter, slug) => {
+    if (!letter || !slug) return;
+    const dest = join(PUBLIC, `images/speakers/${letter}/${slug}.png`);
+    for (const ext of EXTS) {
+      const url = `${SITE_BASE}/images/speakers/${letter}/${slug}${ext}`;
+      if (out.some((c) => c.url === url)) continue;
+      out.push({ url, dest });
+    }
   };
-  // 1. Stored catalog path (skip the generic default marker).
+  // 1. Stored catalog path → its letter + slug (strip any extension).
   if (img && !img.includes(DEFAULT_MARKER)) {
-    if (img.startsWith('http')) { try { add(new URL(img).pathname); } catch { /* not a URL */ } }
-    else add(img.startsWith('/') ? img : `/${img}`);
+    let pathname = null;
+    if (img.startsWith('http')) { try { pathname = new URL(img).pathname; } catch { /* not a URL */ } }
+    else pathname = img.startsWith('/') ? img : `/${img}`;
+    const m = pathname && pathname.match(/\/images\/speakers\/([^/]+)\/([^/]+?)(?:\.[a-z]+)?$/i);
+    if (m) addSlug(m[1], m[2]);
   }
   // 2. Name-derived slugs (compact + hyphenated), like the app's fallbacks.
   const lower = (name || '').toLowerCase();
   const compact = lower.replace(/[^a-z0-9]/g, '');
   const hyphen = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  if (compact) add(`/images/speakers/${compact[0]}/${compact}.png`);
-  if (hyphen && hyphen !== compact) add(`/images/speakers/${hyphen[0]}/${hyphen}.png`);
+  if (compact) addSlug(compact[0], compact);
+  if (hyphen && hyphen !== compact) addSlug(hyphen[0], hyphen);
   return out;
 }
 
