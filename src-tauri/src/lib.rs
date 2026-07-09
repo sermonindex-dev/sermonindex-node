@@ -461,6 +461,35 @@ fn open_downloaded_file(filename: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Stream a remote media URL in a native media player rather than the browser.
+/// Used for undownloaded video whose codec the in-app WebView can't decode
+/// (Opus-in-MP4). NOTE: plain `open <https-url>` would launch the default *browser*
+/// (also a WebView on macOS → same failure), so on macOS we target the system
+/// media player explicitly.
+#[tauri::command]
+fn open_url_in_player(url: String) -> Result<(), String> {
+    use std::process::Command;
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Invalid URL".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-a", "QuickTime Player", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open player: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd").args(["/C", "start", "", &url]).spawn().map_err(|e| format!("Failed to open player: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(&url).spawn().map_err(|e| format!("Failed to open player: {}", e))?;
+    }
+    Ok(())
+}
+
 /// Fetch a URL as text via the native HTTP client — bypasses webview CORS.
 /// Restricted to SermonIndex-controlled hosts (used for the torrent master list).
 #[tauri::command]
@@ -1018,6 +1047,7 @@ pub fn run() {
             check_disk_space,
             open_folder,
             open_downloaded_file,
+            open_url_in_player,
             open_url,
             fetch_text,
             save_sermon_file,

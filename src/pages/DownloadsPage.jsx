@@ -11,6 +11,7 @@ const iconPin = <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stro
 const iconFilm = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>;
 const iconHeadphones = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" /></svg>;
 const iconExport = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>;
+const iconExternalPlay = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>;
 const iconTrash = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>;
 const iconRefresh = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>;
 const iconWarning = <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
@@ -46,7 +47,7 @@ async function ensureTauri() {
   } catch {}
 }
 
-export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPlay, onRemove, onExport, onRedownload, onOpenFolder, downloadStates }) {
+export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPlay, onRemove, onExport, onOpenExternal, onRedownload, onOpenFolder, downloadStates }) {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' (default) | 'speaker' | 'title'
@@ -307,15 +308,26 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           })()}
         </div>
         <div className="sermon-actions">
-          <button
-            className={`btn-icon ${isActive ? 'active' : ''}`}
-            onClick={() => onPlay(sermon)}
-            data-tooltip={isCurrentPlaying ? 'Pause' : 'Play'}
-            disabled={sermon.incomplete}
-            style={sermon.incomplete ? { opacity: 0.3 } : {}}
-          >
-            {isCurrentPlaying ? iconPause : iconPlay}
-          </button>
+          {sermon.type === 'video' && onOpenExternal ? (
+            <button
+              onClick={() => onOpenExternal(sermon)}
+              data-tooltip="Open in your device's video player"
+              disabled={sermon.incomplete}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, opacity: sermon.incomplete ? 0.3 : 1 }}
+            >
+              {iconExternalPlay} Player
+            </button>
+          ) : (
+            <button
+              className={`btn-icon ${isActive ? 'active' : ''}`}
+              onClick={() => onPlay(sermon)}
+              data-tooltip={isCurrentPlaying ? 'Pause' : 'Play'}
+              disabled={sermon.incomplete}
+              style={sermon.incomplete ? { opacity: 0.3 } : {}}
+            >
+              {isCurrentPlaying ? iconPause : iconPlay}
+            </button>
+          )}
           {sermon.incomplete && onRedownload ? (
             <button
               className="btn-icon"

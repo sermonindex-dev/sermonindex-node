@@ -112,6 +112,8 @@ export default function App() {
   const [chatShow, setChatShow] = useState(() => chatPrefs().show);       // show Community page at all
   const audioRef = useRef(null);
   const videoRef = useRef(null);
+  const videoWatchdogRef = useRef(null);   // timer: detects "playing but black" (undecodable codec)
+  const videoStartedRef = useRef(false);   // true once playback actually advances past ~0
 
   // The active media type: 'audio' or 'video'
   const mediaType = currentSermon?.type === 'video' ? 'video' : 'audio';
@@ -610,9 +612,10 @@ export default function App() {
       if (sermon.downloaded) {
         await tauriMod.invoke('open_downloaded_file', { filename });
       } else {
-        // Not downloaded — best-effort: hand the CDN URL to the OS.
+        // Not downloaded — stream the CDN URL in a native media player.
+        // (open_url would launch the browser = same WebView = same black screen.)
         const url = sermon.cdnUrl || sermon.archiveUrl || sermon.url;
-        if (url) await tauriMod.invoke('open_url', { url });
+        if (url) await tauriMod.invoke('open_url_in_player', { url });
       }
     } catch (e) {
       console.warn('[Player] Open in default player failed:', e?.message || e);
@@ -643,6 +646,9 @@ export default function App() {
       videoRef.current.removeAttribute('src');
       videoRef.current.load(); // Reset the media element
     }
+    // Reset the "did it actually play" watchdog for the new video
+    videoStartedRef.current = false;
+    if (videoWatchdogRef.current) { clearTimeout(videoWatchdogRef.current); videoWatchdogRef.current = null; }
 
     setCurrentSermon(sermon);
     setProgress(0);
@@ -912,9 +918,9 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case 'library':
-        return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} search={search} onSearch={setSearch} />;
+        return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} onOpenExternal={openInDefaultPlayer} search={search} onSearch={setSearch} />;
       case 'downloads':
-        return <DownloadsPage sermons={downloadedSermons} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onRemove={handleRemoveDownload} onExport={handleExportDownload} onRedownload={handleRedownload} onOpenFolder={handleOpenFolder} downloadStates={downloadStates} />;
+        return <DownloadsPage sermons={downloadedSermons} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onRemove={handleRemoveDownload} onExport={handleExportDownload} onOpenExternal={openInDefaultPlayer} onRedownload={handleRedownload} onOpenFolder={handleOpenFolder} downloadStates={downloadStates} />;
       case 'seed':
         return <SeedNodePage seedUnlocked={seedUnlocked} onUnlock={setSeedUnlocked} catalog={getCatalog()} libraryStats={getLibraryStats()} downloadManager={downloadManager} downloadStates={downloadStates} nodeStats={realStats} />;
       case 'bulk-download':
@@ -928,7 +934,7 @@ export default function App() {
       case 'settings':
         return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} />;
       default:
-        return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} search={search} onSearch={setSearch} />;
+        return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} onOpenExternal={openInDefaultPlayer} search={search} onSearch={setSearch} />;
     }
   };
 
@@ -981,10 +987,37 @@ export default function App() {
               setCurrentTime(v.currentTime);
               setDuration(v.duration || 0);
               setProgress(v.duration ? (v.currentTime / v.duration) * 100 : 0);
+              // Real playback progress => codec decodes fine. Cancel the watchdog.
+              if (!videoStartedRef.current && v.currentTime > 0.15) {
+                videoStartedRef.current = true;
+                if (videoWatchdogRef.current) { clearTimeout(videoWatchdogRef.current); videoWatchdogRef.current = null; }
+                setVideoError(null);
+              }
             }}
             onEnded={() => { setIsPlaying(false); setProgress(0); setCurrentTime(0); }}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
+            onPlay={() => {
+              setIsPlaying(true);
+              // Arm a watchdog: WKWebView "plays" undecodable audio (Opus-in-MP4)
+              // without firing an error — it just renders black and never advances.
+              // If we're still at ~0 after a few seconds, treat it as unplayable inline.
+              if (videoWatchdogRef.current) clearTimeout(videoWatchdogRef.current);
+              if (!videoStartedRef.current) {
+                videoWatchdogRef.current = setTimeout(() => {
+                  const vv = videoRef.current;
+                  // "Playing" (not paused) yet no frames advanced => codec can't
+                  // decode inline. A paused element is just autoplay-blocked, skip.
+                  if (vv && !videoStartedRef.current && !vv.paused && (vv.currentTime || 0) < 0.15) {
+                    vv.pause();
+                    setVideoError('inline-unsupported');
+                    setIsPlaying(false);
+                  }
+                }, 4000);
+              }
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+              if (videoWatchdogRef.current) { clearTimeout(videoWatchdogRef.current); videoWatchdogRef.current = null; }
+            }}
             onLoadedMetadata={(e) => { setDuration(e.target.duration || 0); }}
             onError={(e) => {
               // When using <source> elements, error may fire on <source> — always use the <video> ref

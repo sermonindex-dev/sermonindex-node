@@ -19,6 +19,10 @@ const iconCheck = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" st
 const iconPin = <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1h1V3H7v3h1a1 1 0 0 1 1 1z" /></svg>;
 const iconFilm = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" /></svg>;
 const iconHeadphones = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" /></svg>;
+const iconExternalPlay = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>;
+// Rounded-square external-player button (like the Export button). Video previews
+// can't decode inline in the app's WebView, so we hand them to the native player.
+const externalBtnStyle = { display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 };
 
 // SpeakerAvatar now shared — tries multiple site image conventions before initials
 
@@ -65,7 +69,7 @@ function DownloadProgress({ dlState }) {
   return null;
 }
 
-export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay, onDownload, search, onSearch }) {
+export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay, onDownload, onOpenExternal, search, onSearch }) {
   const [filterSpeaker, setFilterSpeaker] = useState('');
   const [filterTopic, setFilterTopic] = useState('');
   const [filterType, setFilterType] = useState(''); // '', 'audio', 'video'
@@ -259,8 +263,18 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
               {isDownloading && <DownloadProgress dlState={dlState} />}
 
               <div className="sermon-actions">
-                {/* Play button only visible after download */}
-                {sermon.downloaded && (
+                {/* Video can't decode inline in the WebView → open in the native
+                    player. Audio plays inline once downloaded. */}
+                {sermon.type === 'video' && onOpenExternal && (
+                  <button
+                    onClick={() => onOpenExternal(sermon)}
+                    data-tooltip="Open in your device's video player"
+                    style={externalBtnStyle}
+                  >
+                    {iconExternalPlay} Player
+                  </button>
+                )}
+                {sermon.type !== 'video' && sermon.downloaded && (
                   <button
                     className={`btn-icon ${isActive ? 'active' : ''}`}
                     onClick={() => onPlay(sermon)}
