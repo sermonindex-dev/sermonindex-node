@@ -434,6 +434,33 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a downloaded file in the OS default application (e.g. QuickTime for
+/// video). Used for videos whose codec the in-app WebView player can't decode
+/// (Opus-in-MP4) but which native players handle fine. Resolves the file in the
+/// downloads folder (shard- or flat-aware).
+#[tauri::command]
+fn open_downloaded_file(filename: String) -> Result<(), String> {
+    use std::process::Command;
+    let path = resolve_path(&filename);
+    if !path.exists() {
+        return Err("File not found".to_string());
+    }
+    let p = path.to_string_lossy().to_string();
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(&p).spawn().map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd").args(["/C", "start", "", &p]).spawn().map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(&p).spawn().map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    Ok(())
+}
+
 /// Fetch a URL as text via the native HTTP client — bypasses webview CORS.
 /// Restricted to SermonIndex-controlled hosts (used for the torrent master list).
 #[tauri::command]
@@ -990,6 +1017,7 @@ pub fn run() {
             get_app_version,
             check_disk_space,
             open_folder,
+            open_downloaded_file,
             open_url,
             fetch_text,
             save_sermon_file,

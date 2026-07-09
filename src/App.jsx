@@ -597,6 +597,28 @@ export default function App() {
     setLocalStreamUrl(null);
   }, []);
 
+  // ── Open a video in the OS default player (QuickTime) ────────────────────
+  // The in-app WebView can't decode some codecs (notably Opus audio in MP4), so
+  // give the user a reliable way to watch/hear it in a native player.
+  const openInDefaultPlayer = useCallback(async (sermon) => {
+    if (!sermon) return;
+    try {
+      const tauriMod = await import('@tauri-apps/api/core').catch(() => null);
+      if (!tauriMod) return;
+      const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
+      const filename = `${sermon.id}.${ext}`;
+      if (sermon.downloaded) {
+        await tauriMod.invoke('open_downloaded_file', { filename });
+      } else {
+        // Not downloaded — best-effort: hand the CDN URL to the OS.
+        const url = sermon.cdnUrl || sermon.archiveUrl || sermon.url;
+        if (url) await tauriMod.invoke('open_url', { url });
+      }
+    } catch (e) {
+      console.warn('[Player] Open in default player failed:', e?.message || e);
+    }
+  }, []);
+
   // ── Play a sermon ────────────────────────────────────────────────────────
   const playSermon = useCallback(async (sermon) => {
     const audio = audioRef.current;
@@ -923,6 +945,13 @@ export default function App() {
             <div className="video-mini-controls">
               <button
                 className="video-mini-btn"
+                onClick={() => openInDefaultPlayer(currentSermon)}
+                title="Open in default player (QuickTime)"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+              </button>
+              <button
+                className="video-mini-btn"
                 onClick={() => setVideoFullscreen(!videoFullscreen)}
                 title={videoFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
               >
@@ -996,16 +1025,15 @@ export default function App() {
                 <line x1="12" y1="9" x2="12" y2="13" />
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
-              <div style={{ fontSize: '0.8rem', marginBottom: '8px', textAlign: 'center', lineHeight: 1.4 }}>{videoError}</div>
+              <div style={{ fontSize: '0.8rem', marginBottom: '8px', textAlign: 'center', lineHeight: 1.4 }}>
+                This video can't preview inline. Open it in your Mac's player instead.
+              </div>
               <button
                 className="btn btn-gold"
                 style={{ fontSize: '0.75rem', padding: '4px 12px' }}
-                onClick={() => {
-                  const url = currentSermon?.cdnUrl || currentSermon?.url;
-                  if (url) window.open(url, '_blank');
-                }}
+                onClick={() => openInDefaultPlayer(currentSermon)}
               >
-                Open in Browser
+                Open in default player
               </button>
             </div>
           )}
