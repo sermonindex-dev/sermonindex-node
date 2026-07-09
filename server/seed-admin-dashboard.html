@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seed Access — SermonIndex Admin</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1923; color: #e0e6ed; }
+  .topbar { background: #162230; border-bottom: 1px solid #1e3348; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar-sub { font-size: 0.65rem; color: #8cb4d5; text-transform: uppercase; letter-spacing: 0.14em; font-weight: 600; }
+  .pulse-dot { display: inline-block; width: 8px; height: 8px; background: #4ecb71; border-radius: 50%; margin-right: 6px; }
+  .main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h2 { color: #d4af37; margin-top: 28px; font-size: 1.05rem; border-bottom: 1px solid #1e3348; padding-bottom: 8px; }
+  .setup { background: #162230; border: 1px solid #1e3348; border-radius: 12px; padding: 18px; margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input { background: #0f1923; color: #e0e6ed; border: 1px solid #1e3348; padding: 9px 12px; border-radius: 8px; font-size: 0.85rem; }
+  input:focus { border-color: #d4af37; outline: none; }
+  input.api { width: 320px; } input.key { width: 220px; }
+  button { background: #d4af37; color: #0f1923; border: none; padding: 9px 16px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 0.82rem; }
+  button:hover { box-shadow: 0 2px 8px rgba(212,175,55,0.3); }
+  button.outline { background: transparent; border: 1px solid #1e3348; color: #8cb4d5; }
+  button.outline:hover { border-color: #d4af37; color: #d4af37; }
+  button.danger { background: #dc2626; color: #fff; }
+  button.green { background: #16a34a; color: #fff; }
+  .section { background: #162230; border: 1px solid #1e3348; border-radius: 12px; padding: 18px; margin-top: 16px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: 0.78rem; color: #8cb4d5; padding: 8px 10px; border-bottom: 2px solid #1e3348; }
+  td { padding: 9px 10px; border-bottom: 1px solid #1e3348; font-size: 0.83rem; }
+  tr:hover { background: rgba(212,175,55,0.04); }
+  code { background: #1a2b3d; padding: 2px 7px; border-radius: 4px; color: #d4af37; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72em; font-weight: 600; }
+  .b-on { background: rgba(78,203,113,0.2); color: #4ecb71; }
+  .b-off { background: rgba(100,100,100,0.2); color: #999; }
+  .b-serve { background: rgba(110,168,254,0.18); color: #6ea8fe; }
+  .muted { color: #6a8299; }
+  .empty { text-align: center; padding: 40px; color: #6a8299; }
+  #msg { margin-top: 12px; font-size: 0.82rem; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-sub"><span class="pulse-dot"></span>Seed Access — Admin</div>
+  <div class="muted" style="font-size:0.75rem;">SermonIndex Node Software</div>
+</div>
+<div class="main">
+
+  <h2>Connection</h2>
+  <div class="setup">
+    <input class="api" id="api" placeholder="Network API base" value="https://app-endpoints-gkb5p.bunny.run">
+    <input class="key" id="key" type="password" placeholder="Admin key">
+    <button onclick="save()">Connect</button>
+    <button class="outline" onclick="load()">Refresh</button>
+    <span class="muted" style="font-size:0.75rem;">Key is stored only in this browser.</span>
+  </div>
+  <div id="msg"></div>
+
+  <h2>Pending requests</h2>
+  <div class="section"><div id="requests"><div class="empty">Connect to load.</div></div></div>
+
+  <h2>Enabled seed nodes</h2>
+  <div class="section"><div id="enabled"><div class="empty">Connect to load.</div></div></div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+function api() { return $('api').value.replace(/\/+$/, ''); }
+function key() { return $('key').value.trim(); }
+
+function save() {
+  try { localStorage.setItem('si-seed-api', api()); localStorage.setItem('si-seed-key', key()); } catch {}
+  load();
+}
+(function restore() {
+  try {
+    const a = localStorage.getItem('si-seed-api'); if (a) $('api').value = a;
+    const k = localStorage.getItem('si-seed-key'); if (k) $('key').value = k;
+  } catch {}
+})();
+
+function msg(text, ok) {
+  $('msg').innerHTML = text ? `<span style="color:${ok ? '#4ecb71' : '#f87171'}">${text}</span>` : '';
+}
+
+async function load() {
+  if (!key()) { msg('Enter the admin key.', false); return; }
+  msg('Loading…', true);
+  try {
+    const res = await fetch(`${api()}/seed-access?admin_key=${encodeURIComponent(key())}&list=1`);
+    const data = await res.json();
+    if (!data.ok) { msg(data.error === 'forbidden' ? 'Invalid admin key.' : (data.error || 'Error'), false); return; }
+    render(data);
+    msg('Loaded ' + new Date().toLocaleTimeString(), true);
+  } catch (e) { msg('Request failed: ' + e.message, false); }
+}
+
+function servingCell(serving, node) {
+  const s = serving[node];
+  if (!s) return '<span class="muted">—</span>';
+  const reach = s.reachable ? '<span class="badge b-serve">reachable</span>' : '<span class="badge b-off">closed</span>';
+  const ago = s.ago_secs != null ? ` <span class="muted">${Math.round(s.ago_secs/60)}m ago</span>` : '';
+  return `${reach} <span class="muted">${s.scope || ''}</span>${ago}`;
+}
+
+function render(data) {
+  const enabled = data.enabled || {};
+  const requests = data.requests || {};
+  const serving = data.serving || {};
+
+  // Pending requests (not yet enabled)
+  const reqRows = Object.entries(requests).filter(([n]) => !enabled[n]);
+  $('requests').innerHTML = reqRows.length === 0
+    ? '<div class="empty">No pending requests.</div>'
+    : `<table><thead><tr><th>Node</th><th>Email</th><th>Serving</th><th></th></tr></thead><tbody>${
+        reqRows.map(([node, r]) => `<tr>
+          <td><code>#${node.slice(0,8)}</code> <span class="muted">${node}</span></td>
+          <td>${r.email ? escapeHtml(r.email) : '<span class="muted">—</span>'}</td>
+          <td>${servingCell(serving, node)}</td>
+          <td><button class="green" onclick="toggle('${node}','enable')">Enable</button></td>
+        </tr>`).join('')
+      }</tbody></table>`;
+
+  // Enabled nodes
+  const enRows = Object.entries(enabled);
+  $('enabled').innerHTML = enRows.length === 0
+    ? '<div class="empty">No enabled seed nodes yet.</div>'
+    : `<table><thead><tr><th>Node</th><th>Email</th><th>Serving</th><th>Status</th><th></th></tr></thead><tbody>${
+        enRows.map(([node, r]) => `<tr>
+          <td><code>#${node.slice(0,8)}</code> <span class="muted">${node}</span></td>
+          <td>${r.email ? escapeHtml(r.email) : '<span class="muted">—</span>'}</td>
+          <td>${servingCell(serving, node)}</td>
+          <td><span class="badge b-on">enabled</span></td>
+          <td><button class="danger" onclick="toggle('${node}','disable')">Disable</button></td>
+        </tr>`).join('')
+      }</tbody></table>`;
+}
+
+async function toggle(node, action) {
+  msg(`${action === 'enable' ? 'Enabling' : 'Disabling'} #${node.slice(0,8)}…`, true);
+  try {
+    const res = await fetch(`${api()}/seed-access?admin_key=${encodeURIComponent(key())}&action=${action}&node=${encodeURIComponent(node)}`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) { msg(data.error || 'Failed', false); return; }
+    load();
+  } catch (e) { msg('Request failed: ' + e.message, false); }
+}
+
+function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+if (key()) load();
+</script>
+</body>
+</html>
