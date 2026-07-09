@@ -242,6 +242,19 @@ export default function App() {
           if (v) setAppVersion(v);
         }
       } catch { /* non-critical */ }
+
+      // Reflect backend seed-access approval at startup, so the Seed Node page
+      // and node type are correct even before the user opens that page.
+      try {
+        const [net, hb] = await Promise.all([
+          import('./services/network.js').catch(() => null),
+          import('./services/heartbeat.js').catch(() => null),
+        ]);
+        if (net?.checkSeedAccess && hb?.getNodeId) {
+          const ok = await net.checkSeedAccess(hb.getNodeId());
+          if (ok) setSeedUnlocked(true);
+        }
+      } catch { /* non-critical */ }
     }
     init().catch(e => console.error('[App] init crashed:', e));
 

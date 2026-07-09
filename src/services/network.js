@@ -54,6 +54,44 @@ export async function registerSeed(nodeId, port, scope) {
   }
 }
 
+/**
+ * Is this node approved for Seed Node access? Checks the backend allowlist
+ * (an admin enables a node by its id). Returns false on any error.
+ */
+export async function checkSeedAccess(nodeId) {
+  if (!isConfigured() || !nodeId) return false;
+  try {
+    const res = await fetch(`${NETWORK_API}/seed-access?node=${encodeURIComponent(nodeId)}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!(data && data.ok && data.enabled);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Submit a seed-access request with an email so the admin can enable this node.
+ * Returns the server response ({ requested, enabled }) or null on failure.
+ */
+export async function requestSeedAccess(nodeId, email) {
+  if (!isConfigured() || !nodeId) return null;
+  try {
+    const res = await fetch(`${NETWORK_API}/seed-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'request', node_id: nodeId, email: email || '' }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json().catch(() => null);
+    return data && data.ok ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Fetch the currently-active backbone seed nodes. Returns [] on any error. */
 export async function fetchSeeds() {
   if (!isConfigured()) return [];

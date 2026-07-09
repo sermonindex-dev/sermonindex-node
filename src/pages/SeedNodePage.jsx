@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { probeReachability, registerSeed } from '../services/network.js';
+import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess } from '../services/network.js';
 import { getNodeId } from '../services/heartbeat.js';
 
 const FORUMS_HARDWARE_GUIDE = 'https://www.sermonindex.net/forums/hardware-guide';
@@ -87,8 +87,13 @@ export default function SeedNodePage({
   downloadStates,
   nodeStats,
 }) {
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  // Seed access is granted per-device via the backend allowlist (no password).
+  const [nodeId] = useState(() => { try { return getNodeId(); } catch { return ''; } });
+  const [checkingAccess, setCheckingAccess] = useState(false);
+  const [accessMsg, setAccessMsg] = useState('');
+  const [reqEmail, setReqEmail] = useState('');
+  const [requested, setRequested] = useState(false);
 
   // STEP 1 — what to host. Persisted to localStorage; default 'audio'.
   const [scope, setScope] = useState(() => {
@@ -123,8 +128,6 @@ export default function SeedNodePage({
   const [batchProgress, setBatchProgress] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
 
-  const [unlocking, setUnlocking] = useState(false);
-
   // On unlock, show whatever storage dir the backend already has configured.
   useEffect(() => {
     if (!seedUnlocked) return;
@@ -143,43 +146,41 @@ export default function SeedNodePage({
     return () => { cancelled = true; };
   }, [seedUnlocked]);
 
-  const handleUnlock = async () => {
-    if (!password.trim()) {
-      setError('Please enter a password.');
-      return;
+  // Auto-check access on mount: if the admin has enabled this node id in the
+  // backend allowlist, unlock the page automatically.
+  useEffect(() => {
+    if (seedUnlocked || !nodeId) return;
+    let cancelled = false;
+    (async () => {
+      const ok = await checkSeedAccess(nodeId);
+      if (!cancelled && ok) onUnlock(true);
+    })();
+    return () => { cancelled = true; };
+  }, [seedUnlocked, nodeId, onUnlock]);
+
+  const checkAccess = async () => {
+    if (!nodeId) return;
+    setCheckingAccess(true);
+    setAccessMsg('');
+    const ok = await checkSeedAccess(nodeId);
+    if (ok) onUnlock(true);
+    else setAccessMsg('Not approved yet. Once the admin enables your node, press "Check access" again.');
+    setCheckingAccess(false);
+  };
+
+  const submitRequest = async () => {
+    if (!nodeId) return;
+    setCheckingAccess(true);
+    setAccessMsg('');
+    const res = await requestSeedAccess(nodeId, reqEmail.trim());
+    if (res?.enabled) onUnlock(true);
+    else if (res?.requested) {
+      setRequested(true);
+      setAccessMsg("Request sent. You'll get access once the admin approves your node — then press \"Check access\".");
+    } else {
+      setAccessMsg('Could not send the request — check your connection and try again.');
     }
-    setUnlocking(true);
-    setError('');
-    try {
-      // Validate seed password against server
-      const res = await fetch('https://app.sermonindex.net/api/seed/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: password.trim() }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        onUnlock(true);
-        setError('');
-      } else {
-        setError(data.error || 'Invalid seed node password. Contact the SermonIndex admin for access.');
-      }
-    } catch (e) {
-      // Fallback: allow offline unlock with hashed check
-      // SHA-256 of 'seed2026' = known hash — prevents plaintext in source
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(password.trim()));
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-      // Hash of 'seed2026'
-      if (hashHex === 'e77fa9f21b0d3346d7e2a0c3fe0f314cd2273a7dff35bf2fb66b73ddbca87bbd') {
-        onUnlock(true);
-        setError('');
-      } else {
-        setError('Invalid password. Could not reach server for verification.');
-      }
-    }
-    setUnlocking(false);
+    setCheckingAccess(false);
   };
 
   // ── STEP 2: browse for + save a REAL storage directory ────────────────────
@@ -355,32 +356,52 @@ export default function SeedNodePage({
         </div>
 
         <div className="seed-card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>{iconLock} Password Required</h3>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>{iconLock} Request Seed Node Access</h3>
           <p>
-            Seed node access is by invitation only. The SermonIndex admin personally invites trusted
-            believers around the world to become seed nodes — the backbone of the peer-to-peer network.
-          </p>
-          <p>
-            If you're interested in becoming a seed node, email{' '}
-            <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold-text)' }}>{SEED_CONTACT_EMAIL}</a>
-          </p>
-          <p>
-            If you've been invited, enter your seed node password below.
+            Seed node access is granted per device by the SermonIndex admin — the seed nodes are the
+            trusted backbone of the peer-to-peer network. Your node's unique id is:
           </p>
 
-          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-            <input
-              type="password"
-              placeholder="Enter seed node password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleUnlock()}
-            />
-            <button className="btn btn-gold" onClick={handleUnlock} disabled={unlocking}>
-              {unlocking ? 'Verifying...' : 'Unlock'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '10px 0' }}>
+            <code style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--gold-text)', background: 'var(--bg-tertiary)', padding: '6px 12px', borderRadius: '6px', letterSpacing: '0.5px' }}>
+              #{(nodeId || '').slice(0, 8)}
+            </code>
+            <button
+              className="btn"
+              onClick={() => { try { navigator.clipboard.writeText(nodeId); setAccessMsg('Full node id copied to clipboard.'); } catch {} }}
+              style={{ padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
+            >
+              Copy full id
             </button>
           </div>
-          {error && <p style={{ color: 'var(--red)', fontSize: '0.82rem', marginTop: '8px' }}>{error}</p>}
+
+          <p>
+            Enter your email and request access below — or email{' '}
+            <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold-text)' }}>{SEED_CONTACT_EMAIL}</a>{' '}
+            with the node id above. Once the admin enables your node, press <strong>Check access</strong>.
+          </p>
+
+          <div style={{ display: 'flex', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={reqEmail}
+              onChange={e => setReqEmail(e.target.value)}
+              style={{ flex: 1, minWidth: '180px' }}
+            />
+            <button className="btn btn-gold" onClick={submitRequest} disabled={checkingAccess || requested}>
+              {requested ? 'Requested ✓' : 'Request access'}
+            </button>
+            <button
+              className="btn"
+              onClick={checkAccess}
+              disabled={checkingAccess}
+              style={{ padding: '8px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: checkingAccess ? 'default' : 'pointer' }}
+            >
+              {checkingAccess ? 'Checking…' : 'Check access'}
+            </button>
+          </div>
+          {accessMsg && <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '8px' }}>{accessMsg}</p>}
         </div>
 
         <div className="seed-card">
