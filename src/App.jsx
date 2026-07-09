@@ -902,7 +902,7 @@ export default function App() {
       case 'connections':
         return <ConnectionsPage p2pRunning={p2pRunning} p2pEnabled={p2pEnabled} onP2pToggle={handleP2pToggle} />;
       case 'settings':
-        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} />;
+        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} />;
       default:
         return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} search={search} onSearch={setSearch} />;
     }

@@ -20,6 +20,7 @@ export default function SettingsPage({
   chatShow,
   onChatShowChange,
   nodeStats,
+  version = '',
 }) {
   const [nodeId, setNodeId] = useState('');
   const [modeStatus, setModeStatus] = useState(''); // 'saved', ''
@@ -273,7 +274,7 @@ export default function SettingsPage({
             <h3>About</h3>
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Version</span>
-              <span>1.0.0</span>
+              <span>{version ? `v${version}` : '—'}</span>
             </div>
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Content Source Mode</span>
