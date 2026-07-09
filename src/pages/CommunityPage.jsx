@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getNodeId } from '../services/heartbeat.js';
 import { getLastRead, setLastRead } from '../services/chatNotify.js';
+import { CHAT_API } from '../services/constants.js';
 
-// Bunny Edge Script endpoint (see server/chat-edge-script.js)
-const CHAT_API = 'https://community-chat-z71kj.bunny.run/';
 const POLL_MS = 10000;          // normal poll interval
 const POLL_MS_OFFLINE = 30000;  // slower poll while server unreachable
 const MAX_KEPT = 500;           // messages kept in memory

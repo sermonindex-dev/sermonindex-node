@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess } from '../services/network.js';
+import { TORRENT_PORT_RANGE } from '../services/constants.js';
 import { getNodeId } from '../services/heartbeat.js';
 
 const FORUMS_HARDWARE_GUIDE = 'https://www.sermonindex.net/forums/hardware-guide';
@@ -595,7 +596,7 @@ export default function SeedNodePage({
               <p style={{ color: 'var(--orange)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
                 {reach.noPort
                   ? 'Not reachable yet — the P2P session isn\'t running, so there\'s no port to test. Start the node, then test again.'
-                  : `Not reachable yet — forward TCP port ${reach.port} (range 42800–42839) in your router, or enable UPnP.`}
+                  : `Not reachable yet — forward TCP port ${reach.port} (range ${TORRENT_PORT_RANGE}) in your router, or enable UPnP.`}
               </p>
               {!reach.noPort && (
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
@@ -605,7 +606,7 @@ export default function SeedNodePage({
                   </p>
                   <p style={{ margin: '0 0 6px' }}>
                     2. Or add a port forward: <strong>TCP {reach.port}</strong> (or the range
-                    {' '}<strong>42800–42839</strong>) pointing to this computer.
+                    {' '}<strong>{TORRENT_PORT_RANGE}</strong>) pointing to this computer.
                   </p>
                   {reach.manual && (
                     <p style={{ margin: 0, color: 'var(--text-muted)' }}>

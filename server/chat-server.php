@@ -22,7 +22,7 @@
  *   ?admin_key=KEY&action=delete&id=<message id>
  */
 
-const ADMIN_KEY    = 'CHANGE_ME';              // ← set a long random secret before deploying
+define('ADMIN_KEY', getenv('ADMIN_KEY') ?: 'CHANGE_ME'); // prefer env; never hardcode a real secret
 const DB_PATH      = __DIR__ . '/chat.db';     // SQLite file, created on first request
 const MAX_TEXT     = 500;
 const MAX_NAME     = 24;

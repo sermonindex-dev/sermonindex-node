@@ -1,8 +1,7 @@
 // Community chat unread tracking + notification preferences.
 // Powers the unread badge beside "Community" in the sidebar.
 
-// Bunny Edge Script endpoint — keep in sync with CHAT_API in src/pages/CommunityPage.jsx
-const CHAT_API = 'https://community-chat-z71kj.bunny.run/';
+import { CHAT_API } from './constants.js';
 
 const LAST_READ_KEY = 'si-chat-last-read'; // highest message id the user has seen
 const NOTIFY_KEY = 'si-chat-notify';       // '1' (default) = show unread badge

@@ -60,7 +60,6 @@ import {
   revalidateDownloads,
 } from './services/catalog.js';
 import downloadManager, { DL_STATE, SOURCE_MODE } from './services/downloadManager.js';
-import { getStoragePath } from './services/tauriStore.js';
 import { startHeartbeat, stopHeartbeat, fetchConfig, loadNodeIdFromDisk } from './services/heartbeat.js';
 import { checkForUpdates } from './services/updater.js';
 import { fetchUnreadCount, chatPrefs } from './services/chatNotify.js';
@@ -830,7 +829,9 @@ export default function App() {
     try {
       const tauriMod = await import('@tauri-apps/api/core').catch(() => null);
       if (tauriMod) {
-        const storagePath = await tauriMod.invoke('get_storage_path');
+        // Open the user's ACTUAL download folder (honors a custom/external-drive
+        // location), not the default dir.
+        const storagePath = await tauriMod.invoke('get_storage_dir');
         await tauriMod.invoke('open_folder', { path: storagePath });
       }
     } catch (e) {

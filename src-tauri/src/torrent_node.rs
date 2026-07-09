@@ -114,11 +114,9 @@ pub fn build_magnet(info_hash: &str, name: &str) -> String {
 pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHandle, String> {
     std::fs::create_dir_all(&download_dir)
         .map_err(|e| format!("Failed to create download dir: {e}"))?;
-    let persist_dir = data_dir.join("torrent-session");
-    std::fs::create_dir_all(&persist_dir)
-        .map_err(|e| format!("Failed to create session dir: {e}"))?;
-
-    let _ = &persist_dir; // retained for backward-compat cleanup; no longer written
+    // NOTE: we intentionally do NOT create a torrent-session/ dir — persistence
+    // is disabled (see below), so it would just be an empty unused folder.
+    let _ = &data_dir;
     let opts = SessionOptions {
         disable_dht: false,
         disable_dht_persistence: false,

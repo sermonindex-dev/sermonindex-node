@@ -148,20 +148,11 @@ async function getGeoLocation() {
     console.warn('[Heartbeat] ipwho.is failed:', e.message);
   }
 
-  // Provider 3: ip-api.com (HTTP only — may be blocked by mixed content in HTTPS contexts)
-  try {
-    const res = await fetch('http://ip-api.com/json/?fields=city,country,countryCode,lat,lon', { signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      const data = await res.json();
-      _geoData = { city: data.city || 'Unknown', country: data.countryCode || 'XX', lat: data.lat || 0, lon: data.lon || 0 };
-      console.log('[Heartbeat] Geo (ip-api.com):', _geoData.city, _geoData.country);
-      return _geoData;
-    }
-  } catch (e) {
-    console.warn('[Heartbeat] ip-api.com failed:', e.message);
-  }
+  // (Dropped the ip-api.com HTTP provider — mixed content is blocked in the
+  //  packaged HTTPS/WKWebView context, so it never worked. HTTPS providers above
+  //  plus the server-side lookup below cover it.)
 
-  // Provider 4: Server-side geo lookup (our own edge script does the IP lookup)
+  // Provider 3: Server-side geo lookup (our own edge script does the IP lookup)
   try {
     const res = await fetch(`${API_BASE}/api/geo`, { signal: AbortSignal.timeout(5000) });
     if (res.ok) {

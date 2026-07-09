@@ -33,6 +33,7 @@ function buildMagnet(infoHash, name) {
 }
 
 import { probeReachability } from '../services/network.js';
+import { TORRENT_PORT_MIN, TORRENT_PORT_RANGE } from '../services/constants.js';
 
 // Max log entries to keep in memory
 const MAX_LOG_ENTRIES = 150;
@@ -452,8 +453,8 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               </p>
               <p style={{ marginBottom: '8px' }}>
                 1. In your router's settings, turn on <strong>UPnP</strong>, then restart this app.<br />
-                2. Or add a port forward: <strong>TCP {status?.tcp_listen_port || '42800'}</strong> (or the
-                range 42800–42839) to this computer.
+                2. Or add a port forward: <strong>TCP {status?.tcp_listen_port || TORRENT_PORT_MIN}</strong> (or the
+                range {TORRENT_PORT_RANGE}) to this computer.
               </p>
               <p style={{ marginBottom: 0, color: 'var(--text-muted)' }}>
                 Not reachable? You still help — your node uploads to every peer it can reach.

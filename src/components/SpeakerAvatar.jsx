@@ -1,11 +1,6 @@
 import React, { useRef, useCallback } from 'react';
 import { speakerImageCandidates } from '../services/catalog.js';
 
-export function getInitials(name) {
-  if (!name) return '?';
-  return name.split(' ').map(w => w[0]).join('').slice(0, 2);
-}
-
 /**
  * Inline silhouette placeholder — rendered as SVG MARKUP (not an <img src>), so
  * it appears instantly with zero network and can NEVER show a broken-image icon.

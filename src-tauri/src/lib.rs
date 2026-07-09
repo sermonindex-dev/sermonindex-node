@@ -257,6 +257,11 @@ fn list_downloaded_files() -> Result<Vec<String>, String> {
                     }
                 } else if meta.is_dir() {
                     // One level deep: a shard subfolder (downloads/<shard>/<file>).
+                    // Skip "speaker-images" — those are exported portraits, not
+                    // sermon files, and must never be mistaken for one.
+                    if entry.file_name().to_str() == Some("speaker-images") {
+                        continue;
+                    }
                     if let Ok(sub) = fs::read_dir(entry.path()) {
                         for e2 in sub.flatten() {
                             if let Ok(m2) = e2.metadata() {
@@ -352,7 +357,7 @@ fn get_storage_usage() -> Result<StorageInfo, String> {
     let mut total_bytes: u64 = 0;
     let mut file_count: u64 = 0;
 
-    fn walk_dir(dir: &PathBuf, total: &mut u64, count: &mut u64) {
+    fn walk_dir(dir: &std::path::Path, total: &mut u64, count: &mut u64) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 if let Ok(meta) = entry.metadata() {
@@ -906,7 +911,8 @@ pub fn run() {
                 .item(&quit_item)
                 .build()?;
 
-            // Load tray icon (white on transparent for menu bar)
+            // Load tray icon (black seed glyph on transparent; template mode
+            // below lets macOS recolor it for light/dark menu bars)
             let tray_icon = {
                 let tray_icon_bytes = include_bytes!("../icons/tray-icon@2x.png");
                 let img = image::load_from_memory(tray_icon_bytes)
