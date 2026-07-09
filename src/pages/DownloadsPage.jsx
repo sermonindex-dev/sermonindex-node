@@ -330,9 +330,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
               className="btn-icon"
               onClick={() => onExport(sermon.id)}
               data-tooltip="Export to Desktop"
-              style={{ color: 'var(--text-muted)' }}
+              style={{ color: 'var(--text-muted)', width: 'auto', gap: '5px', padding: '0 10px', fontSize: '0.72rem', fontWeight: 600 }}
             >
-              {iconExport}
+              {iconExport} Export
             </button>
           ) : null}
           {onRemove && (
@@ -424,7 +424,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
 
       <div className="seed-card" style={{ marginBottom: '16px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <p style={{ fontSize: '0.78rem', margin: 0, color: 'var(--text-muted)', lineHeight: 1.5, flex: 1 }}>
-          Downloaded files are stored locally and seeded to the P2P network. Use <strong style={{ color: 'var(--text-primary)' }}>Export</strong> on any sermon — or <strong style={{ color: 'var(--text-primary)' }}>By Speaker → Export</strong> — to save readable copies into a Desktop folder named for the speaker.
+          Downloaded files are stored locally and seeded to the P2P network (and should not be renamed). Use <strong style={{ color: 'var(--text-primary)' }}>Export</strong> on any sermon — or <strong style={{ color: 'var(--text-primary)' }}>By Speaker → Export</strong> — to save readable copies into a Desktop folder named for the speaker.
         </p>
         {onOpenFolder && (
           <button

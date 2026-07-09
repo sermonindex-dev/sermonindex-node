@@ -168,7 +168,7 @@ export default function SettingsPage({
               Controls where the app fetches sermon content from. Click to switch modes.
             </p>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              The network will suggest optimal settings via heartbeat, but you can override manually.
+              The network defines which sources are available.
             </p>
 
             <div className="content-source-visual">
@@ -204,8 +204,8 @@ export default function SettingsPage({
                           <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }} />
                         )}
                       </div>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{mode.label}</div>
+                      <div style={{ opacity: isActive ? 1 : 0.85 }}>
+                        <div style={{ fontWeight: 500, color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>{mode.label}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{mode.desc}</div>
                       </div>
                     </div>

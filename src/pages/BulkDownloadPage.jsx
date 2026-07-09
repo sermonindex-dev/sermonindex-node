@@ -127,7 +127,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
     <>
       <div className="page-header">
         <h2>Bulk Download</h2>
-        <p>Download all sermons by a specific speaker. One speaker at a time to keep things smooth.</p>
+        <p>Bulk-download a speaker's entire catalog. Downloads are processed sequentially — one speaker at a time — to avoid saturating your connection and disk I/O.</p>
       </div>
 
       <div className="library-filters">
