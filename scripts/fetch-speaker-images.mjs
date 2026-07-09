@@ -40,26 +40,34 @@ const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry-run');
 const FORCE = args.has('--force');
 
-/** Map a catalog image value to { url, dest, localPath } or null if it's a default. */
-function planFor(img) {
-  if (!img || img.includes(DEFAULT_MARKER)) return null;
-  let pathname, url;
-  if (img.startsWith('http')) {
-    try {
-      const u = new URL(img);
-      pathname = u.pathname;      // e.g. /images/speakers/a/x.png
-      url = img;
-    } catch {
-      return null;
-    }
-  } else {
-    pathname = img.startsWith('/') ? img : `/${img}`;
-    url = `${SITE_BASE}${pathname}`;
+/**
+ * Candidate portrait paths for a speaker, mirroring the app's runtime fallbacks
+ * (services/catalog.js speakerImageCandidates): the catalog's stored path first,
+ * then the name-derived compact and hyphenated slugs. The site's naming is
+ * inconsistent (e.g. the catalog may say "ab-simpson.png" while the real file is
+ * "absimpson.png"), so trying all forms recovers many that a single URL misses.
+ * Returns [{ url, dest }] — each saved to the local path matching its own URL,
+ * so the app finds it via the matching candidate.
+ */
+function candidatePaths(name, img) {
+  const out = [];
+  const add = (pathname) => {
+    if (!pathname || !pathname.includes('/images/speakers/')) return;
+    if (out.some((c) => c.pathname === pathname)) return;
+    out.push({ pathname, url: `${SITE_BASE}${pathname}`, dest: join(PUBLIC, pathname.replace(/^\//, '')) });
+  };
+  // 1. Stored catalog path (skip the generic default marker).
+  if (img && !img.includes(DEFAULT_MARKER)) {
+    if (img.startsWith('http')) { try { add(new URL(img).pathname); } catch { /* not a URL */ } }
+    else add(img.startsWith('/') ? img : `/${img}`);
   }
-  // Only mirror actual speaker portraits.
-  if (!pathname.includes('/images/speakers/')) return null;
-  const dest = join(PUBLIC, pathname.replace(/^\//, ''));
-  return { url, dest, localPath: pathname };
+  // 2. Name-derived slugs (compact + hyphenated), like the app's fallbacks.
+  const lower = (name || '').toLowerCase();
+  const compact = lower.replace(/[^a-z0-9]/g, '');
+  const hyphen = lower.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (compact) add(`/images/speakers/${compact[0]}/${compact}.png`);
+  if (hyphen && hyphen !== compact) add(`/images/speakers/${hyphen[0]}/${hyphen}.png`);
+  return out;
 }
 
 async function exists(p) {
@@ -91,26 +99,31 @@ async function main() {
   const catalog = JSON.parse(raw);
   const speakers = catalog.s || [];
 
-  // Build a de-duplicated plan (some portraits are shared / repeated).
+  // One entry per speaker, each with a list of candidate URLs to try in order.
   const seen = new Set();
-  const plans = [];
+  const entries = [];
   let defaults = 0;
-  for (const [, img] of speakers) {
-    const plan = planFor(img);
-    if (!plan) { defaults++; continue; }
-    if (seen.has(plan.dest)) continue;
-    seen.add(plan.dest);
-    plans.push(plan);
+  for (const [name, img] of speakers) {
+    // Skip speakers the catalog marks as having no portrait (default image).
+    if (!img || img.includes(DEFAULT_MARKER)) { defaults++; continue; }
+    const cands = candidatePaths(name, img);
+    if (cands.length === 0) { defaults++; continue; }
+    const key = cands[0].dest; // dedup shared/repeat portraits by their primary path
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({ name, candidates: cands });
   }
 
   console.log(`Catalog speakers: ${speakers.length}`);
-  console.log(`  real portraits (unique): ${plans.length}`);
+  console.log(`  real portraits (unique): ${entries.length}`);
   console.log(`  using default (skipped): ${defaults}`);
 
   if (DRY_RUN) {
-    console.log('\n--dry-run — no downloads. Sample of planned files:');
-    for (const p of plans.slice(0, 8)) console.log(`  ${p.url}\n    -> ${p.dest}`);
-    console.log(`\nWould ensure ${plans.length} portraits under public/images/speakers/.`);
+    console.log('\n--dry-run — no downloads. Sample (with fallbacks):');
+    for (const e of entries.slice(0, 6)) {
+      console.log(`  ${e.name}: ${e.candidates.map((c) => c.url).join('  |  ')}`);
+    }
+    console.log(`\nWould ensure ${entries.length} portraits under public/images/speakers/.`);
     return;
   }
 
@@ -119,20 +132,31 @@ async function main() {
   let idx = 0;
 
   async function worker() {
-    while (idx < plans.length) {
-      const p = plans[idx++];
-      if (!FORCE && await exists(p.dest)) { skipped++; continue; }
-      try {
-        const buf = await fetchWithRetry(p.url);
-        await mkdir(dirname(p.dest), { recursive: true });
-        await writeFile(p.dest, buf);
-        downloaded++;
-        if (downloaded % 50 === 0) {
-          process.stdout.write(`\r  downloaded ${downloaded}, skipped ${skipped}, failed ${failed}…   `);
-        }
-      } catch (e) {
+    while (idx < entries.length) {
+      const e = entries[idx++];
+      // Already have any candidate on disk? skip.
+      if (!FORCE) {
+        let have = false;
+        for (const c of e.candidates) { if (await exists(c.dest)) { have = true; break; } }
+        if (have) { skipped++; continue; }
+      }
+      // Try each candidate URL until one downloads; save to that candidate's path.
+      let ok = false;
+      for (const c of e.candidates) {
+        try {
+          const buf = await fetchWithRetry(c.url);
+          await mkdir(dirname(c.dest), { recursive: true });
+          await writeFile(c.dest, buf);
+          downloaded++; ok = true;
+          if (downloaded % 50 === 0) {
+            process.stdout.write(`\r  downloaded ${downloaded}, skipped ${skipped}, failed ${failed}…   `);
+          }
+          break;
+        } catch { /* try next candidate */ }
+      }
+      if (!ok) {
         failed++;
-        failures.push(`${p.url}  (${e.message})`);
+        failures.push(`${e.name}  (tried: ${e.candidates.map((c) => c.url.split('/').pop()).join(', ')})`);
       }
     }
   }
