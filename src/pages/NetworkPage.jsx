@@ -23,6 +23,16 @@ function mercY(lat) {
 const MERC_TOP = mercY(LAT_MAX), MERC_BOT = mercY(LAT_MIN), MERC_RANGE = MERC_TOP - MERC_BOT;
 const MAP_ASPECT = (LON_MAX - LON_MIN) / ((MERC_TOP - MERC_BOT) * (180 / Math.PI));
 
+// Three-way node classification (matches the dashboard):
+//   seed → approved seed node
+//   node → port OPEN / reachable from the internet
+//   peer → running but port CLOSED (or reachability unknown)
+function catOf(n) {
+  if (n.category) return n.category;               // server already classified
+  if (n.type === 'seed') return 'seed';
+  return n.reachable ? 'node' : 'peer';
+}
+
 const iconSeed = <svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM88,160a8,8,0,1,1-8,8A8,8,0,0,1,88,160ZM48,48H80v97.38a24,24,0,1,0,16,0V115.31l48,48V208H48ZM208,208H160V160a8,8,0,0,0-2.34-5.66L96,92.69V48h32V72a8,8,0,0,0,2.34,5.66l16,16A23.74,23.74,0,0,0,144,104a24,24,0,1,0,24-24,23.74,23.74,0,0,0-10.34,2.35L144,68.69V48h64V208ZM168,96a8,8,0,1,1-8,8A8,8,0,0,1,168,96Z" /></svg>;
 const iconUser = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>;
 const iconGlobe = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z" /></svg>;
@@ -83,9 +93,11 @@ export default function NetworkPage({ nodeStats }) {
     const map = {};
     nodes.forEach(n => {
       const cc = n.country || 'XX';
-      if (!map[cc]) map[cc] = { code: cc, name: COUNTRY_NAMES[cc] || cc, seeds: 0, peers: 0, total: 0, cities: new Set() };
+      if (!map[cc]) map[cc] = { code: cc, name: COUNTRY_NAMES[cc] || cc, seeds: 0, nodes: 0, peers: 0, total: 0, cities: new Set() };
       map[cc].total++;
-      if (n.type === 'seed') map[cc].seeds++;
+      const c = catOf(n);
+      if (c === 'seed') map[cc].seeds++;
+      else if (c === 'node') map[cc].nodes++;
       else map[cc].peers++;
       if (n.city && n.city !== 'Unknown') map[cc].cities.add(n.city);
     });
@@ -258,8 +270,8 @@ export default function NetworkPage({ nodeStats }) {
 
       ctx.restore(); // unclip
 
-      const seeds = nodes.filter(n => n.type === 'seed');
-      const peers = nodes.filter(n => n.type !== 'seed');
+      const seeds = nodes.filter(n => catOf(n) === 'seed');
+      const peers = nodes.filter(n => catOf(n) !== 'seed'); // nodes + peers, for backbone lines
       const dashOff = (now / 60) % 24;
 
       // Seed-to-seed backbone connections
@@ -289,25 +301,24 @@ export default function NetworkPage({ nodeStats }) {
       // Draw nodes
       nodes.forEach(node => {
         const [x, y] = project(node.lat, node.lon);
-        const isSeed = node.type === 'seed';
+        const cat = catOf(node);
+        const isSeed = cat === 'seed';
         const isMe = node.id === getNodeId();
         const baseR = isSeed ? 6 : isMe ? 5 : 3.5;
         const pulse = Math.sin(now / 3000 + (node.id?.charCodeAt?.(3) || 0)) * 0.3 + 0.7;
         const glowR = baseR * 3 + pulse * 4;
 
+        // seed = gold · node(open) = blue · peer(closed) = muted tan · you = green
+        const rgb = isMe ? '76,175,80' : isSeed ? '212,175,55' : cat === 'node' ? '78,161,211' : '184,172,120';
+        const dotColor = isMe ? '#4caf50' : isSeed ? '#d4af37' : cat === 'node' ? '#4ea1d3' : 'rgba(184,172,120,0.75)';
         const glow = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-        if (isMe) {
-          glow.addColorStop(0, 'rgba(76,175,80,0.35)');
-          glow.addColorStop(1, 'rgba(76,175,80,0)');
-        } else {
-          glow.addColorStop(0, isSeed ? 'rgba(212,175,55,0.3)' : 'rgba(212,175,55,0.15)');
-          glow.addColorStop(1, 'rgba(212,175,55,0)');
-        }
+        glow.addColorStop(0, `rgba(${rgb},${(isMe || isSeed) ? 0.32 : 0.18})`);
+        glow.addColorStop(1, `rgba(${rgb},0)`);
         ctx.fillStyle = glow;
         ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI * 2); ctx.fill();
 
         ctx.beginPath(); ctx.arc(x, y, baseR, 0, Math.PI * 2);
-        ctx.fillStyle = isMe ? '#4caf50' : isSeed ? '#d4af37' : 'rgba(212,175,55,0.7)';
+        ctx.fillStyle = dotColor;
         ctx.fill();
         ctx.beginPath(); ctx.arc(x, y, isSeed ? 2.5 : 1.5, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255,240,200,0.9)'; ctx.fill();
@@ -366,8 +377,9 @@ export default function NetworkPage({ nodeStats }) {
     };
   }, [nodes, mapTab, geoData]);
 
-  const seedNodes = nodes.filter(n => n.type === 'seed');
-  const peerNodes = nodes.filter(n => n.type === 'user');
+  const seedNodes = nodes.filter(n => catOf(n) === 'seed');
+  const openNodes = nodes.filter(n => catOf(n) === 'node');   // port open
+  const peerNodes = nodes.filter(n => catOf(n) === 'peer');   // port closed
   const countries = new Set(nodes.map(n => n.country)).size;
   const avgCoverage = nodes.length > 0
     ? (nodes.reduce((acc, n) => acc + (n.coverage || 0), 0) / nodes.length).toFixed(1)
@@ -378,24 +390,24 @@ export default function NetworkPage({ nodeStats }) {
       {/* Compact stats row */}
       <div className="net-stats-row">
         <div className="net-stat-mini">
-          <span className="net-stat-mini-val gold">{nodes.length}</span>
-          <span className="net-stat-mini-label">Nodes</span>
+          <span className="net-stat-mini-val">{nodes.length}</span>
+          <span className="net-stat-mini-label">Online</span>
         </div>
-        <div className="net-stat-mini">
+        <div className="net-stat-mini" title="Approved seed nodes">
           <span className="net-stat-mini-val gold">{seedNodes.length}</span>
           <span className="net-stat-mini-label">Seeds</span>
         </div>
-        <div className="net-stat-mini">
+        <div className="net-stat-mini" title="Port open — reachable from the internet">
+          <span className="net-stat-mini-val green">{openNodes.length}</span>
+          <span className="net-stat-mini-label">Nodes</span>
+        </div>
+        <div className="net-stat-mini" title="Running but port closed">
           <span className="net-stat-mini-val">{peerNodes.length}</span>
           <span className="net-stat-mini-label">Peers</span>
         </div>
         <div className="net-stat-mini">
           <span className="net-stat-mini-val gold">{countries}</span>
           <span className="net-stat-mini-label">Countries</span>
-        </div>
-        <div className="net-stat-mini">
-          <span className="net-stat-mini-val green">{avgCoverage}%</span>
-          <span className="net-stat-mini-label">Avg Coverage</span>
         </div>
         {!isLiveData && <span className="net-sample-badge">Your node</span>}
       </div>
@@ -428,13 +440,13 @@ export default function NetworkPage({ nodeStats }) {
               borderRadius: '8px', padding: '10px 14px', fontSize: '0.8rem',
               lineHeight: '1.5', backdropFilter: 'blur(8px)',
             }}>
-              <div style={{ fontWeight: 600, color: hoveredNode.type === 'seed' ? '#d4af37' : hoveredNode.id === getNodeId() ? '#4caf50' : '#e4e4da' }}>
+              <div style={{ fontWeight: 600, color: catOf(hoveredNode) === 'seed' ? '#d4af37' : hoveredNode.id === getNodeId() ? '#4caf50' : catOf(hoveredNode) === 'node' ? '#4ea1d3' : '#e4e4da' }}>
                 {hoveredNode.city}, {hoveredNode.country}
                 {hoveredNode.id === getNodeId() && <span style={{ fontSize: '0.68rem', opacity: 0.7, marginLeft: '6px' }}>(You)</span>}
               </div>
               <div style={{ color: '#9aa3ad', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ display: 'inline-flex' }}>{hoveredNode.type === 'seed' ? iconSeed : iconUser}</span>
-                {hoveredNode.type === 'seed' ? 'Seed Node' : 'Peer'} · {hoveredNode.coverage}% coverage
+                <span style={{ display: 'inline-flex' }}>{catOf(hoveredNode) === 'seed' ? iconSeed : iconUser}</span>
+                {catOf(hoveredNode) === 'seed' ? 'Seed Node' : catOf(hoveredNode) === 'node' ? 'Node · port open' : 'Peer · port closed'} · {hoveredNode.coverage}% coverage
               </div>
             </div>
           )}
@@ -449,11 +461,15 @@ export default function NetworkPage({ nodeStats }) {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#d4af37', display: 'inline-block' }} />
-              <span style={{ color: '#9aa3ad' }}>Seed Node</span>
+              <span style={{ color: '#9aa3ad' }}>Seed node</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'rgba(212,175,55,0.5)', display: 'inline-block' }} />
-              <span style={{ color: '#9aa3ad' }}>Peer</span>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4ea1d3', display: 'inline-block' }} />
+              <span style={{ color: '#9aa3ad' }}>Node · port open</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'rgba(184,172,120,0.75)', display: 'inline-block' }} />
+              <span style={{ color: '#9aa3ad' }}>Peer · port closed</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4caf50', display: 'inline-block' }} />
@@ -472,9 +488,10 @@ export default function NetworkPage({ nodeStats }) {
             <table className="net-country-table">
               <thead>
                 <tr>
-                  <th style={{ width: '40%' }}>Country</th>
-                  <th>Nodes</th>
+                  <th style={{ width: '38%' }}>Country</th>
+                  <th>Total</th>
                   <th>Seeds</th>
+                  <th>Nodes</th>
                   <th>Peers</th>
                   <th>Cities</th>
                 </tr>
@@ -488,6 +505,7 @@ export default function NetworkPage({ nodeStats }) {
                     </td>
                     <td><span className="net-country-count">{c.total}</span></td>
                     <td>{c.seeds > 0 ? <span style={{ color: 'var(--gold-text)' }}>{c.seeds}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
+                    <td>{c.nodes > 0 ? <span style={{ color: 'var(--seed-blue)' }}>{c.nodes}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td>{c.peers > 0 ? c.peers : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{[...c.cities].join(', ') || '-'}</td>
                   </tr>
@@ -510,6 +528,19 @@ export default function NetworkPage({ nodeStats }) {
                 <span className="node-list-status online">Online</span>
               </div>
             ))}
+            {openNodes.map(node => (
+              <div key={node.id} className="node-list-item">
+                <span className="node-list-icon" style={{ display: 'flex', color: node.id === getNodeId() ? 'var(--green)' : 'var(--seed-blue)' }}>{iconUser}</span>
+                <div className="node-list-info">
+                  <div className="node-list-name">
+                    {node.city}, {node.country}
+                    {node.id === getNodeId() && <span style={{ fontSize: '0.68rem', color: 'var(--green)', marginLeft: '6px' }}>(You)</span>}
+                  </div>
+                  <div className="node-list-detail">Node · port open · {node.coverage}% coverage</div>
+                </div>
+                <span className="node-list-status online">Online</span>
+              </div>
+            ))}
             {peerNodes.map(node => (
               <div key={node.id} className="node-list-item">
                 <span className="node-list-icon" style={{ display: 'flex', color: node.id === getNodeId() ? 'var(--green)' : undefined }}>{iconUser}</span>
@@ -518,7 +549,7 @@ export default function NetworkPage({ nodeStats }) {
                     {node.city}, {node.country}
                     {node.id === getNodeId() && <span style={{ fontSize: '0.68rem', color: 'var(--green)', marginLeft: '6px' }}>(You)</span>}
                   </div>
-                  <div className="node-list-detail">Peer · {node.coverage}% coverage</div>
+                  <div className="node-list-detail">Peer · port closed · {node.coverage}% coverage</div>
                 </div>
                 <span className="node-list-status online">Online</span>
               </div>

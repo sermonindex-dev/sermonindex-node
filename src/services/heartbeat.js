@@ -249,6 +249,14 @@ async function sendHeartbeat() {
       content_mode: stats.contentMode || 'cdn',
       app_version: _appVersion || '0.0.0',
       node_type: stats.nodeType || 'user',
+      // Reachability lets the dashboard classify: seed / reachable "node" (port
+      // open) / "peer" (running but port closed). From the last probe result.
+      reachable: (() => {
+        try {
+          const r = JSON.parse(localStorage.getItem('si-reach') || 'null');
+          return r && typeof r.open === 'boolean' ? r.open : null;
+        } catch { return null; }
+      })(),
       lat: geo.lat,
       lon: geo.lon,
       city: geo.city,

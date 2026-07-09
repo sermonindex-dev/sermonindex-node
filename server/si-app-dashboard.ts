@@ -143,6 +143,8 @@ async function ensureTables(): Promise<void> {
     { sql: `DROP TABLE IF EXISTS ipfs_pins` },
     { sql: `DROP TABLE IF EXISTS ipfs_bridge` },
     { sql: `DROP TABLE IF EXISTS node_diagnostics` },
+    // Remove a stale leftover config row from the old IPFS build.
+    { sql: `DELETE FROM config WHERE key = 'ipfs_enabled'` },
 
     // Nodes — one row per participating node, updated on every heartbeat.
     {
@@ -160,6 +162,7 @@ async function ensureTables(): Promise<void> {
         content_mode TEXT DEFAULT 'cdn',
         app_version TEXT DEFAULT '0.0.0',
         node_type TEXT DEFAULT 'user',
+        reachable INTEGER DEFAULT 0,
         last_seen TEXT,
         first_seen TEXT,
         total_heartbeats INTEGER DEFAULT 0,
@@ -289,6 +292,15 @@ async function ensureTables(): Promise<void> {
     },
   ]);
 
+  // The nodes table already exists in production (created by an older script), so
+  // the CREATE TABLE above won't add the reachable column to it. Add it best-effort
+  // here — ALTER on an already-present column throws, so keep it out of the batch.
+  try {
+    await dbQuery(`ALTER TABLE nodes ADD COLUMN reachable INTEGER DEFAULT 0`);
+  } catch {
+    /* column already exists */
+  }
+
   _tablesCreated = true;
 }
 
@@ -335,6 +347,18 @@ function toNum(v: any, d = 0): number {
 /** Sanitize a node id to a safe token. */
 function cleanNode(s: any): string {
   return String(s || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+}
+
+/**
+ * Classify a node row into exactly one of three categories (priority order):
+ *   "seed" → approved seed node (node_type === 'seed')
+ *   "node" → not a seed AND its BitTorrent port is open (reachable === 1)
+ *   "peer" → not a seed AND its port is closed/unknown (reachable !== 1)
+ */
+function nodeCategory(n: any): "seed" | "node" | "peer" {
+  if (n.node_type === "seed") return "seed";
+  if (Number(n.reachable) === 1) return "node";
+  return "peer";
 }
 
 /** Client public IP from Bunny/CDN headers. */
@@ -454,6 +478,8 @@ label{display:block;font-size:0.74rem;color:var(--text2);margin-bottom:4px;font-
 .b-off{background:rgba(136,136,136,0.15);color:var(--muted);}
 .b-seed{background:rgba(212,175,55,0.2);color:var(--gold-text);}
 .b-user{background:rgba(112,112,53,0.15);color:var(--olive);}
+.b-node{background:rgba(61,138,65,0.15);color:var(--green);}
+.b-peer{background:rgba(184,92,0,0.15);color:#b85c00;}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .chart-wrap{position:relative;height:300px;}
@@ -552,6 +578,9 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   const contentMode = String(body.content_mode || "cdn");
   const appVersion = String(body.app_version || "0.0.0");
   const nodeType = body.node_type === "seed" ? "seed" : "user";
+  // BitTorrent port reachability: true = port open/reachable, false = closed,
+  // anything else (null/undefined) = unknown → stored as 0.
+  const reachable = body.reachable === true ? 1 : (body.reachable === false ? 0 : 0);
 
   // If the app couldn't geolocate itself, try a server-side IP lookup.
   if ((lat === 0 && lon === 0) && (city === "Unknown" || !city)) {
@@ -571,19 +600,20 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   await dbQuery(
     `INSERT INTO nodes
       (node_id, lat, lon, city, country, files_stored, storage_used_bytes, peers_connected,
-       uptime_seconds, library_coverage, content_mode, app_version, node_type,
+       uptime_seconds, library_coverage, content_mode, app_version, node_type, reachable,
        last_seen, first_seen, total_heartbeats, is_online)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
      ON CONFLICT(node_id) DO UPDATE SET
        lat=excluded.lat, lon=excluded.lon, city=excluded.city, country=excluded.country,
        files_stored=excluded.files_stored, storage_used_bytes=excluded.storage_used_bytes,
        peers_connected=excluded.peers_connected, uptime_seconds=excluded.uptime_seconds,
        library_coverage=excluded.library_coverage, content_mode=excluded.content_mode,
        app_version=excluded.app_version, node_type=excluded.node_type,
+       reachable=excluded.reachable,
        last_seen=excluded.last_seen,
        total_heartbeats=nodes.total_heartbeats+1,
        is_online=1`,
-    [nodeId, lat, lon, city, country, filesStored, storageBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, ts, ts],
+    [nodeId, lat, lon, city, country, filesStored, storageBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, reachable, ts, ts],
   );
 
   // Record shared sermons from body.seeded_torrents.
@@ -737,24 +767,26 @@ async function handleMap(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
   const { rows } = await dbQuery(
-    `SELECT node_id, lat, lon, city, country, library_coverage, node_type,
+    `SELECT node_id, lat, lon, city, country, library_coverage, node_type, reachable,
             files_stored, app_version, content_mode, peers_connected, storage_used_bytes
        FROM nodes WHERE is_online=1 AND last_seen >= ?`,
     [online],
   );
-  const nodes = rows.map((n: any) => ({
-    id: n.node_id,
-    lat: toNum(n.lat, 0),
-    lon: toNum(n.lon, 0),
-    city: n.city || "Unknown",
-    country: n.country || "XX",
-    coverage: toNum(n.library_coverage, 0),
-    type: n.node_type || "user",
-    files: toInt(n.files_stored, 0),
-    version: n.app_version || "0.0.0",
-    mode: n.content_mode || "cdn",
-    peers: toInt(n.peers_connected, 0),
-    storage: toInt(n.storage_used_bytes, 0),
+  const nodes = rows.map((r: any) => ({
+    id: r.node_id,
+    lat: toNum(r.lat, 0),
+    lon: toNum(r.lon, 0),
+    city: r.city || "Unknown",
+    country: r.country || "XX",
+    coverage: toNum(r.library_coverage, 0),
+    type: r.node_type || "user",
+    files: toInt(r.files_stored, 0),
+    version: r.app_version || "0.0.0",
+    mode: r.content_mode || "cdn",
+    peers: toInt(r.peers_connected, 0),
+    storage: toInt(r.storage_used_bytes, 0),
+    reachable: Number(r.reachable) || 0,
+    category: nodeCategory(r),
   }));
   return jsonResponse({ nodes, count: nodes.length }, 200, { "Cache-Control": "public, max-age=30" });
 }
@@ -767,6 +799,9 @@ async function handleStats(): Promise<Response> {
     dbQuery(
       `SELECT COUNT(*) totalNodes,
               SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seedNodes,
+              SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
+              SUM(CASE WHEN node_type!='seed' AND reachable=1 THEN 1 ELSE 0 END) openNodes,
+              SUM(CASE WHEN node_type!='seed' AND (reachable IS NULL OR reachable=0) THEN 1 ELSE 0 END) peers,
               COALESCE(SUM(files_stored),0) totalFiles,
               COALESCE(SUM(storage_used_bytes),0) totalStorage,
               COALESCE(AVG(library_coverage),0) avgCoverage,
@@ -782,6 +817,9 @@ async function handleStats(): Promise<Response> {
   return jsonResponse({
     totalNodes: toInt(r.totalNodes, 0),
     seedNodes: toInt(r.seedNodes, 0),
+    seeds: toInt(r.seeds, 0),
+    openNodes: toInt(r.openNodes, 0),
+    peers: toInt(r.peers, 0),
     totalFiles: toInt(r.totalFiles, 0),
     totalStorage: toInt(r.totalStorage, 0),
     avgCoverage: Math.round(toNum(r.avgCoverage, 0) * 10) / 10,
@@ -983,6 +1021,14 @@ function statCard(n: string | number, label: string): string {
   return `<div class="stat"><div class="n">${escapeHtml(String(n))}</div><div class="l">${escapeHtml(label)}</div></div>`;
 }
 
+/**
+ * Stat card whose number is tinted a category colour (gold seed / green node /
+ * orange peer). `color` is a CSS colour string.
+ */
+function statCardColor(n: string | number, label: string, color: string): string {
+  return `<div class="stat"><div class="n" style="color:${escapeHtml(color)};">${escapeHtml(String(n))}</div><div class="l">${escapeHtml(label)}</div></div>`;
+}
+
 /** Remote config editor block (shared by /admin and /admin/config). */
 function configEditor(rows: any[], compact = false): string {
   const list = rows
@@ -1017,6 +1063,8 @@ async function pageOverview(): Promise<Response> {
     dbQuery(
       `SELECT COUNT(*) online,
               SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
+              SUM(CASE WHEN node_type!='seed' AND reachable=1 THEN 1 ELSE 0 END) openNodes,
+              SUM(CASE WHEN node_type!='seed' AND (reachable IS NULL OR reachable=0) THEN 1 ELSE 0 END) peers,
               COUNT(DISTINCT country) countries
          FROM nodes WHERE is_online=1 AND last_seen >= ?`,
       [online],
@@ -1034,9 +1082,13 @@ async function pageOverview(): Promise<Response> {
   ]);
 
   const s = stat.rows[0] || {};
+  // Three node categories among online nodes: Seed (gold), Node = port open
+  // (green), Peer = port closed/unknown (orange).
   const cards =
     statCard(toInt(s.online, 0), "Online Now") +
-    statCard(toInt(s.seeds, 0), "Seed Nodes") +
+    statCardColor(toInt(s.seeds, 0), "Seed Nodes", "#967d1f") +
+    statCardColor(toInt(s.openNodes, 0), "Nodes · port open", "#3d8a41") +
+    statCardColor(toInt(s.peers, 0), "Peers · port closed", "#b85c00") +
     statCard(toInt(s.countries, 0), "Countries") +
     statCard(toInt(ever.rows[0]?.ever, 0), "All-Time Nodes") +
     statCard(toInt(sermons.rows[0]?.c, 0), "Sermons Shared");
@@ -1218,7 +1270,7 @@ async function pageNodes(): Promise<Response> {
     ),
     // Nodes joined with seed_access flag and a per-node shared-sermon count.
     dbQuery(
-      `SELECT n.node_id, n.city, n.country, n.is_online, n.last_seen, n.node_type,
+      `SELECT n.node_id, n.city, n.country, n.is_online, n.last_seen, n.node_type, n.reachable,
               n.files_stored, n.library_coverage, n.app_version,
               COALESCE(sa.enabled, 0) AS seed_enabled,
               (SELECT COUNT(*) FROM shared_sermons ss WHERE ss.node_id = n.node_id) AS shared_count
@@ -1263,6 +1315,15 @@ async function pageNodes(): Promise<Response> {
       const lastMs = n.last_seen ? new Date(n.last_seen).getTime() : 0;
       const isOnline = toInt(n.is_online, 0) === 1 && nowMs - lastMs < 15 * 60 * 1000;
       const seedEnabled = toInt(n.seed_enabled, 0) === 1;
+      // Three-way class badge: Seed (gold) / Node = port open (green) /
+      // Peer = port closed or unknown (orange).
+      const cat = nodeCategory(n);
+      const classBadge =
+        cat === "seed"
+          ? '<span class="badge b-seed">Seed</span>'
+          : cat === "node"
+            ? '<span class="badge b-node" title="port open">Node</span>'
+            : '<span class="badge b-peer" title="port closed">Peer</span>';
       const flip = seedEnabled
         ? `<form method="POST" action="/admin/seed" class="inline-form">
              <input type="hidden" name="node_id" value="${escapeHtml(n.node_id)}">
@@ -1279,6 +1340,7 @@ async function pageNodes(): Promise<Response> {
         <td>${escapeHtml(n.city || "Unknown")}, ${escapeHtml(n.country || "XX")}</td>
         <td>${isOnline ? '<span class="badge b-on">online</span>' : '<span class="badge b-off">offline</span>'}</td>
         <td>${n.node_type === "seed" ? '<span class="badge b-seed">seed</span>' : '<span class="badge b-user">user</span>'}</td>
+        <td>${classBadge}</td>
         <td>${toInt(n.shared_count, 0)}</td>
         <td>${toInt(n.files_stored, 0)}</td>
         <td>${(Math.round(toNum(n.library_coverage, 0) * 10) / 10)}%</td>
@@ -1295,7 +1357,7 @@ async function pageNodes(): Promise<Response> {
       ${
         nodes.rows.length
           ? `<table><thead><tr>
-              <th>Node</th><th>Location</th><th>Status</th><th>Type</th>
+              <th>Node</th><th>Location</th><th>Status</th><th>Type</th><th>Class</th>
               <th>Sermons</th><th>Files</th><th>Coverage</th><th>Version</th><th>Last seen</th><th>Seed access</th>
             </tr></thead><tbody>${nodeRows}</tbody></table>`
           : '<div class="empty">No nodes yet.</div>'
