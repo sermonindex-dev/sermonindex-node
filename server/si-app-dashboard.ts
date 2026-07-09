@@ -35,8 +35,22 @@ const env = (k: string, d = ""): string =>
   d;
 
 const ADMIN_KEY = env("ADMIN_KEY"); // single admin login password
-const DB_URL = env("DB_URL");       // BunnyDB libSQL pipeline endpoint
 const DB_TOKEN = env("DB_TOKEN");   // BunnyDB libSQL bearer token
+
+// The edge script talks to BunnyDB over HTTP (fetch), so DB_URL must be the
+// HTTPS pipeline endpoint — https://<host>/v2/pipeline. BunnyDB's dashboard
+// usually shows the connection string as libsql://<host>, which fetch() can't
+// use ("Url scheme 'libsql' not supported"). Normalize whatever form is given.
+function normalizeDbUrl(raw: string): string {
+  let u = (raw || "").trim();
+  if (!u) return u;
+  if (u.startsWith("libsql://")) u = "https://" + u.slice("libsql://".length);
+  else if (u.startsWith("http://")) u = "https://" + u.slice("http://".length);
+  else if (!u.startsWith("https://")) u = "https://" + u;
+  if (!/\/v2\/pipeline\/?$/.test(u)) u = u.replace(/\/+$/, "") + "/v2/pipeline";
+  return u;
+}
+const DB_URL = normalizeDbUrl(env("DB_URL")); // accepts libsql:// or https:// form
 
 // ─────────────────────────────────────────────────────────────────────────────
 // libSQL data layer (BunnyDB HTTP pipeline)
