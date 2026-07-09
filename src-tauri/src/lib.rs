@@ -645,6 +645,41 @@ fn export_speaker(speaker: String, items: Vec<ExportItem>) -> Result<ExportResul
     })
 }
 
+/// Download a speaker portrait natively (bypasses WebView CORS) and save it to
+/// <downloads>/speaker-images/<name>.<ext>. Only the known SermonIndex image
+/// hosts are allowed. Returns the saved file path.
+#[tauri::command]
+async fn download_speaker_image(url: String, name: String) -> Result<String, String> {
+    const ALLOWED: &[&str] = &[
+        "https://www.sermonindex.net/",
+        "https://sermonindex1.b-cdn.net/",
+        "https://sermonindex2.b-cdn.net/",
+    ];
+    if !ALLOWED.iter().any(|p| url.starts_with(p)) {
+        return Err("URL not allowed".to_string());
+    }
+    let resp = reqwest::get(&url).await.map_err(|e| format!("fetch failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("read failed: {e}"))?;
+    if bytes.len() < 100 {
+        return Err("image not found".to_string());
+    }
+    let dir = downloads_dir().join("speaker-images");
+    fs::create_dir_all(&dir).map_err(|e| format!("create dir: {e}"))?;
+    // Extension from the URL path (alphanumeric, ≤4 chars), else png.
+    let ext = url
+        .split('?')
+        .next()
+        .and_then(|u| u.rsplit('.').next())
+        .filter(|e| e.len() <= 4 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or("png");
+    let dest = dir.join(format!("{}.{}", sanitize_name(&name), ext));
+    fs::write(&dest, bytes.as_ref()).map_err(|e| format!("write failed: {e}"))?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
 /// Check available disk space at a given path
 #[tauri::command]
 fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
@@ -1016,6 +1051,7 @@ pub fn run() {
             export_sermon_file,
             export_sermon,
             export_speaker,
+            download_speaker_image,
             // ── BitTorrent commands ──
             torrent_start,
             torrent_stop,

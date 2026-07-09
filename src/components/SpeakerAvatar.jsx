@@ -1,6 +1,5 @@
 import React, { useRef, useCallback } from 'react';
 import { speakerImageCandidates } from '../services/catalog.js';
-import defaultSpeaker from '../assets/default-speaker.svg';
 
 export function getInitials(name) {
   if (!name) return '?';
@@ -46,7 +45,10 @@ function DefaultSilhouette() {
  */
 export default function SpeakerAvatar({ speaker, image, className = 'sermon-speaker-avatar' }) {
   const candidates = speakerImageCandidates(speaker, image);
-  const loadedSrcRef = useRef(null);
+  // A fetchable REMOTE url for the loaded portrait (so the native downloader can
+  // save it — it can't read images bundled inside the app). Null until a real
+  // portrait loads; a silhouette-only avatar has nothing to download.
+  const loadedRemoteRef = useRef(null);
 
   const onContextMenu = useCallback((e) => {
     e.preventDefault(); // suppress the native "Open/Copy Image/Copy Subject" menu
@@ -54,7 +56,7 @@ export default function SpeakerAvatar({ speaker, image, className = 'sermon-spea
       detail: {
         x: e.clientX,
         y: e.clientY,
-        src: loadedSrcRef.current || defaultSpeaker,
+        url: loadedRemoteRef.current, // null → menu shows Download disabled
         name: speaker || 'speaker',
       },
     }));
@@ -72,7 +74,17 @@ export default function SpeakerAvatar({ speaker, image, className = 'sermon-spea
           data-i="0"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0, transition: 'opacity 0.25s ease' }}
           onLoad={(e) => {
-            loadedSrcRef.current = e.currentTarget.currentSrc || e.currentTarget.src;
+            // Map whatever loaded (local bundled copy OR CDN) to the canonical
+            // remote URL, which the native downloader can actually fetch.
+            const shown = e.currentTarget.currentSrc || e.currentTarget.src;
+            let remote = shown;
+            try {
+              const u = new URL(shown, window.location.href);
+              if (u.pathname.includes('/images/speakers/')) {
+                remote = `https://www.sermonindex.net${u.pathname}`;
+              }
+            } catch { /* keep shown */ }
+            loadedRemoteRef.current = remote;
             e.currentTarget.style.opacity = 1;
           }}
           onError={(e) => {
