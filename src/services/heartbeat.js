@@ -18,6 +18,16 @@ let _nodeId = null;
 let _getStatsFn = null;
 let _startTime = Date.now();
 let _onConfigUpdate = null;    // Callback when remote config changes
+
+// Real app version (from Rust CARGO_PKG_VERSION), fetched once at module load so
+// heartbeats report the actual running version instead of a hardcoded string.
+let _appVersion = '';
+(async () => {
+  try {
+    const tauri = await import('@tauri-apps/api/core').catch(() => null);
+    if (tauri) _appVersion = (await tauri.invoke('get_app_version').catch(() => '')) || '';
+  } catch { /* non-Tauri / dev — leave blank */ }
+})();
 let _onContentPacks = null;    // Callback when content packs are available
 let _getSermonInfoFn = null;   // Callback to get sermon info by ID (for seeded torrent reporting)
 let _lastConfig = null;        // Cache last config to detect changes
@@ -237,7 +247,7 @@ async function sendHeartbeat() {
       uptime_seconds: Math.floor((Date.now() - _startTime) / 1000),
       library_coverage: stats.libraryCoverage || 0,
       content_mode: stats.contentMode || 'cdn',
-      app_version: '1.0.0',
+      app_version: _appVersion || '0.0.0',
       node_type: stats.nodeType || 'user',
       lat: geo.lat,
       lon: geo.lon,

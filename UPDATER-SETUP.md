@@ -39,9 +39,18 @@ The public key is not a secret — committing it is correct and required.
 
 ## 3. Every release: bump the version
 
-The updater compares against `"version"` in `src-tauri/tauri.conf.json`
-(currently `1.1.0`). **Bump it for every release** (keep `package.json` in
-sync for sanity). Clients only install versions greater than their own.
+Bump the version in **all three** places so they stay in sync (the app shows it
+beside "Node Software" and reports it in heartbeats):
+
+- `src-tauri/tauri.conf.json` → `"version"` (what the updater compares against)
+- `src-tauri/Cargo.toml` → `version` (what the running app reports via
+  `get_app_version`)
+- `package.json` → `"version"`
+
+Current value: **`0.0.321`** (shows as `v0.0.321`). Bump the last number each
+push (e.g. `0.0.322`). Versions **must be valid semver `x.y.z`** — the updater
+only offers a build whose version is greater than the client's, so the numbers
+must increase monotonically.
 
 ## 4. Every release: build with the signing key in the environment
 
@@ -65,9 +74,10 @@ Apple Silicon example) under `src-tauri/target/release/bundle/macos/`:
 
 ```json
 {
-  "version": "1.1.0",
+  "version": "0.0.322",
+  "mode": "prompt",
   "notes": "What changed in this release.",
-  "pub_date": "2026-07-07T12:00:00Z",
+  "pub_date": "2026-07-09T12:00:00Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "<paste the full CONTENTS of the .app.tar.gz.sig file>",
@@ -78,9 +88,19 @@ Apple Silicon example) under `src-tauri/target/release/bundle/macos/`:
 ```
 
 - `version` must exactly match the tauri.conf.json version you built.
+- **`mode` picks how this update reaches users — set it per push:**
+  - `"prompt"` (default) — a small "Update now" card appears bottom-left; one
+    click downloads, installs, and **relaunches in place** (no reinstall, and
+    `~/.sermonindex` data is kept). Users see and control the change.
+  - `"silent"` — the update installs in the background and applies on the user's
+    **next launch**, with no interaction. Use this for pushing a fix to everyone
+    without prompting.
+  - The Tauri updater ignores this extra field; the app reads it separately, so
+    it's safe to include. If omitted, the app defaults to `"prompt"`.
 - `signature` is the **contents** of the `.sig` file, not a path/URL.
-- Add more platform keys later as you ship them: `darwin-x86_64`,
-  `windows-x86_64`, `linux-x86_64`.
+- `notes` is shown in the prompt card — keep it short.
+- Add more platform keys as you ship them: `darwin-x86_64`, `windows-x86_64`,
+  `linux-x86_64`.
 
 ## 6. Every release: upload to the Bunny storage zone `/app/` folder
 
@@ -93,17 +113,32 @@ Upload into the storage zone behind `sermonindex1.b-cdn.net`:
 Then **purge the CDN cache** for `/app/latest.json` (and the tarball) in the
 Bunny dashboard — otherwise clients keep seeing the cached old version.
 
-## 7. Verify
+## 7. Verify (test a real push)
 
-Run the previous version of the app with the console/log open: on startup it
-logs `[Updater] Update available: vX.Y.Z — downloading...`, installs, and the
-banner shows "Update installed — takes effect next launch." Relaunch → new
-version.
+1. Build and install version **N** (e.g. `0.0.321`) — this is the "old" client.
+2. Bump to **N+1** (`0.0.322`) in the three version files, build, and upload the
+   new artifact + `latest.json` (with your chosen `mode`); purge the CDN cache.
+3. Launch the **old** app with the log open. On startup it logs
+   `[Updater] Update available: v0.0.322 (mode=…)`.
+   - **`mode: "prompt"`** → a card appears bottom-left ("Update available —
+     v0.0.322"). Click **Update now** → it downloads, installs, and relaunches;
+     the sidebar then reads `v0.0.322`. Confirm your downloads/settings survived.
+   - **`mode: "silent"`** → no prompt; the banner notes it'll apply next launch.
+     Quit and relaunch → sidebar reads `v0.0.322`.
+
+Tip: to test without publishing to real users, point the updater `endpoints` at a
+staging `latest.json` first.
 
 ## Notes
 
-- Updates install on next launch by design; the app never restarts itself
-  mid-session (users may be seeding).
+- **Two delivery modes, backend-controlled** via the `mode` field in
+  `latest.json` — no client change needed to switch between them.
+- `prompt` relaunches in place on click; `silent` applies on next launch. Neither
+  requires a reinstall, and neither touches user data in `~/.sermonindex`.
+- The app never force-restarts mid-session in silent mode (users may be seeding).
+- The version now also shows beside "Node Software" in the sidebar and is sent in
+  heartbeats, both sourced from the real `get_app_version` — so bumping the three
+  version files is all that's needed.
 - Dev builds (`npm run tauri dev`) never check for updates.
-- A build made with the placeholder pubkey still works fine — the update
-  check just no-ops until steps 1–2 are done.
+- A build made with the placeholder pubkey still works fine — the update check
+  just no-ops until steps 1–2 are done.

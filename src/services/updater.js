@@ -2,20 +2,46 @@
  * SermonIndex Auto-Updater Service
  *
  * Checks the CDN endpoint (configured in src-tauri/tauri.conf.json under
- * plugins.updater) for a signed release, downloads and installs it, then
- * announces via the 'si-update-ready' window event. The installed update
- * takes effect on the NEXT launch — we never restart underneath the user
- * (they may be seeding torrents or mid-download).
+ * plugins.updater) for a signed release. Supports TWO delivery modes, chosen by
+ * a `mode` field you set in latest.json — so you control per-push whether an
+ * update installs silently or prompts the user:
+ *
+ *   "mode": "silent"  → download + install in the background; applies on the
+ *                       NEXT launch (we never yank the app out from under a user
+ *                       who may be seeding or mid-download). Fires
+ *                       'si-update-ready'.
+ *   "mode": "prompt"  → (default) do nothing automatically; fire
+ *                       'si-update-available' with an install() callback. The
+ *                       UI shows a one-click prompt; clicking it downloads,
+ *                       installs, and relaunches immediately (no reinstall).
+ *
+ * The Tauri updater ignores unknown fields in latest.json, so `mode` lives right
+ * alongside the standard version/notes/platforms — one file, backend-controlled.
  *
  * Fail-safe by design: this function NEVER throws.
- *   - In dev builds it does nothing (import.meta.env.DEV).
- *   - While the pubkey placeholder in tauri.conf.json hasn't been replaced
- *     with a real `tauri signer` public key, the plugin errors out and we
- *     swallow it — the app just keeps running the current version.
- *   - Offline / endpoint missing / bad signature: same, silently skipped.
+ *   - Dev builds do nothing (import.meta.env.DEV).
+ *   - Missing/placeholder pubkey, offline, latest.json not uploaded, bad
+ *     signature: all swallowed — the app keeps running the current version.
  *
- * See UPDATER-SETUP.md at the repo root for the release/signing workflow.
+ * See UPDATER-SETUP.md for the release/signing workflow.
  */
+
+const UPDATE_MANIFEST = 'https://sermonindex1.b-cdn.net/app/latest.json';
+
+/**
+ * Read the delivery mode from latest.json ('silent' | 'prompt'). Fetched
+ * natively (fetch_text) to bypass CDN CORS. Defaults to 'prompt' on any failure.
+ */
+async function getUpdateMode() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const txt = await invoke('fetch_text', { url: UPDATE_MANIFEST });
+    const json = JSON.parse(txt);
+    return json && json.mode === 'silent' ? 'silent' : 'prompt';
+  } catch {
+    return 'prompt';
+  }
+}
 
 export async function checkForUpdates() {
   try {
@@ -29,13 +55,43 @@ export async function checkForUpdates() {
       return;
     }
 
-    console.log(`[Updater] Update available: v${update.version} — downloading...`);
-    await update.downloadAndInstall();
-    console.log('[Updater] Update installed — takes effect next launch');
+    const mode = await getUpdateMode();
+    console.log(`[Updater] Update available: v${update.version} (mode=${mode})`);
 
+    if (mode === 'silent') {
+      // Install now, apply on next launch — non-disruptive.
+      await update.downloadAndInstall();
+      console.log('[Updater] Installed silently — applies next launch');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('si-update-ready', {
+          detail: { version: update.version, mode },
+        }));
+      }
+      return;
+    }
+
+    // mode === 'prompt' — hand the UI an installer it can trigger on click.
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('si-update-ready', {
-        detail: { version: update.version },
+      window.dispatchEvent(new CustomEvent('si-update-available', {
+        detail: {
+          version: update.version,
+          notes: (update.body || '').trim(),
+          install: async () => {
+            // Download + install, then relaunch immediately — seamless, no
+            // reinstall, user data in ~/.sermonindex is untouched.
+            await update.downloadAndInstall();
+            try {
+              const { relaunch } = await import('@tauri-apps/plugin-process');
+              await relaunch();
+            } catch (e) {
+              // If relaunch is unavailable, it's still installed for next launch.
+              console.warn('[Updater] relaunch failed, will apply next launch:', e?.message || e);
+              window.dispatchEvent(new CustomEvent('si-update-ready', {
+                detail: { version: update.version },
+              }));
+            }
+          },
+        },
       }));
     }
   } catch (e) {

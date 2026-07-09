@@ -4,6 +4,7 @@ import TopBar from './components/TopBar';
 import PlayerBar from './components/PlayerBar';
 import DonateBanner from './components/DonateBanner';
 import ImageContextMenu from './components/ImageContextMenu';
+import UpdatePrompt from './components/UpdatePrompt';
 import LibraryPage from './pages/LibraryPage';
 import DownloadsPage from './pages/DownloadsPage';
 import BulkDownloadPage from './pages/BulkDownloadPage';
@@ -97,6 +98,7 @@ export default function App() {
   const [announcement, setAnnouncement] = useState('');       // server-pushed banner message
   const [availablePacks, setAvailablePacks] = useState([]);   // content packs from server
   const [settingsTab, setSettingsTab] = useState(null);       // which settings sub-tab to open
+  const [appVersion, setAppVersion] = useState('');           // shown beside "Node Software"
   const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
   const [unreadChat, setUnreadChat] = useState(0);             // unread community messages (sidebar badge)
   const [nodesOnline, setNodesOnline] = useState(null);        // live nodes online (sidebar count beside Node Map)
@@ -230,6 +232,16 @@ export default function App() {
       // Check for app updates (fire-and-forget — never throws, no-op in dev
       // or while the updater pubkey placeholder hasn't been replaced yet)
       checkForUpdates();
+
+      // App version shown beside the sidebar title (dynamic — from the Rust
+      // CARGO_PKG_VERSION, so it's always the real running version).
+      try {
+        const tauriMod = await import('@tauri-apps/api/core').catch(() => null);
+        if (tauriMod) {
+          const v = await tauriMod.invoke('get_app_version').catch(() => null);
+          if (v) setAppVersion(v);
+        }
+      } catch { /* non-critical */ }
     }
     init().catch(e => console.error('[App] init crashed:', e));
 
@@ -991,6 +1003,7 @@ export default function App() {
         chatShow={chatShow}
         nodesOnline={nodesOnline}
         seedsOnline={seedsOnline}
+        version={appVersion}
       />
       <div className="main-content">
         <TopBar contentMode={contentMode} announcement={announcement} onNavigate={navigateTo} networkHealth={networkHealth} />
@@ -1001,6 +1014,7 @@ export default function App() {
         </div>
         <DonateBanner />
         <ImageContextMenu />
+        <UpdatePrompt />
         {currentSermon && (
           <PlayerBar
             sermon={currentSermon}

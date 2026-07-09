@@ -50,7 +50,7 @@ const icons = {
   ),
 };
 
-export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement, unreadChat = 0, chatShow = true, nodesOnline = null, seedsOnline = null }) {
+export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement, unreadChat = 0, chatShow = true, nodesOnline = null, seedsOnline = null, version = '' }) {
   const coverage = libraryStats ? libraryStats.coverage : 0;
 
   return (
@@ -60,7 +60,10 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
           {/* Official site wordmark — white PNG on the olive sidebar matches the site header */}
           <img src={logo} alt="SermonIndex" style={{ height: 34 }} />
         </div>
-        <div className="subtitle">Node Software</div>
+        <div className="subtitle">
+          Node Software
+          {version && <span className="app-version">v{version}</span>}
+        </div>
       </div>
 
       <div className="sidebar-nav">
