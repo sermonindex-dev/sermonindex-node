@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import PlayerBar from './components/PlayerBar';
 import DonateBanner from './components/DonateBanner';
+import ImageContextMenu from './components/ImageContextMenu';
 import LibraryPage from './pages/LibraryPage';
 import DownloadsPage from './pages/DownloadsPage';
 import BulkDownloadPage from './pages/BulkDownloadPage';
@@ -999,6 +1000,7 @@ export default function App() {
           </ErrorBoundary>
         </div>
         <DonateBanner />
+        <ImageContextMenu />
         {currentSermon && (
           <PlayerBar
             sermon={currentSermon}

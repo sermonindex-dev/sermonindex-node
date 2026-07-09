@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useCallback } from 'react';
 import { speakerImageCandidates } from '../services/catalog.js';
 import defaultSpeaker from '../assets/default-speaker.svg';
 
@@ -8,56 +8,87 @@ export function getInitials(name) {
 }
 
 /**
- * Speaker portrait with cascading fallbacks.
- * Tries: catalog URL → compact site slug → hyphenated site slug → bundled
- * local placeholder → initials. Handles the site's mixed image-naming
- * conventions. The final fallback is a LOCAL asset (no network request), so
- * the ~420 portrait-less speakers no longer flicker fetching a remote default.
+ * Inline silhouette placeholder — rendered as SVG MARKUP (not an <img src>), so
+ * it appears instantly with zero network and can NEVER show a broken-image icon.
+ * Same art as assets/default-speaker.svg.
+ */
+function DefaultSilhouette() {
+  return (
+    <svg
+      viewBox="0 0 120 120"
+      width="100%"
+      height="100%"
+      preserveAspectRatio="xMidYMid slice"
+      style={{ display: 'block' }}
+      aria-hidden="true"
+    >
+      <rect width="120" height="120" fill="#707035" />
+      <g fill="#F8F8F2">
+        <circle cx="60" cy="46" r="20" />
+        <path d="M60 72c-19.9 0-36 13.4-36 30 0 1.1.9 2 2 2h68c1.1 0 2-.9 2-2 0-16.6-16.1-30-36-30z" />
+      </g>
+    </svg>
+  );
+}
+
+/**
+ * Speaker portrait.
+ *
+ * The silhouette above is always present as the base layer, so there is never a
+ * broken-image flash. A real portrait is layered on top at opacity 0 and only
+ * revealed (opacity 1) once it has actually loaded — while it cycles through the
+ * candidate URLs (local bundled copy first, then CDN), it stays invisible, so a
+ * failing/404 candidate never shows the browser's broken-image icon. If every
+ * candidate fails, the portrait <img> hides itself and the silhouette shows.
+ *
+ * Right-click opens our own tiny menu (just "Download image") instead of the
+ * native macOS WebView menu — dispatched to the single app-level ImageContextMenu.
  */
 export default function SpeakerAvatar({ speaker, image, className = 'sermon-speaker-avatar' }) {
   const candidates = speakerImageCandidates(speaker, image);
-  // No remote candidates → render the bundled placeholder directly (no network).
-  // Initials remain the very last resort if even the local asset fails to load.
-  if (candidates.length === 0) {
-    return (
-      <div className={className}>
+  const loadedSrcRef = useRef(null);
+
+  const onContextMenu = useCallback((e) => {
+    e.preventDefault(); // suppress the native "Open/Copy Image/Copy Subject" menu
+    window.dispatchEvent(new CustomEvent('si-image-menu', {
+      detail: {
+        x: e.clientX,
+        y: e.clientY,
+        src: loadedSrcRef.current || defaultSpeaker,
+        name: speaker || 'speaker',
+      },
+    }));
+  }, [speaker]);
+
+  return (
+    <div className={className} style={{ position: 'relative', overflow: 'hidden' }} onContextMenu={onContextMenu}>
+      <DefaultSilhouette />
+      {candidates.length > 0 && (
         <img
-          src={defaultSpeaker}
-          alt={speaker}
+          src={candidates[0]}
+          alt=""
           loading="lazy"
+          draggable={false}
+          data-i="0"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0, transition: 'opacity 0.25s ease' }}
+          onLoad={(e) => {
+            loadedSrcRef.current = e.currentTarget.currentSrc || e.currentTarget.src;
+            e.currentTarget.style.opacity = 1;
+          }}
           onError={(e) => {
-            e.target.style.display = 'none';
-            e.target.parentNode.textContent = getInitials(speaker);
+            const el = e.currentTarget;
+            const i = Number(el.dataset.i) + 1;
+            if (i < candidates.length) {
+              el.dataset.i = String(i);
+              el.src = candidates[i];
+            } else {
+              // All candidates exhausted — hide the (invisible) img; the inline
+              // silhouette base shows through. No broken icon, ever.
+              el.style.display = 'none';
+            }
           }}
         />
-      </div>
-    );
-  }
-  return (
-    <div className={className}>
-      <img
-        src={candidates[0]}
-        alt={speaker}
-        loading="lazy"
-        data-i="0"
-        onError={(e) => {
-          const i = Number(e.target.dataset.i) + 1;
-          if (i < candidates.length) {
-            e.target.dataset.i = String(i);
-            e.target.src = candidates[i];
-          } else if (e.target.src !== defaultSpeaker && !e.target.dataset.local) {
-            // All remote candidates exhausted — fall back to the bundled local
-            // placeholder (one final swap; onError won't loop because the next
-            // failure is gated by data-local).
-            e.target.dataset.local = '1';
-            e.target.src = defaultSpeaker;
-          } else {
-            // Even the local asset failed — initials as the very last resort.
-            e.target.style.display = 'none';
-            e.target.parentNode.textContent = getInitials(speaker);
-          }
-        }}
-      />
+      )}
     </div>
   );
 }
