@@ -19,9 +19,8 @@
  *   DB_URL      BunnyDB libSQL pipeline endpoint
  *   DB_TOKEN    BunnyDB libSQL bearer token
  *
- * There is NO IPFS / CID / gateway / bridge code — the network runs on
- * BitTorrent and the app reports `seeded_torrents` (info hashes), which this
- * script records as shared sermons.
+ * The network runs entirely on BitTorrent: the app reports `seeded_torrents`
+ * (info hashes), which this script records as shared sermons.
  */
 
 import * as BunnySDK from "https://esm.sh/@bunny.net/edgescript-sdk@0.11.2";
@@ -35,12 +34,15 @@ const env = (k: string, d = ""): string =>
   d;
 
 const ADMIN_KEY = env("ADMIN_KEY"); // single admin login password
-const DB_TOKEN = env("DB_TOKEN");   // BunnyDB libSQL bearer token
 
-// The edge script talks to BunnyDB over HTTP (fetch), so DB_URL must be the
-// HTTPS pipeline endpoint — https://<host>/v2/pipeline. BunnyDB's dashboard
-// usually shows the connection string as libsql://<host>, which fetch() can't
-// use ("Url scheme 'libsql' not supported"). Normalize whatever form is given.
+// When a BunnyDB is linked to an Edge Script, Bunny auto-injects these env vars.
+// Prefer them; fall back to DB_TOKEN/DB_URL if you set names manually.
+const DB_TOKEN = env("BUNNY_DATABASE_AUTH_TOKEN") || env("DB_TOKEN");
+
+// The edge script talks to BunnyDB over HTTP (fetch), so the URL must be the
+// HTTPS pipeline endpoint — https://<host>/v2/pipeline. Bunny provides the
+// connection string as libsql://<host>, which fetch() can't use ("Url scheme
+// 'libsql' not supported"). Normalize whatever form is given.
 function normalizeDbUrl(raw: string): string {
   let u = (raw || "").trim();
   if (!u) return u;
@@ -50,7 +52,7 @@ function normalizeDbUrl(raw: string): string {
   if (!/\/v2\/pipeline\/?$/.test(u)) u = u.replace(/\/+$/, "") + "/v2/pipeline";
   return u;
 }
-const DB_URL = normalizeDbUrl(env("DB_URL")); // accepts libsql:// or https:// form
+const DB_URL = normalizeDbUrl(env("BUNNY_DATABASE_URL") || env("DB_URL"));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // libSQL data layer (BunnyDB HTTP pipeline)
@@ -126,7 +128,7 @@ async function dbBatch(statements: { sql: string; args?: any[] }[]): Promise<any
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Schema (lean — no legacy ipfs_* tables). Guarded so it runs once per worker.
+// Schema (lean, BitTorrent-only). Guarded so it runs once per worker.
 // ─────────────────────────────────────────────────────────────────────────────
 let _tablesCreated = false;
 
@@ -136,6 +138,12 @@ async function ensureTables(): Promise<void> {
   const now = new Date().toISOString();
 
   await dbBatch([
+    // Drop legacy peer-pin tables from the old (pre-BitTorrent) schema so they
+    // don't linger in the database. Safe/idempotent — IF EXISTS.
+    { sql: `DROP TABLE IF EXISTS ipfs_pins` },
+    { sql: `DROP TABLE IF EXISTS ipfs_bridge` },
+    { sql: `DROP TABLE IF EXISTS node_diagnostics` },
+
     // Nodes — one row per participating node, updated on every heartbeat.
     {
       sql: `CREATE TABLE IF NOT EXISTS nodes (
@@ -578,8 +586,8 @@ async function handleHeartbeat(req: Request): Promise<Response> {
     [nodeId, lat, lon, city, country, filesStored, storageBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, ts, ts],
   );
 
-  // Record shared sermons from body.seeded_torrents (the app renamed this from
-  // the old "ipfs_pins"). Full-sync: wipe this node's rows, then re-insert.
+  // Record shared sermons from body.seeded_torrents.
+  // Full-sync: wipe this node's rows, then re-insert the current set.
   const seeded = body.seeded_torrents && typeof body.seeded_torrents === "object" ? body.seeded_torrents : {};
   const sermonStmts: { sql: string; args?: any[] }[] = [
     { sql: `DELETE FROM shared_sermons WHERE node_id = ?`, args: [nodeId] },
