@@ -432,21 +432,38 @@ async function isLoggedIn(req: Request): Promise<boolean> {
 // ─────────────────────────────────────────────────────────────────────────────
 const THEME_CSS = `
 :root{
-  --bg:#F8F8F2; --card:#fff; --tertiary:#F1F1E8; --border:#DEE2E6;
+  color-scheme:light;
+  --bg:#F8F8F2; --card:#ffffff; --tertiary:#F1F1E8; --hover:#EDEDE0; --border:#DEE2E6;
   --text:#242424; --text2:#555; --muted:#888;
-  --gold:#D4AF37; --gold-text:#967d1f; --olive:#707035; --olive-text:#F8F8F2;
-  --green:#3d8a41; --red:#e74c3c; --radius:8px;
+  --gold:#D4AF37; --gold-text:#967d1f; --olive:#707035;
+  --topbar:#707035; --topbar-text:#F8F8F2;
+  --green:#3d8a41; --red:#e74c3c; --orange:#b85c00; --blue:#2d6cb5; --radius:8px;
+}
+html[data-theme='dark']{
+  color-scheme:dark;
+  --bg:#1a1a1a; --card:#1e1e1e; --tertiary:#262620; --hover:#30302a; --border:#3a3a3a;
+  --text:#e4e4da; --text2:#bbb; --muted:#888;
+  --gold:#d4af37; --gold-text:#d4af37; --olive:#908F51;
+  --topbar:#2c2c14; --topbar-text:#e4e4da;
+  --green:#4caf50; --red:#e74c3c; --orange:#e67e22; --blue:#6ea8fe;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:Verdana,Geneva,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;}
 a{color:var(--gold-text);text-decoration:none;}
 a:hover{text-decoration:underline;}
-.topbar{background:var(--olive);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+.topbar{background:var(--topbar);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
 .topbar img{height:26px;display:block;}
+.topbar-right{display:flex;gap:16px;align-items:center;}
 .nav{display:flex;gap:20px;align-items:center;}
-.nav a{color:var(--olive-text);font-size:0.82rem;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85;}
+.nav a{color:var(--topbar-text);font-size:0.82rem;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85;}
 .nav a:hover{opacity:1;text-decoration:none;}
 .nav a.active{color:var(--gold);font-weight:700;opacity:1;}
+.theme-toggle{background:transparent;border:1px solid rgba(248,248,242,0.4);color:var(--topbar-text);width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0;}
+.theme-toggle:hover{border-color:var(--gold);color:var(--gold);}
+.theme-toggle svg{display:block;}
+.theme-toggle .icon-sun{display:none;}
+html[data-theme='dark'] .theme-toggle .icon-moon{display:none;}
+html[data-theme='dark'] .theme-toggle .icon-sun{display:block;}
 .main{max-width:1180px;margin:0 auto;padding:24px;}
 h1{font-size:1.3rem;color:var(--gold-text);margin-bottom:4px;}
 h2{color:var(--gold-text);font-size:1.02rem;margin:28px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
@@ -460,16 +477,16 @@ p.sub{color:var(--text2);font-size:0.82rem;margin-bottom:8px;}
 table{border-collapse:collapse;width:100%;}
 th{text-align:left;font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;padding:8px 10px;border-bottom:2px solid var(--border);}
 td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:0.82rem;vertical-align:middle;}
-tr:hover td{background:var(--tertiary);}
+tr:hover td{background:var(--hover);}
 code,.mono{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:0.78em;background:var(--tertiary);padding:2px 6px;border-radius:4px;color:var(--gold-text);}
-.btn{background:var(--gold);color:var(--text);border:none;padding:9px 16px;border-radius:var(--radius);cursor:pointer;font-weight:700;font-size:0.8rem;font-family:inherit;}
+.btn{background:var(--gold);color:#242424;border:none;padding:9px 16px;border-radius:var(--radius);cursor:pointer;font-weight:700;font-size:0.8rem;font-family:inherit;}
 .btn:hover{box-shadow:0 2px 8px rgba(212,175,55,0.35);}
 .btn.green{background:var(--green);color:#fff;}
 .btn.red{background:var(--red);color:#fff;}
 .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text2);font-weight:600;}
 .btn.ghost:hover{border-color:var(--gold);color:var(--gold-text);box-shadow:none;}
 .btn.sm{padding:5px 11px;font-size:0.74rem;}
-input,textarea,select{background:#fff;color:var(--text);border:1px solid var(--border);padding:8px 11px;border-radius:var(--radius);font-size:0.82rem;font-family:inherit;width:100%;}
+input,textarea,select{background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px 11px;border-radius:var(--radius);font-size:0.82rem;font-family:inherit;width:100%;}
 input:focus,textarea:focus,select:focus{border-color:var(--gold);outline:none;}
 label{display:block;font-size:0.74rem;color:var(--text2);margin-bottom:4px;font-weight:600;}
 .field{margin-bottom:12px;}
@@ -479,7 +496,7 @@ label{display:block;font-size:0.74rem;color:var(--text2);margin-bottom:4px;font-
 .b-seed{background:rgba(212,175,55,0.2);color:var(--gold-text);}
 .b-user{background:rgba(112,112,53,0.15);color:var(--olive);}
 .b-node{background:rgba(61,138,65,0.15);color:var(--green);}
-.b-peer{background:rgba(184,92,0,0.15);color:#b85c00;}
+.b-peer{background:rgba(184,92,0,0.15);color:var(--orange);}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .chart-wrap{position:relative;height:300px;}
@@ -490,6 +507,22 @@ label{display:block;font-size:0.74rem;color:var(--text2);margin-bottom:4px;font-
 @media(max-width:720px){.grid2{grid-template-columns:1fr;}}
 `;
 
+// Inline snippet placed in every page's <head> so a saved dark preference is
+// applied before the body paints (avoids a flash of light). Uses the SAME
+// localStorage key ('si-theme') as the desktop app.
+const THEME_RESTORE_SCRIPT = `<script>try{if(localStorage.getItem('si-theme')==='dark')document.documentElement.dataset.theme='dark';}catch(e){}</script>`;
+
+// The moon (light-mode) + sun (dark-mode) glyphs, matching the desktop app's
+// TopBar exactly. CSS toggles which one is visible via html[data-theme].
+const THEME_TOGGLE_BUTTON = `<button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle light/dark theme" title="Toggle light/dark theme">
+<svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+<svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+</button>`;
+
+// Client-side toggle: flips the data-theme attribute between '' and 'dark' and
+// persists to localStorage under the shared 'si-theme' key.
+const THEME_TOGGLE_SCRIPT = `<script>function toggleTheme(){var d=document.documentElement,next=d.dataset.theme==='dark'?'':'dark';d.dataset.theme=next;try{localStorage.setItem('si-theme',next||'light');}catch(e){}}</script>`;
+
 /** Build the shared page shell with themed topbar + nav. */
 function page(title: string, active: string, bodyHtml: string, extraHead = ""): string {
   const link = (href: string, label: string, key: string) =>
@@ -497,19 +530,24 @@ function page(title: string, active: string, bodyHtml: string, extraHead = ""): 
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} — SermonIndex Admin</title>
+${THEME_RESTORE_SCRIPT}
 <style>${THEME_CSS}</style>${extraHead}
 </head><body>
 <div class="topbar">
   <img src="https://www.sermonindex.net/images/sermon-index-white.png" alt="SermonIndex">
-  <div class="nav">
-    ${link("/admin", "Overview", "overview")}
-    ${link("/admin/graph", "Graph", "graph")}
-    ${link("/admin/nodes", "Nodes", "nodes")}
-    ${link("/admin/config", "Config", "config")}
-    ${link("/logout", "Sign Out", "logout")}
+  <div class="topbar-right">
+    <div class="nav">
+      ${link("/admin", "Overview", "overview")}
+      ${link("/admin/graph", "Graph", "graph")}
+      ${link("/admin/nodes", "Nodes", "nodes")}
+      ${link("/admin/config", "Config", "config")}
+      ${link("/logout", "Sign Out", "logout")}
+    </div>
+    ${THEME_TOGGLE_BUTTON}
   </div>
 </div>
 <div class="main">${bodyHtml}</div>
+${THEME_TOGGLE_SCRIPT}
 </body></html>`;
 }
 
@@ -921,15 +959,18 @@ function loginPage(error = ""): Response {
     : "";
   const html = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign In — SermonIndex Admin</title><style>${THEME_CSS}
+<title>Sign In — SermonIndex Admin</title>
+${THEME_RESTORE_SCRIPT}
+<style>${THEME_CSS}
 .login-wrap{max-width:380px;margin:8vh auto;padding:24px;}
-.brand{background:var(--olive);border-radius:var(--radius);padding:18px;text-align:center;margin-bottom:18px;}
+.brand{background:var(--topbar);border-radius:var(--radius);padding:18px;display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:18px;}
 .brand img{height:30px;}
+.brand .theme-toggle{position:absolute;right:12px;top:50%;transform:translateY(-50%);}
 .remember{display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--text2);margin:6px 0 16px;}
 .remember input{width:auto;}
 </style></head><body>
 <div class="login-wrap">
-  <div class="brand"><img src="https://www.sermonindex.net/images/sermon-index-white.png" alt="SermonIndex"></div>
+  <div class="brand"><img src="https://www.sermonindex.net/images/sermon-index-white.png" alt="SermonIndex">${THEME_TOGGLE_BUTTON}</div>
   <div class="card">
     <h3 style="color:var(--gold-text);">Node Software Admin</h3>
     ${err}
@@ -945,7 +986,9 @@ function loginPage(error = ""): Response {
       <button class="btn" type="submit" style="width:100%;">Sign In</button>
     </form>
   </div>
-</div></body></html>`;
+</div>
+${THEME_TOGGLE_SCRIPT}
+</body></html>`;
   return htmlResponse(html);
 }
 
@@ -1059,7 +1102,7 @@ function configEditor(rows: any[], compact = false): string {
 async function pageOverview(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
-  const [stat, ever, sermons, snaps, cfg, packs] = await Promise.all([
+  const [stat, ever, sermons, snaps, packs] = await Promise.all([
     dbQuery(
       `SELECT COUNT(*) online,
               SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
@@ -1077,7 +1120,6 @@ async function pageOverview(): Promise<Response> {
       [online],
     ),
     loadSnapshots(200),
-    dbQuery(`SELECT key, value, description FROM config ORDER BY key`),
     dbQuery(`SELECT id, name, description, pack_type, cdn_url, is_active FROM content_packs ORDER BY name`),
   ]);
 
@@ -1086,9 +1128,9 @@ async function pageOverview(): Promise<Response> {
   // (green), Peer = port closed/unknown (orange).
   const cards =
     statCard(toInt(s.online, 0), "Online Now") +
-    statCardColor(toInt(s.seeds, 0), "Seed Nodes", "#967d1f") +
-    statCardColor(toInt(s.openNodes, 0), "Nodes · port open", "#3d8a41") +
-    statCardColor(toInt(s.peers, 0), "Peers · port closed", "#b85c00") +
+    statCardColor(toInt(s.seeds, 0), "Seed Nodes", "var(--gold-text)") +
+    statCardColor(toInt(s.openNodes, 0), "Nodes · port open", "var(--green)") +
+    statCardColor(toInt(s.peers, 0), "Peers · port closed", "var(--orange)") +
     statCard(toInt(s.countries, 0), "Countries") +
     statCard(toInt(ever.rows[0]?.ever, 0), "All-Time Nodes") +
     statCard(toInt(sermons.rows[0]?.c, 0), "Sermons Shared");
@@ -1128,25 +1170,9 @@ async function pageOverview(): Promise<Response> {
       </form>
     </div>`;
 
-  // Source mode quick control.
-  const sourceMode = (cfg.rows.find((r: any) => r.key === "source_mode") || {}).value || "cdn";
-  const modeSection = `
-    <h2>Content Source Mode</h2>
-    <div class="card">
-      <p class="sub">How nodes fetch sermon content. Delivered to every node on the next heartbeat.</p>
-      <form method="POST" action="/admin/config" class="row" style="align-items:flex-end;">
-        <input type="hidden" name="key" value="source_mode">
-        <div style="min-width:220px;">
-          <label>source_mode</label>
-          <select name="value">
-            <option value="cdn"${sourceMode === "cdn" ? " selected" : ""}>cdn</option>
-            <option value="p2p"${sourceMode === "p2p" ? " selected" : ""}>p2p</option>
-            <option value="hybrid"${sourceMode === "hybrid" ? " selected" : ""}>hybrid</option>
-          </select>
-        </div>
-        <button class="btn sm" type="submit">Save</button>
-      </form>
-    </div>`;
+  // NOTE: The remote-config key/value editor and the content-source-mode toggle
+  // used to live here too, but they duplicated the dedicated /admin/config page,
+  // so they were removed from the Overview. Manage all settings on Config.
 
   const body = `
     <h1>Overview</h1>
@@ -1159,11 +1185,6 @@ async function pageOverview(): Promise<Response> {
       <div class="chart-wrap"><canvas id="overviewChart"></canvas></div>
     </div>
 
-    ${modeSection}
-
-    <h2>Remote Config</h2>
-    ${configEditor(cfg.rows, true)}
-
     ${packSection}
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -1171,6 +1192,11 @@ async function pageOverview(): Promise<Response> {
       (function(){
         var d = ${chartData};
         if (!d.count) { document.getElementById('overviewChart').parentElement.innerHTML = '<div class="empty">No snapshots yet — data appears as nodes report in.</div>'; return; }
+        // Read theme-aware colours so text/grid stay legible in light AND dark.
+        var cs = getComputedStyle(document.documentElement);
+        var textColor = (cs.getPropertyValue('--text2') || '#555').trim();
+        var isDark = document.documentElement.dataset.theme === 'dark';
+        var gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
         var ctx = document.getElementById('overviewChart').getContext('2d');
         var gGold = ctx.createLinearGradient(0,0,0,300);
         gGold.addColorStop(0,'rgba(212,175,55,0.45)'); gGold.addColorStop(1,'rgba(212,175,55,0.02)');
@@ -1183,9 +1209,9 @@ async function pageOverview(): Promise<Response> {
             { label:'Sermons shared', data:d.sermonsShared, borderColor:'#707035', backgroundColor:gOlive, fill:true, tension:0.4, pointRadius:0, borderWidth:2 }
           ]},
           options:{ responsive:true, maintainAspectRatio:false,
-            plugins:{ legend:{ labels:{ color:'#555', font:{ family:'Verdana' } } } },
-            scales:{ x:{ ticks:{ color:'#888', maxTicksLimit:8 }, grid:{ display:false } },
-                     y:{ beginAtZero:true, ticks:{ color:'#888' }, grid:{ color:'#eee' } } } }
+            plugins:{ legend:{ labels:{ color:textColor, font:{ family:'Verdana' } } } },
+            scales:{ x:{ ticks:{ color:textColor, maxTicksLimit:8 }, grid:{ display:false } },
+                     y:{ beginAtZero:true, ticks:{ color:textColor }, grid:{ color:gridColor } } } }
         });
       })();
     </script>`;
@@ -1236,6 +1262,11 @@ async function pageGraph(): Promise<Response> {
     <script>
       (function(){
         var d = ${chartData};
+        // Theme-aware tick/legend/grid colours (legible in light AND dark).
+        var cs = getComputedStyle(document.documentElement);
+        var textColor = (cs.getPropertyValue('--text2') || '#555').trim();
+        var isDark = document.documentElement.dataset.theme === 'dark';
+        var gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
         function grad(ctx, rgb){ var g=ctx.createLinearGradient(0,0,0,340);
           g.addColorStop(0, 'rgba('+rgb+',0.4)'); g.addColorStop(1, 'rgba('+rgb+',0.02)'); return g; }
         function mountain(id, label, data, line, rgb){
@@ -1245,9 +1276,9 @@ async function pageGraph(): Promise<Response> {
           new Chart(ctx,{ type:'line',
             data:{ labels:d.labels, datasets:[{ label:label, data:data, borderColor:line, backgroundColor:grad(ctx,rgb), fill:true, tension:0.4, pointRadius:0, borderWidth:2 }] },
             options:{ responsive:true, maintainAspectRatio:false,
-              plugins:{ legend:{ labels:{ color:'#555', font:{ family:'Verdana' } } } },
-              scales:{ x:{ ticks:{ color:'#888', maxTicksLimit:8 }, grid:{ display:false } },
-                       y:{ beginAtZero:true, ticks:{ color:'#888' }, grid:{ color:'#eee' } } } } });
+              plugins:{ legend:{ labels:{ color:textColor, font:{ family:'Verdana' } } } },
+              scales:{ x:{ ticks:{ color:textColor, maxTicksLimit:8 }, grid:{ display:false } },
+                       y:{ beginAtZero:true, ticks:{ color:textColor }, grid:{ color:gridColor } } } } });
         }
         mountain('c1','Nodes online', d.nodesOnline, '#707035', '112,112,53');
         mountain('c2','Sermons shared', d.sermonsShared, '#967d1f', '212,175,55');
