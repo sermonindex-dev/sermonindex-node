@@ -327,10 +327,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
             </button>
           ) : onExport ? (
             <button
-              className="btn-icon"
               onClick={() => onExport(sermon.id)}
               data-tooltip="Export to Desktop"
-              style={{ color: 'var(--text-muted)', width: 'auto', gap: '5px', padding: '0 10px', fontSize: '0.72rem', fontWeight: 600 }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 }}
             >
               {iconExport} Export
             </button>

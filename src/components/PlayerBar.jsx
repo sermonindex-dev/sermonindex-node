@@ -1,4 +1,5 @@
 import React, { useCallback, useRef } from 'react';
+import SpeakerAvatar from './SpeakerAvatar.jsx';
 
 function formatTime(seconds) {
   if (!seconds || isNaN(seconds)) return '0:00';
@@ -43,14 +44,17 @@ export default function PlayerBar({
 
   return (
     <div className="player-bar">
-      <div className="player-info">
-        <div className="player-title">
-          <span className={`player-type-icon ${isVideo ? 'video' : 'audio'}`}>
-            {isVideo ? iconFilm : iconHeadphones}
-          </span>
-          {sermon.title}
+      <div className="player-info" style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+        <SpeakerAvatar speaker={sermon.speaker} image={sermon.speakerImage} />
+        <div style={{ minWidth: 0 }}>
+          <div className="player-title">
+            <span className={`player-type-icon ${isVideo ? 'video' : 'audio'}`}>
+              {isVideo ? iconFilm : iconHeadphones}
+            </span>
+            {sermon.title}
+          </div>
+          <div className="player-speaker">{sermon.speaker}</div>
         </div>
-        <div className="player-speaker">{sermon.speaker}</div>
       </div>
 
       <div className="player-controls">

@@ -657,48 +657,49 @@ export default function App() {
       setVideoFullscreen(false);
       setVideoError(null);
 
-      // Play video directly — all CDN videos are now proper MP4 containers
-      if (videoRef.current) {
+      // The <video> element is only mounted when videoMini is true, so on the
+      // FIRST video play videoRef.current is still null right here (React hasn't
+      // re-rendered yet). Defer setup with requestAnimationFrame until the
+      // element actually exists — this is what was breaking video playback.
+      const setupVideo = (attempt = 0) => {
         const v = videoRef.current;
-        // Remove any stale source
+        if (!v) {
+          if (attempt < 40) requestAnimationFrame(() => setupVideo(attempt + 1));
+          else console.warn('[VideoPlayer] video element never mounted');
+          return;
+        }
+        // Remove any stale source, then hint MIME via a <source> (helps WKWebView)
         v.removeAttribute('src');
         v.load();
-
-        // Use <source> element for proper MIME type hinting (helps WKWebView)
-        // Clear any existing sources first
         while (v.firstChild) v.removeChild(v.firstChild);
         const source = document.createElement('source');
         source.src = streamUrl;
         source.type = 'video/mp4';
         v.appendChild(source);
         v.load();
-
         console.log(`[VideoPlayer] Set source: ${streamUrl.slice(0, 100)}`);
 
-        // Wait for video to be ready before playing (WKWebView needs this)
         const tryPlay = () => {
           v.play().catch((err) => {
             console.warn('[VideoPlayer] Autoplay blocked, trying muted:', err.message);
             v.muted = true;
             v.play().catch((err2) => {
               console.warn('[VideoPlayer] Muted autoplay also failed:', err2.message);
-              // Don't set error — user can click to play manually
             });
           });
         };
 
         if (v.readyState >= 3) {
-          // Already have enough data
           tryPlay();
         } else {
           v.addEventListener('canplay', tryPlay, { once: true });
-          // Timeout fallback — if canplay never fires in 5s, try anyway
           setTimeout(() => {
             if (v.readyState < 3 && !v.paused) return; // Already playing
             if (v.readyState >= 1) tryPlay();
           }, 5000);
         }
-      }
+      };
+      setupVideo();
     } else {
       // Audio — use <audio> element only
       setVideoMini(false);

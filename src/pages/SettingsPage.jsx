@@ -24,6 +24,28 @@ export default function SettingsPage({
 }) {
   const [nodeId, setNodeId] = useState('');
   const [modeStatus, setModeStatus] = useState(''); // 'saved', ''
+  const [copiedNodeId, setCopiedNodeId] = useState(false);
+
+  // navigator.clipboard often fails silently in the WKWebView; fall back to a
+  // temp-textarea + execCommand so Copy actually works, and give feedback.
+  async function copyNodeId() {
+    let ok = false;
+    try { await navigator.clipboard.writeText(nodeId); ok = true; } catch { /* fall through */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = nodeId;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        ok = true;
+      } catch { /* give up */ }
+    }
+    if (ok) { setCopiedNodeId(true); setTimeout(() => setCopiedNodeId(false), 1500); }
+  }
 
   // Show the persistent node ID (generated locally, survives restarts)
   useEffect(() => {
@@ -299,15 +321,15 @@ export default function SettingsPage({
                     {nodeId}
                   </code>
                   <button
-                    onClick={() => navigator.clipboard.writeText(nodeId).catch(() => {})}
+                    onClick={copyNodeId}
                     style={{
-                      fontSize: '0.7rem', color: 'var(--text-muted)', background: 'none',
-                      border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 10px',
-                      cursor: 'pointer', flexShrink: 0,
+                      fontSize: '0.7rem', color: copiedNodeId ? 'var(--green)' : 'var(--text-muted)', background: 'none',
+                      border: `1px solid ${copiedNodeId ? 'var(--green)' : 'var(--border)'}`, borderRadius: '4px', padding: '4px 10px',
+                      cursor: 'pointer', flexShrink: 0, minWidth: '58px',
                     }}
                     title="Copy Node ID"
                   >
-                    Copy
+                    {copiedNodeId ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
               </div>
