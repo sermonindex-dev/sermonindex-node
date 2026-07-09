@@ -54,14 +54,19 @@ export async function registerSeed(nodeId, port, scope) {
   }
 }
 
+// Seed-access + node tracking live in the si-app admin dashboard (the same
+// backend the app heartbeats to), so the admin can enable a node with a flip
+// switch and see it alongside live serving/location data.
+const DASHBOARD_API = 'https://app.sermonindex.net';
+
 /**
- * Is this node approved for Seed Node access? Checks the backend allowlist
- * (an admin enables a node by its id). Returns false on any error.
+ * Is this node approved for Seed Node access? Checks the dashboard allowlist
+ * (an admin flips the switch for a node id). Returns false on any error.
  */
 export async function checkSeedAccess(nodeId) {
-  if (!isConfigured() || !nodeId) return false;
+  if (!nodeId) return false;
   try {
-    const res = await fetch(`${NETWORK_API}/seed-access?node=${encodeURIComponent(nodeId)}`, {
+    const res = await fetch(`${DASHBOARD_API}/api/seed/access?node_id=${encodeURIComponent(nodeId)}`, {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return false;
@@ -74,15 +79,16 @@ export async function checkSeedAccess(nodeId) {
 
 /**
  * Submit a seed-access request with an email so the admin can enable this node.
+ * Shows up as a pending request on the dashboard's Nodes page.
  * Returns the server response ({ requested, enabled }) or null on failure.
  */
 export async function requestSeedAccess(nodeId, email) {
-  if (!isConfigured() || !nodeId) return null;
+  if (!nodeId) return null;
   try {
-    const res = await fetch(`${NETWORK_API}/seed-access`, {
+    const res = await fetch(`${DASHBOARD_API}/api/seed/request`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'request', node_id: nodeId, email: email || '' }),
+      body: JSON.stringify({ node_id: nodeId, email: email || '' }),
       signal: AbortSignal.timeout(10000),
     });
     const data = await res.json().catch(() => null);
