@@ -106,6 +106,35 @@ async function fetchWithRetry(url) {
   throw lastErr;
 }
 
+/**
+ * Last-resort recovery: fetch the speaker's PAGE (/speakers/<hyphen-slug>) and
+ * pull the real portrait URL out of the HTML. The site sometimes stores a
+ * numbered variant (e.g. deantaylor3.png) that no name-derived slug can predict,
+ * but the page always links the correct image. Save it to `dest` (the .png path
+ * the app looks for), so the bytes land where the app expects them.
+ */
+async function fetchFromSpeakerPage(name, dest) {
+  const hyphen = (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!hyphen) return false;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    const res = await fetch(`${SITE_BASE}/speakers/${hyphen}`, { signal: ctrl.signal, redirect: 'follow' });
+    clearTimeout(t);
+    if (!res.ok) return false;
+    const html = await res.text();
+    // First speaker portrait on the page (skips /images/og-image.png etc.).
+    const m = html.match(/\/images\/speakers\/[a-z0-9]\/[a-z0-9._-]+\.(?:png|jpg|jpeg)/i);
+    if (!m) return false;
+    const buf = await fetchWithRetry(`${SITE_BASE}${m[0]}`);
+    await mkdir(dirname(dest), { recursive: true });
+    await writeFile(dest, buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const raw = await readFile(CATALOG, 'utf8');
   const catalog = JSON.parse(raw);
@@ -166,9 +195,19 @@ async function main() {
           break;
         } catch { /* try next candidate */ }
       }
+      // Direct guesses all failed — pull the real URL from the speaker's page.
+      if (!ok) {
+        ok = await fetchFromSpeakerPage(e.name, e.candidates[0].dest);
+        if (ok) {
+          downloaded++;
+          if (downloaded % 50 === 0) {
+            process.stdout.write(`\r  downloaded ${downloaded}, skipped ${skipped}, failed ${failed}…   `);
+          }
+        }
+      }
       if (!ok) {
         failed++;
-        failures.push(`${e.name}  (tried: ${e.candidates.map((c) => c.url.split('/').pop()).join(', ')})`);
+        failures.push(`${e.name}  (no portrait found on site)`);
       }
     }
   }
