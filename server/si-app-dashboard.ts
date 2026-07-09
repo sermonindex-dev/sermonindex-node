@@ -6,8 +6,8 @@
  * Responsibilities:
  *   1. Node API — the endpoints the desktop app's heartbeat service calls
  *      (POST /api/node/heartbeat, /api/node/shutdown, /api/node/command-result;
- *       GET /api/node/map, /api/node/stats, /api/config, /api/content-packs,
- *       /api/geo; and the new /api/seed/access + /api/seed/request).
+ *       GET /api/node/map, /api/node/stats, /api/config, /api/geo;
+ *       and the new /api/seed/access + /api/seed/request).
  *      The response SHAPES here are the app-facing contract and must not change.
  *   2. Admin dashboard — a light, olive+gold themed web UI (Overview, Graph,
  *      Nodes, Config) protected by a single admin key.
@@ -143,6 +143,7 @@ async function ensureTables(): Promise<void> {
     { sql: `DROP TABLE IF EXISTS ipfs_pins` },
     { sql: `DROP TABLE IF EXISTS ipfs_bridge` },
     { sql: `DROP TABLE IF EXISTS node_diagnostics` },
+    { sql: `DROP TABLE IF EXISTS content_packs` },
     // Remove a stale leftover config row from the old IPFS build.
     { sql: `DELETE FROM config WHERE key = 'ipfs_enabled'` },
 
@@ -212,22 +213,6 @@ async function ensureTables(): Promise<void> {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         description TEXT DEFAULT ''
-      )`,
-    },
-    // Content packs — optional CDN bundles (images, transcripts, etc.).
-    {
-      sql: `CREATE TABLE IF NOT EXISTS content_packs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT DEFAULT '',
-        pack_type TEXT NOT NULL,
-        cdn_url TEXT NOT NULL,
-        file_count INTEGER DEFAULT 0,
-        total_size_bytes INTEGER DEFAULT 0,
-        version INTEGER DEFAULT 1,
-        is_active INTEGER DEFAULT 1,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
       )`,
     },
     // Audit trail of notable node events.
@@ -594,7 +579,7 @@ function timeAgo(iso: string | null): string {
 
 /**
  * POST /api/node/heartbeat
- * Upserts the node, records its shared sermons, returns config + packs + commands.
+ * Upserts the node, records its shared sermons, returns config + commands.
  */
 async function handleHeartbeat(req: Request): Promise<Response> {
   await ensureTables();
@@ -683,12 +668,8 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   maybeWriteSnapshot().catch(() => {});
 
   // Assemble the response the app expects.
-  const [configRows, packRows, cmdRows] = await Promise.all([
+  const [configRows, cmdRows] = await Promise.all([
     dbQuery(`SELECT key, value FROM config`),
-    dbQuery(
-      `SELECT id, name, description, pack_type, cdn_url, file_count, total_size_bytes, version, is_active, created_at, updated_at
-         FROM content_packs WHERE is_active = 1 ORDER BY name`,
-    ),
     dbQuery(
       `SELECT id, action, params FROM node_commands
         WHERE node_id = ? AND status = 'pending' ORDER BY created_at ASC`,
@@ -720,7 +701,6 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   return jsonResponse({
     ok: true,
     config,
-    content_packs: packRows.rows,
     commands,
   });
 }
@@ -877,14 +857,9 @@ async function handleConfig(): Promise<Response> {
   return jsonResponse({ config });
 }
 
-/** GET /api/content-packs → active packs. */
-async function handleContentPacks(): Promise<Response> {
-  await ensureTables();
-  const { rows } = await dbQuery(
-    `SELECT id, name, description, pack_type, cdn_url, file_count, total_size_bytes, version, is_active, created_at, updated_at
-       FROM content_packs WHERE is_active = 1 ORDER BY name`,
-  );
-  return jsonResponse({ packs: rows });
+/** GET /api/content-packs → static empty list (feature removed; kept to avoid a 404 for older app builds). */
+function handleContentPacks(): Response {
+  return jsonResponse({ packs: [] });
 }
 
 /** GET /api/geo → server-side IP geolocation. */
@@ -1102,7 +1077,7 @@ function configEditor(rows: any[], compact = false): string {
 async function pageOverview(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
-  const [stat, ever, sermons, snaps, packs] = await Promise.all([
+  const [stat, ever, sermons, snaps] = await Promise.all([
     dbQuery(
       `SELECT COUNT(*) online,
               SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
@@ -1120,7 +1095,6 @@ async function pageOverview(): Promise<Response> {
       [online],
     ),
     loadSnapshots(200),
-    dbQuery(`SELECT id, name, description, pack_type, cdn_url, is_active FROM content_packs ORDER BY name`),
   ]);
 
   const s = stat.rows[0] || {};
@@ -1137,39 +1111,6 @@ async function pageOverview(): Promise<Response> {
 
   const chartData = JSON.stringify(snaps);
 
-  // Content packs list + toggle + create.
-  const packRows = packs.rows
-    .map(
-      (p: any) => `<tr>
-        <td>${escapeHtml(p.name)}</td>
-        <td><span class="badge b-user">${escapeHtml(p.pack_type)}</span></td>
-        <td class="muted">${escapeHtml(p.description || "")}</td>
-        <td>${toInt(p.is_active, 0) === 1 ? '<span class="badge b-on">active</span>' : '<span class="badge b-off">off</span>'}</td>
-        <td>
-          <form method="POST" action="/admin/pack/toggle" class="inline-form">
-            <input type="hidden" name="id" value="${toInt(p.id, 0)}">
-            <input type="hidden" name="active" value="${toInt(p.is_active, 0) === 1 ? 0 : 1}">
-            <button class="btn sm ghost" type="submit">${toInt(p.is_active, 0) === 1 ? "Disable" : "Enable"}</button>
-          </form>
-        </td>
-      </tr>`,
-    )
-    .join("");
-
-  const packSection = `
-    <h2>Content Packs</h2>
-    <div class="card" style="overflow-x:auto;">
-      <table><thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Status</th><th></th></tr></thead>
-        <tbody>${packRows || '<tr><td colspan="5" class="empty">No content packs.</td></tr>'}</tbody></table>
-      <form method="POST" action="/admin/pack/create" class="row" style="margin-top:14px;align-items:flex-end;border-top:1px dashed var(--border);padding-top:14px;">
-        <div style="min-width:150px;"><label>Name</label><input name="name" required></div>
-        <div style="min-width:120px;"><label>Type</label><input name="pack_type" placeholder="images" required></div>
-        <div style="flex:1;min-width:220px;"><label>CDN URL</label><input name="cdn_url" placeholder="https://cdn…" required></div>
-        <div style="flex:1;min-width:160px;"><label>Description</label><input name="description"></div>
-        <button class="btn sm" type="submit">Add pack</button>
-      </form>
-    </div>`;
-
   // NOTE: The remote-config key/value editor and the content-source-mode toggle
   // used to live here too, but they duplicated the dedicated /admin/config page,
   // so they were removed from the Overview. Manage all settings on Config.
@@ -1184,8 +1125,6 @@ async function pageOverview(): Promise<Response> {
       <p class="sub">Nodes online and distinct sermons shared over time (from periodic snapshots).</p>
       <div class="chart-wrap"><canvas id="overviewChart"></canvas></div>
     </div>
-
-    ${packSection}
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
@@ -1460,36 +1399,6 @@ async function adminConfigSave(req: Request): Promise<Response> {
   return redirect("/admin");
 }
 
-/** POST /admin/pack/create — add a content pack. */
-async function adminPackCreate(req: Request): Promise<Response> {
-  const form = await req.formData().catch(() => null);
-  const name = String(form ? form.get("name") || "" : "").trim().slice(0, 120);
-  const packType = String(form ? form.get("pack_type") || "" : "").trim().slice(0, 40);
-  const cdnUrl = String(form ? form.get("cdn_url") || "" : "").trim().slice(0, 500);
-  const description = String(form ? form.get("description") || "" : "").slice(0, 300);
-  if (!name || !packType || !cdnUrl) return errorPage("Name, type and CDN URL are required.");
-  const ts = nowIso();
-  await dbQuery(
-    `INSERT INTO content_packs (name, description, pack_type, cdn_url, created_at, updated_at)
-       VALUES (?,?,?,?,?,?)
-     ON CONFLICT(name) DO UPDATE SET
-       description=excluded.description, pack_type=excluded.pack_type,
-       cdn_url=excluded.cdn_url, updated_at=excluded.updated_at`,
-    [name, description, packType, cdnUrl, ts, ts],
-  );
-  return redirect("/admin");
-}
-
-/** POST /admin/pack/toggle — enable/disable a content pack. */
-async function adminPackToggle(req: Request): Promise<Response> {
-  const form = await req.formData().catch(() => null);
-  const id = toInt(form ? form.get("id") : 0, 0);
-  const active = form && String(form.get("active")) === "1" ? 1 : 0;
-  if (!id) return errorPage("Missing pack id.");
-  await dbQuery(`UPDATE content_packs SET is_active=?, updated_at=? WHERE id=?`, [active, nowIso(), id]);
-  return redirect("/admin");
-}
-
 /** 302 redirect helper. */
 function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { Location: location } });
@@ -1539,8 +1448,6 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
       // POST actions
       if (path === "/admin/seed" && method === "POST") return await adminSeedFlip(req);
       if (path === "/admin/config" && method === "POST") return await adminConfigSave(req);
-      if (path === "/admin/pack/create" && method === "POST") return await adminPackCreate(req);
-      if (path === "/admin/pack/toggle" && method === "POST") return await adminPackToggle(req);
 
       return errorPage("Unknown admin page.");
     }
