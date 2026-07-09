@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { markDownloaded } from '../services/catalog.js';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 
 function formatBytes(bytes) {
@@ -88,7 +87,9 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
       try {
         await downloadManager.download(sermon);
         completed++;
-        markDownloaded(sermon.id, `local-${sermon.id}`);
+        // NOTE: do NOT markDownloaded() here — App's download progress handler
+        // persists the real canonical magnet. Marking a 'local-<id>' placeholder
+        // here would race and clobber it (audit M1).
       } catch {
         failed++;
       }

@@ -84,6 +84,12 @@ export default function App() {
     storageUsed: '0 B',
   });
   const [seedUnlocked, setSeedUnlocked] = useState(false);
+  // Live refs so the heartbeat's getStats callback (set up once) reads current
+  // values instead of the ones captured at first render (audit M2).
+  const contentModeRef = useRef('cdn');
+  const seedUnlockedRef = useRef(false);
+  useEffect(() => { contentModeRef.current = contentMode; }, [contentMode]);
+  useEffect(() => { seedUnlockedRef.current = seedUnlocked; }, [seedUnlocked]);
   const [downloadStates, setDownloadStates] = useState({});
   const [libraryStats, setLibraryStats] = useState(null);
   const [bandwidthLimit, setBandwidthLimitState] = useState(0);
@@ -166,8 +172,8 @@ export default function App() {
           storageUsedBytes: freshStats?.downloadedSizeBytes || 0,
           peersConnected: 0, // heartbeat.js aggregates live peers from the torrent stats itself
           libraryCoverage: freshStats?.coverage || 0,
-          contentMode: contentMode,
-          nodeType: seedUnlocked ? 'seed' : 'user',
+          contentMode: contentModeRef.current,
+          nodeType: seedUnlockedRef.current ? 'seed' : 'user',
         };
       }, {
         onConfigUpdate: (config) => {

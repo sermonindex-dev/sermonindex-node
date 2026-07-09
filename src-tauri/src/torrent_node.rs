@@ -160,12 +160,12 @@ pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHa
                             "[Torrent] NAT-PMP/PCP mapped port {} via {}",
                             m.tcp_external_port, m.gateway
                         );
-                        *status.lock().unwrap() = format!("mapped via {}", m.gateway);
+                        *status.lock().unwrap_or_else(|e| e.into_inner()) = format!("mapped via {}", m.gateway);
                         // Mapping lifetime is 2h — renew hourly.
                         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                     }
                     None => {
-                        *status.lock().unwrap() = "unavailable".to_string();
+                        *status.lock().unwrap_or_else(|e| e.into_inner()) = "unavailable".to_string();
                         // Router may appear later (network change) — retry in 30 min.
                         tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
                     }
@@ -173,7 +173,7 @@ pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHa
             }
         });
     } else {
-        *natpmp_status.lock().unwrap() = "unavailable".to_string();
+        *natpmp_status.lock().unwrap_or_else(|e| e.into_inner()) = "unavailable".to_string();
     }
 
     Ok(TorrentHandle {
@@ -195,7 +195,7 @@ impl TorrentHandle {
             tcp_listen_port: self.session.tcp_listen_port(),
             uptime_secs: self.started_at.elapsed().as_secs(),
             torrent_count,
-            natpmp: self.natpmp_status.lock().unwrap().clone(),
+            natpmp: self.natpmp_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         }
     }
 

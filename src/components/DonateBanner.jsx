@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 
 const DISMISS_KEY = 'si-donate-dismissed-at';
 const SHOW_DELAY_MS = 3 * 60 * 1000;              // at least 3 minutes after app launch
@@ -27,6 +26,8 @@ export default function DonateBanner() {
 
   const handleDonate = useCallback(async () => {
     try {
+      // Lazy-import so a non-Tauri/dev context can't fail at module load (audit M4)
+      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('open_url', { url: DONATE_URL });
     } catch (e) {
       console.warn('[DonateBanner] open_url failed:', e);

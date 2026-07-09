@@ -88,22 +88,36 @@ pub(crate) fn shard_for(filename: &str) -> String {
     s
 }
 
+/// Reduce a caller-supplied filename to its final path component, neutralizing
+/// any directory traversal (`..`, absolute paths). Sermon files are always a
+/// bare `<id>.<ext>`, so this never changes legitimate input — it just prevents
+/// a crafted `filename` from escaping the downloads folder.
+fn leaf(filename: &str) -> String {
+    std::path::Path::new(filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Path a NEW download should be written to (sharded), creating the shard dir.
 fn target_path(filename: &str) -> PathBuf {
-    let dir = downloads_dir().join(shard_for(filename));
+    let name = leaf(filename);
+    let dir = downloads_dir().join(shard_for(&name));
     let _ = fs::create_dir_all(&dir);
-    dir.join(filename)
+    dir.join(name)
 }
 
 /// Resolve an EXISTING download, tolerant of both layouts: prefer the sharded
 /// path, fall back to the legacy flat path (files downloaded before sharding),
 /// and if neither exists yet return the sharded target so callers can create it.
 fn resolve_path(filename: &str) -> PathBuf {
-    let sharded = downloads_dir().join(shard_for(filename)).join(filename);
+    let name = leaf(filename);
+    let sharded = downloads_dir().join(shard_for(&name)).join(&name);
     if sharded.exists() {
         return sharded;
     }
-    let flat = downloads_dir().join(filename);
+    let flat = downloads_dir().join(&name);
     if flat.exists() {
         return flat;
     }
@@ -261,13 +275,6 @@ fn list_downloaded_files() -> Result<Vec<String>, String> {
         }
     }
     Ok(files)
-}
-
-/// Get the catalog cache file path
-#[tauri::command]
-fn get_catalog_path() -> Result<String, String> {
-    let path = get_app_data_dir().join("catalog.json");
-    Ok(path.to_string_lossy().to_string())
 }
 
 /// Save catalog data to disk
@@ -443,44 +450,6 @@ async fn fetch_text(url: String) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("read failed: {e}"))
 }
 
-/// Create a human-readable hardlink for a downloaded sermon:
-///   ~/.sermonindex/Library/<Speaker>/<Title>.<ext>
-/// The flat downloads/ folder stays untouched (canonical torrents need it);
-/// hardlinks cost zero extra disk space and are freely shareable/deletable.
-#[tauri::command]
-fn organize_file(filename: String, speaker: String, title: String) -> Result<String, String> {
-    let src = resolve_path(&filename);
-    if !src.exists() {
-        return Err("source file missing".to_string());
-    }
-    let ext = std::path::Path::new(&filename)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("mp3")
-        .to_string();
-    let sane = |s: &str| -> String {
-        let cleaned: String = s
-            .chars()
-            .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
-            .collect();
-        let trimmed = cleaned.trim().trim_matches('.').to_string();
-        let mut out = if trimmed.is_empty() { "Unknown".to_string() } else { trimmed };
-        out.truncate(120);
-        out
-    };
-    let dir = get_app_data_dir().join("Library").join(sane(&speaker));
-    fs::create_dir_all(&dir).map_err(|e| format!("create dir: {e}"))?;
-    let dest = dir.join(format!("{}.{}", sane(&title), ext));
-    if dest.exists() {
-        return Ok(dest.to_string_lossy().to_string());
-    }
-    // Hardlink (same bytes, no extra space); copy as fallback for odd filesystems
-    if fs::hard_link(&src, &dest).is_err() {
-        fs::copy(&src, &dest).map_err(|e| format!("copy: {e}"))?;
-    }
-    Ok(dest.to_string_lossy().to_string())
-}
-
 /// Open a URL in the system default browser (used by the Donate banner)
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -503,8 +472,9 @@ fn open_url(url: String) -> Result<(), String> {
 fn delete_sermon_file(filename: String) -> Result<(), String> {
     // Remove from BOTH possible layouts so a file can't linger in one and be
     // re-adopted as an orphan. Deletion is idempotent — absent is not an error.
-    let sharded = downloads_dir().join(shard_for(&filename)).join(&filename);
-    let flat = downloads_dir().join(&filename);
+    let name = leaf(&filename);
+    let sharded = downloads_dir().join(shard_for(&name)).join(&name);
+    let flat = downloads_dir().join(&name);
     for p in [sharded, flat] {
         if p.exists() {
             fs::remove_file(&p).map_err(|e| format!("Failed to delete file: {}", e))?;
@@ -532,28 +502,6 @@ fn get_sermon_file_path(filename: String) -> Result<String, String> {
         return Err("File not found".to_string());
     }
     Ok(path.to_string_lossy().to_string())
-}
-
-/// Export a downloaded sermon file to the user's Desktop with a readable name
-#[tauri::command]
-fn export_sermon_file(filename: String, dest_name: String) -> Result<String, String> {
-    let src = resolve_path(&filename);
-    if !src.exists() {
-        return Err("Source file not found".to_string());
-    }
-    let desktop = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Desktop");
-    if !desktop.exists() {
-        // Fallback to home directory if Desktop doesn't exist
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let dest = home.join(&dest_name);
-        fs::copy(&src, &dest).map_err(|e| format!("Failed to export: {}", e))?;
-        return Ok(dest.to_string_lossy().to_string());
-    }
-    let dest = desktop.join(&dest_name);
-    fs::copy(&src, &dest).map_err(|e| format!("Failed to export: {}", e))?;
-    Ok(dest.to_string_lossy().to_string())
 }
 
 /// Sanitize a string so it's safe as a file/folder name on all platforms.
@@ -1026,7 +974,6 @@ pub fn run() {
             get_storage_path,
             set_storage_dir,
             get_storage_dir,
-            get_catalog_path,
             save_catalog,
             load_catalog,
             save_download_state,
@@ -1039,7 +986,6 @@ pub fn run() {
             open_folder,
             open_url,
             fetch_text,
-            organize_file,
             save_sermon_file,
             create_sermon_file,
             append_sermon_chunk,
@@ -1048,7 +994,6 @@ pub fn run() {
             delete_sermon_file,
             get_file_size,
             get_sermon_file_path,
-            export_sermon_file,
             export_sermon,
             export_speaker,
             download_speaker_image,
