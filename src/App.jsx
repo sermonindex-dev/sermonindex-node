@@ -947,7 +947,7 @@ export default function App() {
       case 'settings':
         return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} onNavigate={navigateTo} onShowConditions={() => setConditionsOpen(true)} />;
       case 'about':
-        return <AboutPage version={appVersion} onShowConditions={() => setConditionsOpen(true)} onBack={() => navigateTo('settings')} />;
+        return <AboutPage version={appVersion} onShowConditions={() => setConditionsOpen(true)} />;
       default:
         return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} onOpenExternal={openInDefaultPlayer} search={search} onSearch={setSearch} />;
     }

@@ -10,9 +10,6 @@ const seedMark = (
   </svg>
 );
 
-const iconBack = (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-);
 const iconExt = (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
 );
@@ -29,7 +26,7 @@ async function openExternal(url) {
 const h = { fontSize: '1rem', fontWeight: 700, color: 'var(--gold-text)', margin: '0 0 10px' };
 const p = { fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)', margin: '0 0 12px' };
 
-export default function AboutPage({ version = '', onShowConditions, onBack }) {
+export default function AboutPage({ version = '', onShowConditions }) {
   const extLink = {
     display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem',
     color: 'var(--gold-text)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
@@ -39,16 +36,6 @@ export default function AboutPage({ version = '', onShowConditions, onBack }) {
   return (
     <div className="settings-page-root">
       <div style={{ maxWidth: '760px', margin: '0 auto', padding: '4px 0 40px' }}>
-
-        {/* Back */}
-        {onBack && (
-          <button
-            onClick={onBack}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.82rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: '6px' }}
-          >
-            {iconBack} Back to Settings
-          </button>
-        )}
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '22px', color: 'var(--gold-text)' }}>
