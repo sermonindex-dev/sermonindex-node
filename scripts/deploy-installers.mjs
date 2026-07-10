@@ -53,7 +53,16 @@ const getArg = (name, dflt) => {
 const DRY_RUN = args.includes('--dry-run');
 const NO_INDEX = args.includes('--no-index');
 
-const PUBLIC_BASE = 'https://sermonindex1.b-cdn.net';
+// Public CDN hostname (the PULL ZONE) that serves the storage zone — this is
+// where testers download, and it can differ from the storage-zone NAME above.
+// Override with --public-base or BUNNY_CDN_BASE if your zone's URL isn't the default.
+function normalizeBase(b) {
+  b = String(b || '').trim().replace(/\/+$/, '');
+  if (!b) return 'https://sermonindex1.b-cdn.net';
+  if (!/^https?:\/\//i.test(b)) b = `https://${b}`;
+  return b;
+}
+const PUBLIC_BASE = normalizeBase(getArg('public-base', '') || process.env.BUNNY_CDN_BASE);
 const REMOTE_ROOT = getArg('remote-root', 'app/releases'); // path inside the storage zone
 const SCAN_DIR = getArg('dir', join(REPO, 'src-tauri', 'target'));
 

@@ -115,4 +115,5 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_STORAGE_KEY: ${{ secrets.BUNNY_STORAGE_KEY }}
           BUNNY_STORAGE_HOST: ${{ secrets.BUNNY_STORAGE_HOST }}
+          BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
         run: node scripts/deploy-installers.mjs --version "${{ github.ref_name }}" --dir dist-artifacts
