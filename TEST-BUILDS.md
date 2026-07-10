@@ -24,6 +24,9 @@ Add:
 |---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | The contents of `~/.tauri/sermonindex.key` (the whole file) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password you set on the key (leave blank if you set none) |
+| `BUNNY_STORAGE_ZONE` | Your Bunny **storage zone name** (the one behind `sermonindex1.b-cdn.net`) |
+| `BUNNY_STORAGE_KEY` | That storage zone's **password** (Bunny → Storage → your zone → FTP & API Access → Password) |
+| `BUNNY_STORAGE_HOST` | *(optional)* only if your zone isn't in the default region, e.g. `la.storage.bunnycdn.com` |
 
 To copy the key contents on your Mac:
 
@@ -31,8 +34,10 @@ To copy the key contents on your Mac:
 cat ~/.tauri/sermonindex.key | pbcopy   # now paste into the secret
 ```
 
-> Without these, the build fails at the "signing updater" step because
-> `createUpdaterArtifacts` is on in `tauri.conf.json`.
+> The first two are required or the build fails at the "signing updater" step
+> (`createUpdaterArtifacts` is on). The `BUNNY_*` secrets let CI publish the
+> finished installers to your CDN automatically (next section). `BUNNY_STORAGE_KEY`
+> is the **storage zone password**, not your Bunny account API key.
 
 These installers are **not** Apple/Windows code-signed (that's a separate, paid
 step — see the last section). Testers will see a one-time "unverified developer"
@@ -71,26 +76,34 @@ git push origin v0.0.322
 GitHub → **Actions** tab → the "Build & Release" run. ~10–20 min for all four
 platforms. Green check = done.
 
-### 4. Get the installers
+### 4. Share the download page
 
-The workflow creates a **draft Release** with every installer attached:
+When the builds finish, a final CI job (`publish-to-bunny`) collects every
+installer and uploads them to your CDN in a per-version folder, with a ready-made
+download page. Just send testers this one link:
 
-GitHub → **Releases** → the `v0.0.322` draft → download the files, or hand them to
-testers.
+```
+https://sermonindex1.b-cdn.net/app/releases/v0.0.322/index.html
+```
 
-You'll find:
+That page auto-lists the right installer for each OS and includes the first-launch
+bypass instructions. It's a **public CDN URL** — testers need no GitHub account and
+nothing to install to reach it.
 
-| OS | File to send | Notes |
-|---|---|---|
-| macOS (Apple Silicon) | `..._aarch64.dmg` | M1/M2/M3/M4 Macs |
-| macOS (Intel) | `..._x64.dmg` | Older Intel Macs |
-| Windows | `..._x64-setup.exe` | The friendly NSIS installer (also an `.msi` if preferred) |
-| Linux | `..._amd64.AppImage` | Runs on most distros, no install (also a `.deb`) |
+The folder also contains each file directly, plus a `manifest.json`:
 
-> **Private repo note:** your testers probably don't have access to this GitHub
-> repo, and private-repo release assets require a login to download. So download
-> the files yourself and send them directly (Dropbox, Google Drive, WeTransfer,
-> etc.). Don't just send the Releases link — they won't be able to open it.
+| OS | File |
+|---|---|
+| macOS (Apple Silicon) | `..._aarch64.dmg` |
+| macOS (Intel) | `..._x64.dmg` |
+| Windows | `..._x64-setup.exe` (also an `.msi`) |
+| Linux | `..._amd64.AppImage` (also a `.deb`) |
+
+Every version you tag becomes its own folder (`.../app/releases/v0.0.323/`, etc.),
+and `.../app/releases/releases.json` lists them all. Old versions stay available.
+
+> A **draft GitHub Release** with the same files is also created (Releases tab) as
+> a backup, but you normally won't need it — the Bunny page is the thing to share.
 
 ---
 
@@ -141,6 +154,20 @@ npm run tauri build
 Output: `src-tauri/target/release/bundle/dmg/*.dmg` (built for your Mac's
 architecture, arm64). For an Intel build add `-- --target x86_64-apple-darwin`
 (after `rustup target add x86_64-apple-darwin`).
+
+Then push that local build to the same Bunny folder (Mac files only, since that's
+all a Mac can build) with the deploy script:
+
+```bash
+export BUNNY_STORAGE_ZONE="your-zone"
+export BUNNY_STORAGE_KEY="your-storage-zone-password"
+node scripts/deploy-installers.mjs --version v0.0.322 --dir src-tauri/target
+```
+
+The script scans the build output, uploads the installers to
+`app/releases/v0.0.322/`, rebuilds `index.html` + `manifest.json`, and prints the
+public links. Add `--dry-run` to preview without uploading. (This is the same
+script CI runs — CI just points it at all four platforms' output at once.)
 
 ---
 
