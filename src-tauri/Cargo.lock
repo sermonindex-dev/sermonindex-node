@@ -4739,7 +4739,7 @@ dependencies = [
 
 [[package]]
 name = "sermonindex-app"
-version = "0.0.321"
+version = "0.0.322"
 dependencies = [
  "base64 0.22.1",
  "crab_nat",
