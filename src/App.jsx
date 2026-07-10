@@ -13,6 +13,9 @@ import SettingsPage from './pages/SettingsPage';
 import ConnectionsPage from './pages/ConnectionsPage';
 import NetworkPage from './pages/NetworkPage';
 import CommunityPage from './pages/CommunityPage';
+import AboutPage from './pages/AboutPage';
+import ConditionsModal from './components/ConditionsModal';
+import { CONDITIONS_VERSION } from './data/conditions.jsx';
 
 // Error boundary to prevent full app crashes
 class ErrorBoundary extends Component {
@@ -110,6 +113,10 @@ export default function App() {
   const [seedsOnline, setSeedsOnline] = useState(null);        // reachable seed nodes online (beside Seed Node)
   const [chatNotify, setChatNotify] = useState(() => chatPrefs().notify); // show unread badge
   const [chatShow, setChatShow] = useState(() => chatPrefs().show);       // show Community page at all
+  const [conditionsAgreed, setConditionsAgreed] = useState(() => {        // first-launch agreement gate
+    try { return localStorage.getItem('si-conditions-agreed') === CONDITIONS_VERSION; } catch { return false; }
+  });
+  const [conditionsOpen, setConditionsOpen] = useState(false);           // read-only conditions view (from About/Settings)
   const audioRef = useRef(null);
   const videoRef = useRef(null);
   const videoWatchdogRef = useRef(null);   // timer: detects "playing but black" (undecodable codec)
@@ -418,6 +425,12 @@ export default function App() {
   const handleChatShowChange = useCallback((enabled) => {
     setChatShow(enabled);
     try { localStorage.setItem('si-chat-show', enabled ? '1' : '0'); } catch {}
+  }, []);
+
+  // Record agreement to the copying permissions / conditions (first launch)
+  const handleAgreeConditions = useCallback(() => {
+    try { localStorage.setItem('si-conditions-agreed', CONDITIONS_VERSION); } catch {}
+    setConditionsAgreed(true);
   }, []);
 
   // Handle P2P node toggle
@@ -932,7 +945,9 @@ export default function App() {
       case 'connections':
         return <ConnectionsPage p2pRunning={p2pRunning} p2pEnabled={p2pEnabled} onP2pToggle={handleP2pToggle} />;
       case 'settings':
-        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} />;
+        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={setBandwidthLimitState} storageLimit={storageLimit} onStorageLimitChange={setStorageLimitState} backgroundMode={backgroundMode} onBackgroundModeChange={setBackgroundMode} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} onNavigate={navigateTo} onShowConditions={() => setConditionsOpen(true)} />;
+      case 'about':
+        return <AboutPage version={appVersion} onShowConditions={() => setConditionsOpen(true)} onBack={() => navigateTo('settings')} />;
       default:
         return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} onOpenExternal={openInDefaultPlayer} search={search} onSearch={setSearch} />;
     }
@@ -940,6 +955,15 @@ export default function App() {
 
   return (
     <>
+      {/* First-launch agreement gate — blocks the app until conditions are accepted */}
+      {!conditionsAgreed && (
+        <ConditionsModal mode="agree" onAgree={handleAgreeConditions} />
+      )}
+      {/* Read-only conditions viewer (opened from About / Settings) */}
+      {conditionsAgreed && conditionsOpen && (
+        <ConditionsModal mode="view" onClose={() => setConditionsOpen(false)} />
+      )}
+
       {/* Hidden audio element for audio-only playback */}
       <audio ref={audioRef} preload="none" />
 

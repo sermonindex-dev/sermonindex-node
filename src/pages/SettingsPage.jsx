@@ -21,6 +21,8 @@ export default function SettingsPage({
   onChatShowChange,
   nodeStats,
   version = '',
+  onNavigate,
+  onShowConditions,
 }) {
   const [nodeId, setNodeId] = useState('');
   const [modeStatus, setModeStatus] = useState(''); // 'saved', ''
@@ -298,6 +300,26 @@ export default function SettingsPage({
               <span style={{ color: 'var(--text-muted)' }}>Version</span>
               <span>{version ? `v${version}` : '—'}</span>
             </div>
+            {(onNavigate || onShowConditions) && (
+              <div className="settings-row" style={{ gap: '8px', flexWrap: 'wrap' }}>
+                {onNavigate && (
+                  <button
+                    onClick={() => onNavigate('about')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--gold-text)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '7px 12px', cursor: 'pointer' }}
+                  >
+                    About &amp; Vision
+                  </button>
+                )}
+                {onShowConditions && (
+                  <button
+                    onClick={onShowConditions}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '7px 12px', cursor: 'pointer' }}
+                  >
+                    Copying Permissions &amp; Conditions
+                  </button>
+                )}
+              </div>
+            )}
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Content Source Mode</span>
               <span>{contentMode === 'cdn' ? 'Archive.org + CDN' : contentMode === 'p2p-primary' ? 'P2P Primary' : 'P2P Only'}</span>
