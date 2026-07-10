@@ -236,11 +236,15 @@ async function sendHeartbeat() {
       };
     }
 
+    // Lifetime uploaded bytes — this node's contribution to network data transfer.
+    const uploadedLifetime = accumulateUploaded((p2pStatus && p2pStatus.uploaded_bytes) || 0);
+
     const payload = {
       node_id: getNodeId(),
       protocol: 'bittorrent',
       files_stored: stats.filesShared || 0,
       storage_used_bytes: stats.storageUsedBytes || 0,
+      uploaded_bytes: uploadedLifetime,
       peers_connected: livePeers || stats.peersConnected || 0,
       uptime_seconds: Math.floor((Date.now() - _startTime) / 1000),
       library_coverage: stats.libraryCoverage || 0,
@@ -311,6 +315,22 @@ function scheduleHeartbeatRetry() {
   if (_retrying || !intervalId) return;
   _retrying = true;
   setTimeout(() => { _retrying = false; sendHeartbeat(); }, HEARTBEAT_RETRY_MS);
+}
+
+// Lifetime uploaded bytes. librqbit's session upload counter resets on restart,
+// so keep a running total in localStorage and report that as this node's
+// contribution to total network data transferred.
+function accumulateUploaded(sessionUploaded) {
+  try {
+    const raw = localStorage.getItem('si-uploaded-lifetime');
+    const st = raw ? JSON.parse(raw) : { lifetime: 0, lastSession: 0 };
+    let lifetime = Number(st.lifetime) || 0;
+    const last = Number(st.lastSession) || 0;
+    const s = Number(sessionUploaded) || 0;
+    lifetime += s < last ? s : (s - last); // s < last ⇒ counter reset on restart
+    localStorage.setItem('si-uploaded-lifetime', JSON.stringify({ lifetime, lastSession: s }));
+    return lifetime;
+  } catch { return Number(sessionUploaded) || 0; }
 }
 
 /**

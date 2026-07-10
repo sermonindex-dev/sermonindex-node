@@ -157,6 +157,7 @@ async function ensureTables(): Promise<void> {
         country TEXT DEFAULT 'XX',
         files_stored INTEGER DEFAULT 0,
         storage_used_bytes INTEGER DEFAULT 0,
+        uploaded_bytes INTEGER DEFAULT 0,
         peers_connected INTEGER DEFAULT 0,
         uptime_seconds INTEGER DEFAULT 0,
         library_coverage REAL DEFAULT 0,
@@ -193,6 +194,7 @@ async function ensureTables(): Promise<void> {
         sermons_shared INTEGER DEFAULT 0,
         total_files INTEGER DEFAULT 0,
         total_storage_bytes INTEGER DEFAULT 0,
+        total_uploaded_bytes INTEGER DEFAULT 0,
         countries INTEGER DEFAULT 0
       )`,
     },
@@ -285,6 +287,9 @@ async function ensureTables(): Promise<void> {
   } catch {
     /* column already exists */
   }
+  // Same for the newer columns (existing DBs won't have them).
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN uploaded_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
+  try { await dbQuery(`ALTER TABLE stats_snapshots ADD COLUMN total_uploaded_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
 
   _tablesCreated = true;
 }
@@ -595,6 +600,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   let country = String(body.country || "XX");
   const filesStored = toInt(body.files_stored, 0);
   const storageBytes = toInt(body.storage_used_bytes, 0);
+  const uploadedBytes = toInt(body.uploaded_bytes, 0);
   const peers = toInt(body.peers_connected, 0);
   const uptime = toInt(body.uptime_seconds, 0);
   const coverage = toNum(body.library_coverage, 0);
@@ -622,13 +628,14 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   // Upsert the node row (+1 heartbeat, mark online, refresh last_seen).
   await dbQuery(
     `INSERT INTO nodes
-      (node_id, lat, lon, city, country, files_stored, storage_used_bytes, peers_connected,
+      (node_id, lat, lon, city, country, files_stored, storage_used_bytes, uploaded_bytes, peers_connected,
        uptime_seconds, library_coverage, content_mode, app_version, node_type, reachable,
        last_seen, first_seen, total_heartbeats, is_online)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
      ON CONFLICT(node_id) DO UPDATE SET
        lat=excluded.lat, lon=excluded.lon, city=excluded.city, country=excluded.country,
        files_stored=excluded.files_stored, storage_used_bytes=excluded.storage_used_bytes,
+       uploaded_bytes=MAX(nodes.uploaded_bytes, excluded.uploaded_bytes),
        peers_connected=excluded.peers_connected, uptime_seconds=excluded.uptime_seconds,
        library_coverage=excluded.library_coverage, content_mode=excluded.content_mode,
        app_version=excluded.app_version, node_type=excluded.node_type,
@@ -636,7 +643,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
        last_seen=excluded.last_seen,
        total_heartbeats=nodes.total_heartbeats+1,
        is_online=1`,
-    [nodeId, lat, lon, city, country, filesStored, storageBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, reachable, ts, ts],
+    [nodeId, lat, lon, city, country, filesStored, storageBytes, uploadedBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, reachable, ts, ts],
   );
 
   // Record shared sermons from body.seeded_torrents.
@@ -727,7 +734,7 @@ async function maybeWriteSnapshot(): Promise<void> {
     }
 
     const online = isoMinutesAgo(15);
-    const [onlineRow, seedRow, filesRow, sermonsRow, countryRow] = await Promise.all([
+    const [onlineRow, seedRow, filesRow, sermonsRow, countryRow, uploadedRow] = await Promise.all([
       dbQuery(`SELECT COUNT(*) c FROM nodes WHERE is_online=1 AND last_seen >= ?`, [online]),
       dbQuery(`SELECT COUNT(*) c FROM nodes WHERE is_online=1 AND last_seen >= ? AND node_type='seed'`, [online]),
       dbQuery(
@@ -742,12 +749,14 @@ async function maybeWriteSnapshot(): Promise<void> {
         [online],
       ),
       dbQuery(`SELECT COUNT(DISTINCT country) c FROM nodes WHERE is_online=1 AND last_seen >= ?`, [online]),
+      // Data transferred is cumulative across all nodes (not online-gated).
+      dbQuery(`SELECT COALESCE(SUM(uploaded_bytes),0) u FROM nodes`),
     ]);
 
     await dbQuery(
       `INSERT INTO stats_snapshots
-         (ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, countries)
-       VALUES (?,?,?,?,?,?,?)`,
+         (ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, total_uploaded_bytes, countries)
+       VALUES (?,?,?,?,?,?,?,?)`,
       [
         nowIso(),
         toInt(onlineRow.rows[0]?.c, 0),
@@ -755,6 +764,7 @@ async function maybeWriteSnapshot(): Promise<void> {
         toInt(sermonsRow.rows[0]?.c, 0),
         toInt(filesRow.rows[0]?.f, 0),
         toInt(filesRow.rows[0]?.s, 0),
+        toInt(uploadedRow.rows[0]?.u, 0),
         toInt(countryRow.rows[0]?.c, 0),
       ],
     );
@@ -1018,7 +1028,7 @@ async function handleLogout(req: Request): Promise<Response> {
 /** Fetch stats_snapshots as arrays for charting (oldest → newest). */
 async function loadSnapshots(limit = 200): Promise<any> {
   const { rows } = await dbQuery(
-    `SELECT ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, countries
+    `SELECT ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, total_uploaded_bytes, countries
        FROM stats_snapshots ORDER BY id DESC LIMIT ?`,
     [limit],
   );
@@ -1029,6 +1039,8 @@ async function loadSnapshots(limit = 200): Promise<any> {
     seedNodes: rows.map((r: any) => toInt(r.seed_nodes, 0)),
     sermonsShared: rows.map((r: any) => toInt(r.sermons_shared, 0)),
     totalFiles: rows.map((r: any) => toInt(r.total_files, 0)),
+    // For the "Data Transferred" chart — cumulative uploaded, in MB for readable axis.
+    dataTransferredMB: rows.map((r: any) => Math.round(toInt(r.total_uploaded_bytes, 0) / 1048576)),
     countries: rows.map((r: any) => toInt(r.countries, 0)),
     count: rows.length,
   };
@@ -1169,7 +1181,7 @@ async function pageGraph(): Promise<Response> {
     // Storage footprint — each node's last-reported figures, across ALL known
     // nodes, so this reflects what's stored on the network and doesn't drop to 0
     // just because a node is momentarily offline.
-    dbQuery(`SELECT COALESCE(SUM(files_stored),0) files, COALESCE(SUM(storage_used_bytes),0) storage FROM nodes`),
+    dbQuery(`SELECT COALESCE(SUM(files_stored),0) files, COALESCE(SUM(storage_used_bytes),0) storage, COALESCE(SUM(uploaded_bytes),0) uploaded FROM nodes`),
   ]);
   const onlineCount = toInt(onlineRow.rows[0]?.online, 0);
   const foot = footRow.rows[0] || {};
@@ -1179,7 +1191,8 @@ async function pageGraph(): Promise<Response> {
     statCard(onlineCount, "Nodes Online") +
     statCard(latestSermons, "Sermons Shared") +
     statCard(toInt(foot.files, 0), "Files Stored") +
-    statCard(fmtBytes(toInt(foot.storage, 0)), "Storage");
+    statCard(fmtBytes(toInt(foot.storage, 0)), "Storage") +
+    statCard(fmtBytes(toInt(foot.uploaded, 0)), "Data Transferred");
 
   const chartData = JSON.stringify(snaps);
 
@@ -1196,6 +1209,9 @@ async function pageGraph(): Promise<Response> {
 
     <h2>Files Stored</h2>
     <div class="card"><div class="chart-wrap big"><canvas id="c3"></canvas></div></div>
+
+    <h2>Data Transferred (MB)</h2>
+    <div class="card"><div class="chart-wrap big"><canvas id="c4"></canvas></div></div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
@@ -1222,6 +1238,7 @@ async function pageGraph(): Promise<Response> {
         mountain('c1','Nodes online', d.nodesOnline, '#707035', '112,112,53');
         mountain('c2','Sermons shared', d.sermonsShared, '#967d1f', '212,175,55');
         mountain('c3','Files stored', d.totalFiles, '#3d8a41', '61,138,65');
+        mountain('c4','Data transferred (MB)', d.dataTransferredMB, '#2d6cb5', '45,108,181');
       })();
     </script>`;
 
@@ -1305,6 +1322,19 @@ async function pageNodes(): Promise<Response> {
              <input type="hidden" name="enable" value="1">
              <button class="btn sm green" type="submit">Enable</button>
            </form>`;
+      // Admin → node commands, delivered on the node's next heartbeat. A machine
+      // that is fully asleep can't receive these until it wakes; a running node acts on them.
+      const cmdBtns = `
+        <form method="POST" action="/admin/node-command" class="inline-form" style="display:inline;">
+          <input type="hidden" name="node_id" value="${escapeHtml(n.node_id)}">
+          <input type="hidden" name="action" value="get_diagnostics">
+          <button class="btn sm ghost" type="submit" title="Ping — the node reports back on its next heartbeat">Ping</button>
+        </form>
+        <form method="POST" action="/admin/node-command" class="inline-form" style="display:inline;">
+          <input type="hidden" name="node_id" value="${escapeHtml(n.node_id)}">
+          <input type="hidden" name="action" value="reconnect">
+          <button class="btn sm ghost" type="submit" title="Re-announce — restart P2P to rediscover peers">Re-announce</button>
+        </form>`;
       return `<tr>
         <td><code>#${escapeHtml(String(n.node_id).slice(0, 8))}</code></td>
         <td>${escapeHtml(n.city || "Unknown")}, ${escapeHtml(n.country || "XX")}</td>
@@ -1317,6 +1347,7 @@ async function pageNodes(): Promise<Response> {
         <td class="mono">${escapeHtml(n.app_version || "0.0.0")}</td>
         <td class="muted">${escapeHtml(timeAgo(n.last_seen))}</td>
         <td>${flip}</td>
+        <td style="white-space:nowrap;">${cmdBtns}</td>
       </tr>`;
     })
     .join("");
@@ -1328,7 +1359,7 @@ async function pageNodes(): Promise<Response> {
         nodes.rows.length
           ? `<table><thead><tr>
               <th>Node</th><th>Location</th><th>Status</th><th>Type</th><th>Class</th>
-              <th>Sermons</th><th>Files</th><th>Coverage</th><th>Version</th><th>Last seen</th><th>Seed access</th>
+              <th>Sermons</th><th>Files</th><th>Coverage</th><th>Version</th><th>Last seen</th><th>Seed access</th><th>Actions</th>
             </tr></thead><tbody>${nodeRows}</tbody></table>`
           : '<div class="empty">No nodes yet.</div>'
       }
@@ -1371,6 +1402,27 @@ async function adminSeedFlip(req: Request): Promise<Response> {
     },
   ]);
 
+  return redirect("/admin/nodes");
+}
+
+/** POST /admin/node-command — queue a command a node runs on its next heartbeat. */
+async function adminNodeCommand(req: Request): Promise<Response> {
+  const form = await req.formData().catch(() => null);
+  const nodeId = cleanNode(form ? form.get("node_id") : "");
+  const action = String(form ? form.get("action") || "" : "").slice(0, 40);
+  const allowed = ["get_diagnostics", "reconnect", "restart", "get_logs", "reannounce_content"];
+  if (!nodeId || !allowed.includes(action)) return errorPage("Invalid node command.");
+  const ts = nowIso();
+  await dbBatch([
+    {
+      sql: `INSERT INTO node_commands (node_id, action, params, status, created_at) VALUES (?,?,?,'pending',?)`,
+      args: [nodeId, action, "{}", ts],
+    },
+    {
+      sql: `INSERT INTO node_events (node_id, event_type, detail, timestamp) VALUES (?,?,?,?)`,
+      args: [nodeId, "command_queued", action, ts],
+    },
+  ]);
   return redirect("/admin/nodes");
 }
 
@@ -1447,6 +1499,7 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
 
       // POST actions
       if (path === "/admin/seed" && method === "POST") return await adminSeedFlip(req);
+      if (path === "/admin/node-command" && method === "POST") return await adminNodeCommand(req);
       if (path === "/admin/config" && method === "POST") return await adminConfigSave(req);
 
       return errorPage("Unknown admin page.");
