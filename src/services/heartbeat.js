@@ -11,9 +11,16 @@
  */
 
 const API_BASE = 'https://app.sermonindex.net';
-const HEARTBEAT_INTERVAL = 10 * 60 * 1000; // 10 minutes
+// Beat every 5 min. The dashboard treats a node as online if seen within ~15 min,
+// so a 5-min cadence tolerates two missed beats (sleep/network blip) before the
+// node ever drops out. Combined with retry-on-failure and wake/online listeners
+// below, this keeps the node reliably "online".
+const HEARTBEAT_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const HEARTBEAT_RETRY_MS = 30 * 1000;     // retry once ~30s after a failed beat
 
 let intervalId = null;
+let _retrying = false;         // guards a single pending retry
+let _listenersAttached = false; // wake/online listeners attached once
 let _nodeId = null;
 let _getStatsFn = null;
 let _startTime = Date.now();
@@ -290,10 +297,20 @@ async function sendHeartbeat() {
       }
     } else {
       console.warn('[Heartbeat] Server returned', res.status);
+      scheduleHeartbeatRetry();
     }
   } catch (e) {
     console.warn('[Heartbeat] Failed to send:', e.message);
+    scheduleHeartbeatRetry();
   }
+}
+
+// Retry a failed heartbeat once after a short delay, so a transient network blip
+// or brief server hiccup doesn't drop the node out of the dashboard's online window.
+function scheduleHeartbeatRetry() {
+  if (_retrying || !intervalId) return;
+  _retrying = true;
+  setTimeout(() => { _retrying = false; sendHeartbeat(); }, HEARTBEAT_RETRY_MS);
 }
 
 /**
@@ -382,11 +399,24 @@ export function startHeartbeat(getStats, options = {}) {
   _onRemoteCommand = options.onRemoteCommand || null;
   _startTime = Date.now();
 
+  // Set the interval id first so retry-on-failure is armed even for the first beat.
+  intervalId = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
+
+  // Redundancy: also beat immediately whenever the network comes back or the app
+  // is brought to the foreground — covers laptop sleep/wake and connectivity blips.
+  if (typeof window !== 'undefined' && !_listenersAttached) {
+    _listenersAttached = true;
+    try {
+      window.addEventListener('online', () => { if (intervalId) sendHeartbeat(); });
+      document.addEventListener('visibilitychange', () => {
+        if (intervalId && document.visibilityState === 'visible') sendHeartbeat();
+      });
+    } catch { /* non-browser env */ }
+  }
+
   // Send first heartbeat immediately
   sendHeartbeat();
-
-  intervalId = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
-  console.log('[Heartbeat] Started — reporting every 10 minutes');
+  console.log('[Heartbeat] Started — reporting every 5 minutes (with retry + wake)');
 }
 
 /**

@@ -1162,24 +1162,24 @@ async function pageOverview(): Promise<Response> {
 async function pageGraph(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
-  const [snaps, totals] = await Promise.all([
+  const [snaps, onlineRow, footRow] = await Promise.all([
     loadSnapshots(500),
-    dbQuery(
-      `SELECT COUNT(*) online,
-              COALESCE(SUM(files_stored),0) files,
-              COALESCE(SUM(storage_used_bytes),0) storage
-         FROM nodes WHERE is_online=1 AND last_seen >= ?`,
-      [online],
-    ),
+    // Live count — nodes heartbeating in the last 15 minutes.
+    dbQuery(`SELECT COUNT(*) online FROM nodes WHERE is_online=1 AND last_seen >= ?`, [online]),
+    // Storage footprint — each node's last-reported figures, across ALL known
+    // nodes, so this reflects what's stored on the network and doesn't drop to 0
+    // just because a node is momentarily offline.
+    dbQuery(`SELECT COALESCE(SUM(files_stored),0) files, COALESCE(SUM(storage_used_bytes),0) storage FROM nodes`),
   ]);
-  const t = totals.rows[0] || {};
+  const onlineCount = toInt(onlineRow.rows[0]?.online, 0);
+  const foot = footRow.rows[0] || {};
   const latestSermons = snaps.sermonsShared.length ? snaps.sermonsShared[snaps.sermonsShared.length - 1] : 0;
 
   const cards =
-    statCard(toInt(t.online, 0), "Nodes Online") +
+    statCard(onlineCount, "Nodes Online") +
     statCard(latestSermons, "Sermons Shared") +
-    statCard(toInt(t.files, 0), "Files Stored") +
-    statCard(fmtBytes(toInt(t.storage, 0)), "Storage");
+    statCard(toInt(foot.files, 0), "Files Stored") +
+    statCard(fmtBytes(toInt(foot.storage, 0)), "Storage");
 
   const chartData = JSON.stringify(snaps);
 
