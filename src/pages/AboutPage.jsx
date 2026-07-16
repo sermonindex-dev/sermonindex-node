@@ -23,6 +23,33 @@ async function openExternal(url) {
   }
 }
 
+// Small gold outgoing-link icon shown inline right before a linked "SermonIndex" mention.
+const siteLinkIcon = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--gold-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '3px', verticalAlign: '-2px', flexShrink: 0 }} aria-hidden="true">
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    <polyline points="15 3 21 3 21 9" />
+    <line x1="10" y1="14" x2="21" y2="3" />
+  </svg>
+);
+
+// Inline gold link to the main SermonIndex site (reuses the openExternal helper above).
+function SiteLink({ children }) {
+  const open = () => openExternal('https://www.sermonindex.net');
+  return (
+    <span
+      role="link"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => { if (e.key === 'Enter') open(); }}
+      onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+      style={{ color: 'var(--gold-text)', cursor: 'pointer', textDecoration: 'none', whiteSpace: 'nowrap' }}
+    >
+      {siteLinkIcon}{children}
+    </span>
+  );
+}
+
 const h = { fontSize: '1rem', fontWeight: 700, color: 'var(--gold-text)', margin: '0 0 10px' };
 const p = { fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)', margin: '0 0 12px' };
 
@@ -52,12 +79,12 @@ export default function AboutPage({ version = '', onShowConditions }) {
         <div className="seed-card" style={{ marginBottom: '16px' }}>
           <h3 style={h}>Our Mission</h3>
           <p style={{ ...p, color: 'var(--text-primary)', fontStyle: 'italic' }}>
-            "SermonIndex's assignment is to honour and preserve the past preaching of
+            "<SiteLink>SermonIndex</SiteLink>'s assignment is to honour and preserve the past preaching of
             God's Word and to promote revival to this generation."
           </p>
           <p style={p}>
             Since 2002 — begun by Greg Gordon after reading Leonard Ravenhill's
-            <em> Why Revival Tarries</em> — SermonIndex has grown into a library of tens
+            <em> Why Revival Tarries</em> — <SiteLink>SermonIndex</SiteLink> has grown into a library of tens
             of thousands of sermons from voices such as Charles Spurgeon, A.W. Tozer, and
             Leonard Ravenhill. These messages have been made freely available and
             distributed over 100 million times, reaching nearly every nation on earth.

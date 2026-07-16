@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 
 const PAGE_SIZE = 50;
-const VIEW_KEY = 'si-downloads-view'; // 'cards' (default) | 'speaker'
+const VIEW_KEY = 'si-downloads-view'; // 'cards' | 'speaker' (default)
 
 // Flat SVG icons
 const iconPlay = <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>;
@@ -54,13 +54,14 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [expandedId, setExpandedId] = useState(null);
 
-  // View mode — Cards (default grid) vs By Speaker. Persisted to localStorage.
+  // View mode — By Speaker (default) vs Cards grid. Persisted to localStorage,
+  // so a returning user keeps their choice; first run opens grouped by speaker.
   const [view, setView] = useState(() => {
     try {
       const saved = localStorage.getItem(VIEW_KEY);
       if (saved === 'cards' || saved === 'speaker') return saved;
     } catch {}
-    return 'cards';
+    return 'speaker';
   });
   const setViewPersisted = useCallback((next) => {
     setView(next);
@@ -102,16 +103,6 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     }
   }, []);
 
-  const openStorageDir = useCallback(async () => {
-    await ensureTauri();
-    if (!tauriInvoke || !storageDir) return;
-    try {
-      await tauriInvoke('open_folder', { path: storageDir });
-    } catch (e) {
-      console.warn('[Downloads] Open folder failed:', e);
-    }
-  }, [storageDir]);
-
   // ── Export a whole speaker → Desktop/<Speaker>/<Title>.<ext> ────────────────
   // Copies every complete download by this speaker into one Desktop folder with
   // proper filenames. Status is tracked per speaker for inline feedback.
@@ -151,6 +142,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
           New downloads go here, auto-sorted into folders. Existing files stay where they are.
         </div>
+        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.5 }}>
+          Downloaded files are stored locally and seeded to the P2P network (and should not be renamed). Use Export on any sermon — or By Speaker → Export — to save readable copies into a Desktop folder named for the speaker.
+        </div>
       </div>
       <button
         className="btn"
@@ -158,14 +152,6 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', flexShrink: 0 }}
       >
         Change…
-      </button>
-      <button
-        className="btn"
-        onClick={openStorageDir}
-        disabled={!storageDir}
-        style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: storageDir ? 'pointer' : 'default', fontSize: '0.75rem', flexShrink: 0, opacity: storageDir ? 1 : 0.4 }}
-      >
-        Open
       </button>
     </div>
   ) : null;
@@ -433,21 +419,6 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
 
       {locationBar}
 
-      <div className="seed-card" style={{ marginBottom: '16px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
-        <p style={{ fontSize: '0.78rem', margin: 0, color: 'var(--text-muted)', lineHeight: 1.5, flex: 1 }}>
-          Downloaded files are stored locally and seeded to the P2P network (and should not be renamed). Use <strong style={{ color: 'var(--text-primary)' }}>Export</strong> on any sermon — or <strong style={{ color: 'var(--text-primary)' }}>By Speaker → Export</strong> — to save readable copies into a Desktop folder named for the speaker.
-        </p>
-        {onOpenFolder && (
-          <button
-            className="btn"
-            onClick={onOpenFolder}
-            style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}
-          >
-            {iconFolder} Open Downloads Folder
-          </button>
-        )}
-      </div>
-
       <div className="library-filters">
         <div className="search-box" style={{ maxWidth: '300px' }}>
           <input
@@ -487,7 +458,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           </>
         )}
 
-        {/* View toggle — Cards (default) vs By Speaker */}
+        {/* View toggle — By Speaker (default) vs Cards */}
         <div className="view-toggle" style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
           {[['cards', 'Cards'], ['speaker', 'By Speaker']].map(([key, label]) => {
             const active = view === key;

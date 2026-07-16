@@ -131,7 +131,7 @@ async function getGeoLocation() {
     if (res.ok) {
       const data = await res.json();
       if (data.city && data.country_code) {
-        _geoData = { city: data.city, country: data.country_code, lat: data.latitude || 0, lon: data.longitude || 0 };
+        _geoData = { city: data.city, region: data.region_code || data.region || '', country: data.country_code, lat: data.latitude || 0, lon: data.longitude || 0 };
         console.log('[Heartbeat] Geo (ipapi.co):', _geoData.city, _geoData.country);
         return _geoData;
       }
@@ -146,7 +146,7 @@ async function getGeoLocation() {
     if (res.ok) {
       const data = await res.json();
       if (data.success !== false && data.city) {
-        _geoData = { city: data.city, country: data.country_code || 'XX', lat: data.latitude || 0, lon: data.longitude || 0 };
+        _geoData = { city: data.city, region: data.region_code || data.region || '', country: data.country_code || 'XX', lat: data.latitude || 0, lon: data.longitude || 0 };
         console.log('[Heartbeat] Geo (ipwho.is):', _geoData.city, _geoData.country);
         return _geoData;
       }
@@ -165,7 +165,7 @@ async function getGeoLocation() {
     if (res.ok) {
       const data = await res.json();
       if (data.lat && data.lon && data.lat !== 0) {
-        _geoData = { city: data.city || 'Unknown', country: data.country || 'XX', lat: data.lat, lon: data.lon };
+        _geoData = { city: data.city || 'Unknown', region: data.region || '', country: data.country || 'XX', lat: data.lat, lon: data.lon };
         console.log('[Heartbeat] Geo (server-side):', _geoData.city, _geoData.country);
         return _geoData;
       }
@@ -175,7 +175,7 @@ async function getGeoLocation() {
   }
 
   console.warn('[Heartbeat] All geo providers failed');
-  return { city: 'Unknown', country: 'XX', lat: 0, lon: 0 };
+  return { city: 'Unknown', region: '', country: 'XX', lat: 0, lon: 0 };
 }
 
 /**
@@ -262,6 +262,7 @@ async function sendHeartbeat() {
       lat: geo.lat,
       lon: geo.lon,
       city: geo.city,
+      region: geo.region || '',
       country: geo.country,
       seeded_torrents: seededTorrents, // info_hashes replace the old per-sermon CID map
       p2p_status: p2pStatus, // Full session diagnostics for admin
@@ -285,6 +286,15 @@ async function sendHeartbeat() {
           _lastConfig = data.config;
           _onConfigUpdate(data.config);
         }
+      }
+
+      // Master list refresh: the admin can bump config.master_list_version to force
+      // every node to re-pull the canonical master-list.json. Handled in catalog.js
+      // via a dynamic import (avoids a hard module cycle). No-op when empty/unchanged.
+      if (data.config && typeof data.config.master_list_version === 'string') {
+        import('./catalog.js')
+          .then(m => m.reconcileMasterListVersion(data.config.master_list_version))
+          .catch(() => {});
       }
 
       // Process content packs

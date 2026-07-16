@@ -1,13 +1,17 @@
 {
   "name": "sermonindex-app",
-  "version": "0.0.322",
+  "version": "0.0.326",
   "description": "SermonIndex Node Software — Decentralized P2P Sermon Library",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "fetch-images": "node scripts/fetch-speaker-images.mjs"
+    "fetch-images": "node scripts/fetch-speaker-images.mjs",
+    "lint": "if command -v eslint >/dev/null 2>&1; then eslint src; else echo 'ESLint not installed. Enable with: npm i -D eslint  (flat config already at eslint.config.mjs). Skipping lint.'; fi",
+    "test": "if command -v vitest >/dev/null 2>&1; then vitest run; else echo 'Vitest not installed. Enable with: npm i -D vitest  and add *.test.js files. Skipping tests.'; fi",
+    "audit:js": "npm audit",
+    "audit:rust": "echo 'Run in src-tauri/: cargo update && cargo audit  (install once: cargo install cargo-audit). See SECURITY.md.'"
   },
   "keywords": [
     "sermonindex",
@@ -18,7 +22,7 @@
   "author": "SermonIndex",
   "license": "MIT",
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-process": "^2",
     "@tauri-apps/plugin-updater": "^2",
@@ -29,6 +33,6 @@
     "vite": "^5.4.11"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1"
+    "@tauri-apps/cli": "^2.11.0"
   }
 }

@@ -17,11 +17,13 @@
 //! completed file here so the swarm grows.
 
 use std::collections::HashSet;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
 use librqbit::api::TorrentIdOrHash;
+use librqbit::limits::LimitsConfig;
 use librqbit::{
     create_torrent, AddTorrent, AddTorrentOptions, CreateTorrentOptions, Session, SessionOptions,
 };
@@ -111,7 +113,15 @@ pub fn build_magnet(info_hash: &str, name: &str) -> String {
 /// Start the torrent session.
 ///  - `data_dir`   — ~/.sermonindex (session persistence + DHT cache live under it)
 ///  - `download_dir` — default output folder for fetched torrents (~/.sermonindex/downloads)
-pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHandle, String> {
+///  - `upload_bps`  — session-wide UPLOAD rate limit in bytes/sec, or `None` for
+///                    unlimited. Applied atomically at session creation so a peer
+///                    can never receive data above the cap even before the frontend
+///                    has had a chance to (re)apply it.
+pub async fn start(
+    data_dir: PathBuf,
+    download_dir: PathBuf,
+    upload_bps: Option<NonZeroU32>,
+) -> Result<TorrentHandle, String> {
     std::fs::create_dir_all(&download_dir)
         .map_err(|e| format!("Failed to create download dir: {e}"))?;
     // NOTE: we intentionally do NOT create a torrent-session/ dir — persistence
@@ -121,6 +131,13 @@ pub async fn start(data_dir: PathBuf, download_dir: PathBuf) -> Result<TorrentHa
         disable_dht: false,
         disable_dht_persistence: false,
         fastresume: true,
+        // Session-wide throttling. Only the UPLOAD side is capped (download_bps
+        // stays None); the user's opt-in "Limit upload speed" setting feeds this.
+        // librqbit applies this via a governor rate limiter before every upload.
+        ratelimits: LimitsConfig {
+            upload_bps,
+            download_bps: None,
+        },
         // NO torrent-list persistence. librqbit's own persistence would resume
         // every past torrent on start and RE-DOWNLOAD any file the user deleted
         // (canonical torrents have CDN webseeds, so deleted files silently came
@@ -195,6 +212,20 @@ impl TorrentHandle {
             torrent_count,
             natpmp: self.natpmp_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         }
+    }
+
+    /// Apply a session-wide UPLOAD rate limit to the *running* session.
+    /// `bytes_per_sec == 0` removes the cap (unlimited). Values above u32::MAX
+    /// are clamped. `Session.ratelimits` is a public `librqbit::limits::Limits`
+    /// whose `set_upload_bps` atomically swaps the active governor limiter, so
+    /// the change takes effect live without restarting the session.
+    pub fn set_upload_limit(&self, bytes_per_sec: u64) {
+        let bps: Option<NonZeroU32> = if bytes_per_sec == 0 {
+            None
+        } else {
+            NonZeroU32::new(bytes_per_sec.min(u32::MAX as u64) as u32)
+        };
+        self.session.ratelimits.set_upload_bps(bps);
     }
 
     /// Create a .torrent for an existing local file and start seeding it.

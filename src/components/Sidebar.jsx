@@ -1,8 +1,14 @@
 import React from 'react';
 import logo from '../assets/sermon-index-white.png';
+import UpdatePrompt from './UpdatePrompt';
 
 // Clean SVG icons (Lucide-inspired, MIT license, single-color flat)
 const icons = {
+  dashboard: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" />
+    </svg>
+  ),
   library: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
@@ -31,6 +37,11 @@ const icons = {
   seedLocked: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  ),
+  stats: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
     </svg>
   ),
   chat: (
@@ -73,6 +84,11 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
 
       <div className="sidebar-nav">
         <div className="nav-section">
+          <div className={`nav-item ${page === 'dashboard' ? 'active' : ''}`} onClick={() => onNavigate('dashboard')}>
+            <span className="icon">{icons.dashboard}</span> Dashboard
+          </div>
+        </div>
+        <div className="nav-section">
           <div className="nav-section-label">Library</div>
           <div className={`nav-item ${page === 'library' ? 'active' : ''}`} onClick={() => onNavigate('library')}>
             <span className="icon">{icons.library}</span> Browse Sermons
@@ -103,6 +119,9 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
               </span>
             )}
           </div>
+          <div className={`nav-item ${page === 'stats' ? 'active' : ''}`} onClick={() => onNavigate('stats')}>
+            <span className="icon">{icons.stats}</span> Your Stats
+          </div>
           {chatShow && (
             <div className={`nav-item ${page === 'community' ? 'active' : ''}`} onClick={() => onNavigate('community')}>
               <span className="icon">{icons.chat}</span> Community
@@ -126,6 +145,11 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
           </div>
         </div>
       </div>
+
+      {/* In-app update alert — inline, directly above the scripture/announcement
+          + "Local Node Online" status box. Self-gating: renders nothing unless
+          updater.js has fired 'si-update-available' (and it isn't snoozed). */}
+      <UpdatePrompt inline />
 
       {/* Announcement box — above node status */}
       {announcement ? (

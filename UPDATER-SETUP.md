@@ -29,7 +29,7 @@ In `src-tauri/tauri.conf.json`, replace the placeholder:
 ```json
 "plugins": {
   "updater": {
-    "endpoints": ["https://sermonindex1.b-cdn.net/app/latest.json"],
+    "endpoints": ["https://sermonindex4.b-cdn.net/app/latest.json"],
     "pubkey": "PASTE_THE_PRINTED_PUBLIC_KEY_HERE"
   }
 }
@@ -81,7 +81,7 @@ Apple Silicon example) under `src-tauri/target/release/bundle/macos/`:
   "platforms": {
     "darwin-aarch64": {
       "signature": "<paste the full CONTENTS of the .app.tar.gz.sig file>",
-      "url": "https://sermonindex1.b-cdn.net/app/SermonIndex.app.tar.gz"
+      "url": "https://sermonindex4.b-cdn.net/app/SermonIndex Node Software.app.tar.gz"
     }
   }
 }
@@ -99,19 +99,62 @@ Apple Silicon example) under `src-tauri/target/release/bundle/macos/`:
     it's safe to include. If omitted, the app defaults to `"prompt"`.
 - `signature` is the **contents** of the `.sig` file, not a path/URL.
 - `notes` is shown in the prompt card — keep it short.
-- Add more platform keys as you ship them: `darwin-x86_64`, `windows-x86_64`,
-  `linux-x86_64`.
+- You don't normally hand-write this: `publish-update.mjs` (step 6) generates
+  `latest.json` with an entry for **every** signed artifact it finds
+  (`darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`, `linux-x86_64`).
 
-## 6. Every release: upload to the Bunny storage zone `/app/` folder
+## 6. Every release: publish the update with `publish-update.mjs`
 
-Upload into the storage zone behind `sermonindex1.b-cdn.net`:
+You don't hand-upload or hand-write `latest.json` — the publisher does it. It
+scans a build/bundle dir for every signed `*.sig`, uploads each updater artifact
+to the storage zone behind `sermonindex4.b-cdn.net`, and writes one `latest.json`
+with a platform entry for each artifact found (`darwin-aarch64`, `darwin-x86_64`,
+`windows-x86_64`, `linux-x86_64`). Original artifact filenames are kept (no
+rename; the two arch-less mac tarballs go under `app/<platform-key>/` so they
+don't collide).
 
-- the `.app.tar.gz` — renamed to `SermonIndex.app.tar.gz` so it matches the
-  `url` in `latest.json` (or adjust the url instead)
-- `latest.json`
+```bash
+export BUNNY_STORAGE_ZONE=<storage zone name>
+export BUNNY_STORAGE_KEY=<storage zone password>
 
-Then **purge the CDN cache** for `/app/latest.json` (and the tarball) in the
-Bunny dashboard — otherwise clients keep seeing the cached old version.
+# local mac build (default --dir = src-tauri/target/release/bundle/):
+node scripts/publish-update.mjs --mode prompt --notes "What changed"
+
+# or point --dir at collected CI artifacts (mac arm64/x64 + Windows + Linux):
+node scripts/publish-update.mjs --version v0.0.324 --dir dist-artifacts --mode prompt
+```
+
+> **`deploy-installers.mjs` does NOT write `latest.json`.** It uploads the raw
+> `.dmg/.exe/.AppImage` for brand-new downloads plus a per-version `manifest.json`
+> and download page. The auto-update manifest (`latest.json`) is written **only**
+> by `publish-update.mjs`. In CI both run automatically on every `v*` tag.
+
+Then **purge the CDN cache** for `/app/latest.json` (and each artifact URL the
+script prints) in the Bunny dashboard — otherwise clients keep seeing the cached
+old version.
+
+### Endpoint migration (do this ONCE, for the first release on the new endpoint)
+
+The updater endpoint moved from `sermonindex1.b-cdn.net` to
+`sermonindex4.b-cdn.net`. Installs built **before** this change (≤ v0.0.323) still
+poll `https://sermonindex1.b-cdn.net/app/latest.json`, so the **first** release
+after the switch must be published to **both** zones once — otherwise those older
+installs never see it and can't migrate:
+
+```bash
+# 1) new endpoint (default sermonindex4):
+node scripts/publish-update.mjs --version v0.0.324 --dir dist-artifacts
+
+# 2) legacy endpoint ONE more time, using the sermonindex1 storage-zone creds:
+export BUNNY_STORAGE_ZONE=<sermonindex1 storage zone>
+export BUNNY_STORAGE_KEY=<sermonindex1 storage zone password>
+node scripts/publish-update.mjs --version v0.0.324 --dir dist-artifacts \
+  --public-base https://sermonindex1.b-cdn.net
+```
+
+The new build itself points at `sermonindex4`, so once an old install updates
+through the legacy zone it is migrated. After everyone is on a post-migration
+build, publish only to `sermonindex4`.
 
 ## 7. Verify (test a real push)
 

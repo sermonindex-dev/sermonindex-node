@@ -24,7 +24,7 @@ Add:
 |---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | The contents of `~/.tauri/sermonindex.key` (the whole file) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password you set on the key (leave blank if you set none) |
-| `BUNNY_STORAGE_ZONE` | Your Bunny **storage zone name** (the one behind `sermonindex1.b-cdn.net`) |
+| `BUNNY_STORAGE_ZONE` | Your Bunny **storage zone name** (the one behind `sermonindex4.b-cdn.net`) |
 | `BUNNY_STORAGE_KEY` | That storage zone's **password** (Bunny → Storage → your zone → FTP & API Access → Password) |
 | `BUNNY_STORAGE_HOST` | *(optional)* only if your zone isn't in the default region, e.g. `la.storage.bunnycdn.com` |
 
@@ -83,7 +83,7 @@ installer and uploads them to your CDN in a per-version folder, with a ready-mad
 download page. Just send testers this one link:
 
 ```
-https://sermonindex1.b-cdn.net/app/releases/v0.0.322/index.html
+https://sermonindex4.b-cdn.net/app/releases/v0.0.322/index.html
 ```
 
 That page auto-lists the right installer for each OS and includes the first-launch
@@ -174,10 +174,11 @@ script CI runs — CI just points it at all four platforms' output at once.)
 ## Pushing an auto-update to testers (optional, later)
 
 Once testers are running a build, you don't have to re-send installers for every
-fix. The app checks `https://sermonindex1.b-cdn.net/app/latest.json` on launch. To
-push an update, upload the new build's updater artifacts and a new `latest.json` to
-Bunny. Full steps are in **UPDATER-SETUP.md**. For the first round of testing,
-sending installers directly is simplest.
+fix. The app checks `https://sermonindex4.b-cdn.net/app/latest.json` on launch. To
+push an update, run `scripts/publish-update.mjs` — it uploads the signed updater
+artifacts and writes the multi-platform `latest.json`. Full steps are in
+**UPDATER-SETUP.md**. For the first round of testing, sending installers directly
+is simplest.
 
 ---
 

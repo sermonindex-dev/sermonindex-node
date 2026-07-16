@@ -33,11 +33,11 @@ const env = (k: string, d = ""): string =>
   (typeof process !== "undefined" && process.env && process.env[k]) ||
   d;
 
-const ADMIN_KEY = env("ADMIN_KEY"); // single admin login password
+const ADMIN_KEY = "***REMOVED***"; // single admin login password (hardcoded; no longer read from Bunny env)
 
 // When a BunnyDB is linked to an Edge Script, Bunny auto-injects these env vars.
 // Prefer them; fall back to DB_TOKEN/DB_URL if you set names manually.
-const DB_TOKEN = env("BUNNY_DATABASE_AUTH_TOKEN") || env("DB_TOKEN");
+const DB_TOKEN = env("BUNNY_DATABASE_AUTH_TOKEN") || env("DB_TOKEN") || "***REMOVED***"; // hardcoded fallback (no env vars set)
 
 // The edge script talks to BunnyDB over HTTP (fetch), so the URL must be the
 // HTTPS pipeline endpoint — https://<host>/v2/pipeline. Bunny provides the
@@ -52,7 +52,7 @@ function normalizeDbUrl(raw: string): string {
   if (!/\/v2\/pipeline\/?$/.test(u)) u = u.replace(/\/+$/, "") + "/v2/pipeline";
   return u;
 }
-const DB_URL = normalizeDbUrl(env("BUNNY_DATABASE_URL") || env("DB_URL"));
+const DB_URL = normalizeDbUrl(env("BUNNY_DATABASE_URL") || env("DB_URL") || "libsql://***REMOVED***/");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // libSQL data layer (BunnyDB HTTP pipeline)
@@ -146,6 +146,9 @@ async function ensureTables(): Promise<void> {
     { sql: `DROP TABLE IF EXISTS content_packs` },
     // Remove a stale leftover config row from the old IPFS build.
     { sql: `DELETE FROM config WHERE key = 'ipfs_enabled'` },
+    // Migrate the old IPFS-era content-source setting to the BitTorrent-era values + label.
+    { sql: `UPDATE config SET description = 'Where the app pulls sermon content from: cdn (direct download), p2p (BitTorrent), or hybrid (BitTorrent with CDN fallback).' WHERE key = 'source_mode'` },
+    { sql: `UPDATE config SET value = 'cdn' WHERE key = 'source_mode' AND value NOT IN ('cdn','p2p','hybrid')` },
 
     // Nodes — one row per participating node, updated on every heartbeat.
     {
@@ -155,6 +158,7 @@ async function ensureTables(): Promise<void> {
         lon REAL DEFAULT 0,
         city TEXT DEFAULT 'Unknown',
         country TEXT DEFAULT 'XX',
+        region TEXT DEFAULT '',
         files_stored INTEGER DEFAULT 0,
         storage_used_bytes INTEGER DEFAULT 0,
         uploaded_bytes INTEGER DEFAULT 0,
@@ -277,6 +281,14 @@ async function ensureTables(): Promise<void> {
       sql: `INSERT OR IGNORE INTO config (key, value, updated_at, description) VALUES (?,?,?,?)`,
       args: ["min_app_version", "0.0.0", now, "Minimum app version the network expects."],
     },
+    {
+      sql: `INSERT OR IGNORE INTO config (key, value, updated_at, description) VALUES (?,?,?,?)`,
+      args: ["master_list_version", "", now, "Bump to force every node to re-download the canonical master-list.json (set via the Master List refresh button). Empty = nodes keep their cached copy."],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO config (key, value, updated_at, description) VALUES (?,?,?,?)`,
+      args: ["moderator_ids", "", now, "Comma/space/newline-separated short node IDs (e.g. si-2098a) shown as moderators in the community chat."],
+    },
   ]);
 
   // The nodes table already exists in production (created by an older script), so
@@ -290,6 +302,8 @@ async function ensureTables(): Promise<void> {
   // Same for the newer columns (existing DBs won't have them).
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN uploaded_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
   try { await dbQuery(`ALTER TABLE stats_snapshots ADD COLUMN total_uploaded_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
+  // Region/state (e.g. "BC") reported alongside city/country in the heartbeat.
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN region TEXT DEFAULT ''`); } catch { /* exists */ }
 
   _tablesCreated = true;
 }
@@ -363,10 +377,10 @@ function clientIp(req: Request): string {
  * Server-side IP geolocation (used when the app couldn't resolve its own
  * location). Best-effort; returns Unknown/XX on any failure.
  */
-async function ipGeo(req: Request): Promise<{ city: string; country: string; lat: number; lon: number }> {
+async function ipGeo(req: Request): Promise<{ city: string; country: string; region: string; lat: number; lon: number }> {
   const cdnCountry = req.headers.get("CDN-RequestCountryCode") || "";
   const ip = clientIp(req);
-  const fallback = { city: "Unknown", country: cdnCountry || "XX", lat: 0, lon: 0 };
+  const fallback = { city: "Unknown", country: cdnCountry || "XX", region: "", lat: 0, lon: 0 };
   if (!ip) return fallback;
   try {
     const res = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
@@ -377,6 +391,7 @@ async function ipGeo(req: Request): Promise<{ city: string; country: string; lat
     return {
       city: d.city || "Unknown",
       country: d.country_code || cdnCountry || "XX",
+      region: d.region_code || d.region || "",
       lat: toNum(d.latitude, 0),
       lon: toNum(d.longitude, 0),
     };
@@ -577,6 +592,23 @@ function timeAgo(iso: string | null): string {
   return Math.floor(s / 86400) + "d ago";
 }
 
+/**
+ * Human location string: "City, Region, CountryName".
+ * The full country name is derived from a 2-letter code via Intl.DisplayNames
+ * (falling back to the raw code). Empty parts (e.g. a missing region) are dropped,
+ * so "Abbotsford", "BC", "CA" → "Abbotsford, BC, Canada" and "Unknown", "", "XX" → "Unknown, XX".
+ */
+function fmtLocation(city: any, region: any, country: any): string {
+  const cc = String(country ?? "").trim();
+  let countryName = cc;
+  try {
+    if (cc) countryName = new Intl.DisplayNames(["en"], { type: "region" }).of(cc.toUpperCase()) || cc;
+  } catch {
+    countryName = cc;
+  }
+  return [String(city ?? "").trim(), String(region ?? "").trim(), countryName].filter(Boolean).join(", ");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ============================  NODE API HANDLERS  ============================
 // (app-facing contract — response shapes are frozen)
@@ -598,6 +630,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   let lon = toNum(body.lon, 0);
   let city = String(body.city || "Unknown");
   let country = String(body.country || "XX");
+  let region = String(body.region || "");
   const filesStored = toInt(body.files_stored, 0);
   const storageBytes = toInt(body.storage_used_bytes, 0);
   const uploadedBytes = toInt(body.uploaded_bytes, 0);
@@ -611,13 +644,22 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   // anything else (null/undefined) = unknown → stored as 0.
   const reachable = body.reachable === true ? 1 : (body.reachable === false ? 0 : 0);
 
-  // If the app couldn't geolocate itself, try a server-side IP lookup.
-  if ((lat === 0 && lon === 0) && (city === "Unknown" || !city)) {
+  // If the app couldn't geolocate itself, try a server-side IP lookup. Also
+  // backfill the region (province/state) if we still don't have one — reusing a
+  // region already resolved for this node so we don't re-query every heartbeat.
+  const needCity = (lat === 0 && lon === 0) && (city === "Unknown" || !city);
+  let needRegion = !region;
+  if (needRegion) {
+    try {
+      const prev = await dbQuery(`SELECT region FROM nodes WHERE node_id=?`, [nodeId]);
+      const prevRegion = String(prev.rows[0]?.region || "");
+      if (prevRegion) { region = prevRegion; needRegion = false; }
+    } catch { /* no existing row yet */ }
+  }
+  if (needCity || needRegion) {
     const geo = await ipGeo(req);
-    lat = geo.lat;
-    lon = geo.lon;
-    city = geo.city;
-    country = geo.country;
+    if (needCity) { lat = geo.lat; lon = geo.lon; city = geo.city; country = geo.country; }
+    if (needRegion && geo.region) region = geo.region;
   }
   // Always honour the CDN country header if the app didn't send one.
   const cdnCountry = req.headers.get("CDN-RequestCountryCode");
@@ -628,12 +670,12 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   // Upsert the node row (+1 heartbeat, mark online, refresh last_seen).
   await dbQuery(
     `INSERT INTO nodes
-      (node_id, lat, lon, city, country, files_stored, storage_used_bytes, uploaded_bytes, peers_connected,
+      (node_id, lat, lon, city, country, region, files_stored, storage_used_bytes, uploaded_bytes, peers_connected,
        uptime_seconds, library_coverage, content_mode, app_version, node_type, reachable,
        last_seen, first_seen, total_heartbeats, is_online)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
      ON CONFLICT(node_id) DO UPDATE SET
-       lat=excluded.lat, lon=excluded.lon, city=excluded.city, country=excluded.country,
+       lat=excluded.lat, lon=excluded.lon, city=excluded.city, country=excluded.country, region=excluded.region,
        files_stored=excluded.files_stored, storage_used_bytes=excluded.storage_used_bytes,
        uploaded_bytes=MAX(nodes.uploaded_bytes, excluded.uploaded_bytes),
        peers_connected=excluded.peers_connected, uptime_seconds=excluded.uptime_seconds,
@@ -643,7 +685,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
        last_seen=excluded.last_seen,
        total_heartbeats=nodes.total_heartbeats+1,
        is_online=1`,
-    [nodeId, lat, lon, city, country, filesStored, storageBytes, uploadedBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, reachable, ts, ts],
+    [nodeId, lat, lon, city, country, region, filesStored, storageBytes, uploadedBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, reachable, ts, ts],
   );
 
   // Record shared sermons from body.seeded_torrents.
@@ -686,6 +728,9 @@ async function handleHeartbeat(req: Request): Promise<Response> {
 
   const config: Record<string, string> = {};
   for (const r of configRows.rows) config[r.key] = r.value;
+  // master_list_version travels INSIDE config. Always present as a string so
+  // clients can compare it (empty = no forced version; older clients ignore it).
+  if (typeof config.master_list_version !== "string") config.master_list_version = "";
 
   const commands = cmdRows.rows.map((c: any) => ({
     command_id: toInt(c.id, 0),
@@ -795,7 +840,7 @@ async function handleMap(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
   const { rows } = await dbQuery(
-    `SELECT node_id, lat, lon, city, country, library_coverage, node_type, reachable,
+    `SELECT node_id, lat, lon, city, country, region, library_coverage, node_type, reachable,
             files_stored, app_version, content_mode, peers_connected, storage_used_bytes
        FROM nodes WHERE is_online=1 AND last_seen >= ?`,
     [online],
@@ -806,6 +851,7 @@ async function handleMap(): Promise<Response> {
     lon: toNum(r.lon, 0),
     city: r.city || "Unknown",
     country: r.country || "XX",
+    region: r.region || "",
     coverage: toNum(r.library_coverage, 0),
     type: r.node_type || "user",
     files: toInt(r.files_stored, 0),
@@ -864,6 +910,8 @@ async function handleConfig(): Promise<Response> {
   const { rows } = await dbQuery(`SELECT key, value FROM config`);
   const config: Record<string, string> = {};
   for (const r of rows) config[r.key] = r.value;
+  // master_list_version travels INSIDE config; always present as a string.
+  if (typeof config.master_list_version !== "string") config.master_list_version = "";
   return jsonResponse({ config });
 }
 
@@ -1007,6 +1055,22 @@ async function handleLogin(req: Request): Promise<Response> {
   return htmlResponse(html, 200, { "Set-Cookie": cookie });
 }
 
+// Auto-login for the desktop hub: GET /auto?key=... sets the session cookie and
+// redirects to /admin (used by the SermonIndex Development app iframe).
+async function handleAutoLogin(req: Request): Promise<Response> {
+  const key = new URL(req.url).searchParams.get("key") || "";
+  if (!ADMIN_KEY || key !== ADMIN_KEY) return loginPage("Incorrect key. Please try again.");
+  const token = crypto.randomUUID();
+  await ensureTables();
+  await dbQuery(`INSERT INTO sessions (token, created_at) VALUES (?, ?)`, [token, nowIso()]);
+  const cookie = `${SESSION_COOKIE}=${token}; Path=/; SameSite=Lax; HttpOnly; Max-Age=31536000`;
+  const redirectCookie = `${SESSION_COOKIE}=${token}; path=/; SameSite=Lax; max-age=31536000`;
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Signing in…</title></head>
+<body><script>document.cookie=${JSON.stringify(redirectCookie)};location.replace("/admin");</script>
+<noscript><meta http-equiv="refresh" content="0;url=/admin"></noscript></body></html>`;
+  return htmlResponse(html, 200, { "Set-Cookie": cookie });
+}
+
 async function handleLogout(req: Request): Promise<Response> {
   const token = getCookie(req, SESSION_COOKIE);
   if (token) {
@@ -1067,7 +1131,15 @@ function configEditor(rows: any[], compact = false): string {
       <form method="POST" action="/admin/config" class="row" style="margin-bottom:10px;align-items:flex-end;">
         <input type="hidden" name="key" value="${escapeHtml(r.key)}">
         <div style="min-width:170px;"><label>Key</label><code>${escapeHtml(r.key)}</code></div>
-        <div style="flex:1;min-width:180px;"><label>Value</label><input name="value" value="${escapeHtml(r.value)}"></div>
+        <div style="flex:1;min-width:180px;"><label>Value</label>${
+          r.key === "source_mode"
+            ? `<select name="value">
+                <option value="cdn"${r.value === "cdn" ? " selected" : ""}>CDN — direct download</option>
+                <option value="p2p"${r.value === "p2p" ? " selected" : ""}>Peer-to-peer (BitTorrent)</option>
+                <option value="hybrid"${r.value === "hybrid" ? " selected" : ""}>Hybrid — BitTorrent + CDN fallback</option>
+              </select>`
+            : `<input name="value" value="${escapeHtml(r.value)}">`
+        }</div>
         ${compact ? "" : `<div style="flex:1;min-width:180px;"><label>Description</label><input name="description" value="${escapeHtml(r.description || "")}"></div>`}
         <button class="btn sm" type="submit">Save</button>
       </form>`,
@@ -1257,7 +1329,7 @@ async function pageNodes(): Promise<Response> {
     ),
     // Nodes joined with seed_access flag and a per-node shared-sermon count.
     dbQuery(
-      `SELECT n.node_id, n.city, n.country, n.is_online, n.last_seen, n.node_type, n.reachable,
+      `SELECT n.node_id, n.city, n.country, n.region, n.is_online, n.last_seen, n.node_type, n.reachable,
               n.files_stored, n.library_coverage, n.app_version,
               COALESCE(sa.enabled, 0) AS seed_enabled,
               (SELECT COUNT(*) FROM shared_sermons ss WHERE ss.node_id = n.node_id) AS shared_count
@@ -1266,6 +1338,99 @@ async function pageNodes(): Promise<Response> {
         ORDER BY n.last_seen DESC LIMIT 200`,
     ),
   ]);
+
+  // App-version distribution (additive): count ONLINE nodes grouped by reported
+  // app_version so the admin can see the version spread and spot stale installs.
+  // Same 15-min online cutoff as the rest of the dashboard.
+  const online = isoMinutesAgo(15);
+  const versions = await dbQuery(
+    `SELECT COALESCE(NULLIF(app_version,''),'unknown') v, COUNT(*) c
+       FROM nodes WHERE is_online=1 AND last_seen >= ?
+      GROUP BY v ORDER BY c DESC`,
+    [online],
+  );
+  // Numeric-aware version compare (e.g. 0.0.325 > 0.0.99). Non-numeric parts count as 0.
+  const cmpVersion = (a: string, b: string): number => {
+    const pa = String(a).split(".").map((x) => toInt(x, 0));
+    const pb = String(b).split(".").map((x) => toInt(x, 0));
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const diff = (pa[i] || 0) - (pb[i] || 0);
+      if (diff) return diff;
+    }
+    return 0;
+  };
+  // Highest real (non-"unknown") version among online nodes; anything lower is stale.
+  let newestVersion = "";
+  for (const r of versions.rows) {
+    if (r.v && r.v !== "unknown" && (!newestVersion || cmpVersion(r.v, newestVersion) > 0)) {
+      newestVersion = String(r.v);
+    }
+  }
+  const versionChips = versions.rows
+    .map((r: any) => {
+      const v = String(r.v || "unknown");
+      const c = toInt(r.c, 0);
+      const isUnknown = v === "unknown";
+      const isStale = !isUnknown && !!newestVersion && cmpVersion(v, newestVersion) < 0;
+      // Newest = green, stale = orange (spot the old ones), unknown = muted.
+      const cls = isUnknown ? "b-off" : isStale ? "b-peer" : "b-node";
+      const tip = isUnknown ? "version not reported" : isStale ? `older than v${newestVersion}` : "newest version";
+      return `<span class="badge ${cls}" title="${escapeHtml(tip)}">${escapeHtml(isUnknown ? v : "v" + v)} · ${c}</span>`;
+    })
+    .join("");
+  const versionsSection = `
+    <h2>App Versions <span class="muted" style="font-size:0.7rem;font-weight:400;">(online nodes)</span></h2>
+    <div class="card">
+      ${
+        versions.rows.length
+          ? `<div class="row">${versionChips}</div>`
+          : '<div class="empty">No online nodes.</div>'
+      }
+    </div>`;
+
+  // Network Health (additive): a right-now snapshot of how resilient the network
+  // is — how many online nodes can actually serve peers (reachable=1), how many
+  // seeds are up, average library coverage, and country spread. A network of mostly
+  // closed peers is fragile, so reachable% is the headline metric. Same 15-min cutoff.
+  const health = await dbQuery(
+    `SELECT COUNT(*) online,
+            SUM(CASE WHEN reachable=1 THEN 1 ELSE 0 END) reachable,
+            SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
+            COALESCE(AVG(library_coverage),0) avgCoverage,
+            COUNT(DISTINCT country) countries
+       FROM nodes WHERE is_online=1 AND last_seen >= ?`,
+    [online],
+  );
+  const h = health.rows[0] || {};
+  const hOnline = toInt(h.online, 0);
+  const hReachable = toInt(h.reachable, 0);
+  const hSeeds = toInt(h.seeds, 0);
+  const hCoverage = Math.round(toNum(h.avgCoverage, 0));
+  const hCountries = toInt(h.countries, 0);
+  const reachablePct = hOnline > 0 ? Math.round((hReachable / hOnline) * 100) : 0;
+  // Muted at-risk hint when the network looks fragile (few reachable peers or thin coverage).
+  const atRisk = hOnline > 0 && (reachablePct < 30 || hCoverage < 25);
+  const riskMsg = reachablePct < 30
+    ? "Few reachable nodes — network resilience is low"
+    : "Low average coverage — content availability is thin";
+  const riskChip = atRisk
+    ? `<div class="row" style="margin-top:12px;"><span class="badge b-peer">⚠ ${escapeHtml(riskMsg)}</span></div>`
+    : "";
+  const healthSection = `
+    <h2>Network Health <span class="muted" style="font-size:0.7rem;font-weight:400;">(online nodes)</span></h2>
+    <div class="card">
+      ${
+        hOnline > 0
+          ? `<div class="stats">
+              ${statCardColor(reachablePct + "%", `Reachable · ${hReachable} of ${hOnline} online`, reachablePct < 30 ? "var(--orange)" : "var(--green)")}
+              ${statCardColor(hSeeds, "Seeds online", "var(--gold-text)")}
+              ${statCard(hCoverage + "%", "Avg coverage")}
+              ${statCard(hCountries, "Countries")}
+            </div>${riskChip}`
+          : '<div class="empty">No online nodes.</div>'
+      }
+    </div>`;
 
   // Pending seed requests block.
   const pendingRows = pending.rows
@@ -1337,7 +1502,7 @@ async function pageNodes(): Promise<Response> {
         </form>`;
       return `<tr>
         <td><code>#${escapeHtml(String(n.node_id).slice(0, 8))}</code></td>
-        <td>${escapeHtml(n.city || "Unknown")}, ${escapeHtml(n.country || "XX")}</td>
+        <td>${escapeHtml(fmtLocation(n.city, n.region, n.country))}</td>
         <td>${isOnline ? '<span class="badge b-on">online</span>' : '<span class="badge b-off">offline</span>'}</td>
         <td>${n.node_type === "seed" ? '<span class="badge b-seed">seed</span>' : '<span class="badge b-user">user</span>'}</td>
         <td>${classBadge}</td>
@@ -1365,7 +1530,7 @@ async function pageNodes(): Promise<Response> {
       }
     </div>`;
 
-  const body = `<h1>Nodes</h1><p class="sub">Approve seed access and manage every node that has reported in.</p>${pendingSection}${nodesSection}`;
+  const body = `<h1>Nodes</h1><p class="sub">Approve seed access and manage every node that has reported in.</p>${healthSection}${pendingSection}${versionsSection}${nodesSection}`;
   return htmlResponse(page("Nodes", "nodes", body));
 }
 
@@ -1373,7 +1538,36 @@ async function pageNodes(): Promise<Response> {
 async function pageConfig(): Promise<Response> {
   await ensureTables();
   const { rows } = await dbQuery(`SELECT key, value, description FROM config ORDER BY key`);
-  const body = `<h1>Remote Config</h1><p class="sub">Key/value settings delivered to every node on its next heartbeat.</p>${configEditor(rows, false)}`;
+  // Master List refresh control — reads the current master_list_version and lets
+  // the admin bump it, forcing every node to re-pull the canonical master-list.json.
+  const masterListVersion = String((rows.find((r: any) => r.key === "master_list_version") || {}).value || "");
+  const masterListCard = `
+    <h2>Master List</h2>
+    <div class="card" style="margin-bottom:16px;">
+      <p class="sub">Force every node to re-download the canonical <code>master-list.json</code>. Nodes cache it locally across launches and only re-pull when this version changes (delivered on the next heartbeat, within ~5&nbsp;min).</p>
+      <div class="row" style="align-items:flex-end;">
+        <div style="min-width:220px;"><label>Current version</label><code>${escapeHtml(masterListVersion || "(none — nodes use their cached copy)")}</code></div>
+        <form method="POST" action="/admin/master-list/refresh" class="inline-form">
+          <button class="btn" type="submit">Force all nodes to refresh</button>
+        </form>
+      </div>
+    </div>`;
+  // Chat Moderators control — persists the moderator_ids config value. The community
+  // chat backend fetches /api/config (cached ~60s) and stars messages from these nodes.
+  const moderatorIds = String((rows.find((r: any) => r.key === "moderator_ids") || {}).value || "");
+  const moderatorsCard = `
+    <h2>Chat Moderators</h2>
+    <div class="card" style="margin-bottom:16px;">
+      <p class="sub">Short node IDs (like <code>si-2098a</code>) whose messages appear as moderators in the community chat. Separate with commas, spaces, or new lines. Picked up by the chat backend within ~60&nbsp;s.</p>
+      <form method="POST" action="/admin/moderators">
+        <div class="field">
+          <label for="moderator_ids">Moderator node IDs</label>
+          <textarea id="moderator_ids" name="moderator_ids" rows="4" placeholder="si-2098a, si-1a2b3">${escapeHtml(moderatorIds)}</textarea>
+        </div>
+        <button class="btn" type="submit">Save Moderators</button>
+      </form>
+    </div>`;
+  const body = `<h1>Remote Config</h1><p class="sub">Key/value settings delivered to every node on its next heartbeat.</p>${masterListCard}${moderatorsCard}${configEditor(rows, false)}`;
   return htmlResponse(page("Config", "config", body));
 }
 
@@ -1451,6 +1645,53 @@ async function adminConfigSave(req: Request): Promise<Response> {
   return redirect("/admin");
 }
 
+/**
+ * POST /admin/master-list/refresh — bump master_list_version to the current time.
+ * Every node picks this up inside its config on the next heartbeat and re-pulls
+ * the canonical master-list.json. Additive: reuses the config store + admin-session
+ * auth (guarded by the /admin isLoggedIn check in the router, same as other actions).
+ */
+async function adminMasterListRefresh(_req: Request): Promise<Response> {
+  await ensureTables();
+  const version = new Date().toISOString();
+  await dbQuery(
+    `INSERT INTO config (key, value, updated_at, description) VALUES (?,?,?,'')
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    ["master_list_version", version, version],
+  );
+  return redirect("/admin/config");
+}
+
+/**
+ * POST /admin/moderators — persist the community-chat moderator node-id list into
+ * the config store under `moderator_ids`. Additive: reuses the config store + the
+ * admin-session auth (guarded by the /admin isLoggedIn check in the router, same as
+ * the other admin actions). The chat backend fetches /api/config to read this.
+ */
+async function adminModeratorsSave(req: Request): Promise<Response> {
+  await ensureTables();
+  const form = await req.formData().catch(() => null);
+  const raw = String(form ? form.get("moderator_ids") ?? "" : "");
+  // Normalize: split on commas/whitespace/newlines, strip a leading '#', lowercase,
+  // drop blanks, dedupe. Stored as a tidy comma-separated list.
+  const ids = Array.from(
+    new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((s) => s.replace(/^#+/, "").trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+  const value = ids.join(", ");
+  const ts = nowIso();
+  await dbQuery(
+    `INSERT INTO config (key, value, updated_at, description) VALUES (?,?,?,?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    ["moderator_ids", value, ts, "Comma/space/newline-separated short node IDs (e.g. si-2098a) shown as moderators in the community chat."],
+  );
+  return redirect("/admin/config");
+}
+
 /** 302 redirect helper. */
 function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { Location: location } });
@@ -1483,6 +1724,7 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
 
     // ── Auth ────────────────────────────────────────────────────────────────
     if (path === "/") return redirect("/login");
+    if (path === "/auto") return await handleAutoLogin(req);
     if (path === "/login" && method === "GET") return loginPage();
     if (path === "/login" && method === "POST") return await handleLogin(req);
     if (path === "/logout") return await handleLogout(req);
@@ -1501,6 +1743,8 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
       if (path === "/admin/seed" && method === "POST") return await adminSeedFlip(req);
       if (path === "/admin/node-command" && method === "POST") return await adminNodeCommand(req);
       if (path === "/admin/config" && method === "POST") return await adminConfigSave(req);
+      if (path === "/admin/master-list/refresh" && method === "POST") return await adminMasterListRefresh(req);
+      if (path === "/admin/moderators" && method === "POST") return await adminModeratorsSave(req);
 
       return errorPage("Unknown admin page.");
     }

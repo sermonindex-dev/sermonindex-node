@@ -15,6 +15,20 @@ export default function SettingsPage({
   onStorageLimitChange,
   backgroundMode,
   onBackgroundModeChange,
+  uploadLimitEnabled,
+  onUploadLimitToggle,
+  uploadLimitKbps,
+  onUploadLimitKbpsChange,
+  seedScheduleEnabled,
+  onSeedScheduleToggle,
+  seedStart,
+  onSeedStartChange,
+  seedEnd,
+  onSeedEndChange,
+  uploadCapEnabled,
+  onUploadCapToggle,
+  uploadCapGb,
+  onUploadCapGbChange,
   chatNotify,
   onChatNotifyChange,
   chatShow,
@@ -27,6 +41,36 @@ export default function SettingsPage({
   const [nodeId, setNodeId] = useState('');
   const [modeStatus, setModeStatus] = useState(''); // 'saved', ''
   const [copiedNodeId, setCopiedNodeId] = useState(false);
+  const [monthUsedGb, setMonthUsedGb] = useState(0); // GB uploaded this month (read-only display)
+  // Local draft for the KB/s upload cap — type a number, then press Set to apply.
+  // Committing reuses onUploadLimitKbpsChange (the same setter that persists + applies).
+  const [uploadKbpsDraft, setUploadKbpsDraft] = useState(String(uploadLimitKbps ?? ''));
+  const [uploadKbpsSaved, setUploadKbpsSaved] = useState(false);
+
+  // Read-only monthly upload usage for the cap readout. App.jsx owns writing the
+  // per-month baseline (`si-upload-month`); here we only READ it + the lifetime
+  // accumulator to show progress. Refreshed lightly while the cap is enabled.
+  useEffect(() => {
+    if (!uploadCapEnabled) { setMonthUsedGb(0); return; }
+    const read = () => {
+      try {
+        const lifeRaw = localStorage.getItem('si-uploaded-lifetime');
+        const lifetime = lifeRaw ? Number(JSON.parse(lifeRaw).lifetime) || 0 : 0;
+        const rec = JSON.parse(localStorage.getItem('si-upload-month') || 'null');
+        const d = new Date();
+        const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const usedBytes = (!rec || rec.month !== month) ? 0 : Math.max(0, lifetime - (Number(rec.baseLifetime) || 0));
+        setMonthUsedGb(usedBytes / (1024 ** 3));
+      } catch { setMonthUsedGb(0); }
+    };
+    read();
+    const iv = setInterval(read, 5000);
+    return () => clearInterval(iv);
+  }, [uploadCapEnabled]);
+
+  // Keep the KB/s draft in sync with the applied value whenever it changes
+  // elsewhere (persisted value loads on mount, or it's set outside this field).
+  useEffect(() => { setUploadKbpsDraft(String(uploadLimitKbps ?? '')); }, [uploadLimitKbps]);
 
   // navigator.clipboard often fails silently in the WKWebView; fall back to a
   // temp-textarea + execCommand so Copy actually works, and give feedback.
@@ -64,6 +108,29 @@ export default function SettingsPage({
     fontFamily: 'var(--font)',
   };
 
+  // Small button matching the app's existing tertiary buttons (see About section).
+  const setButtonStyle = {
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    fontFamily: 'var(--font)',
+    color: 'var(--gold-text)',
+    background: 'var(--bg-tertiary)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    padding: '6px 12px',
+  };
+
+  // Upload-cap draft → derived flags + a commit that reuses the existing setter prop.
+  const uploadKbpsDraftNum = parseInt(uploadKbpsDraft, 10);
+  const uploadKbpsValid = Number.isFinite(uploadKbpsDraftNum) && uploadKbpsDraftNum > 0;
+  const uploadKbpsDirty = uploadKbpsValid && uploadKbpsDraftNum !== uploadLimitKbps;
+  const commitUploadKbps = () => {
+    if (!uploadKbpsDirty) return;
+    onUploadLimitKbpsChange(uploadKbpsDraftNum);
+    setUploadKbpsSaved(true);
+    setTimeout(() => setUploadKbpsSaved(false), 2000);
+  };
+
   const modes = [
     {
       key: 'cdn',
@@ -95,6 +162,20 @@ export default function SettingsPage({
       <div className="connections-layout">
         {/* ── LEFT: Settings ── */}
         <div className="connections-left">
+          {/* Low-disk warning (task 105): surfaced from nodeStats. New downloads
+              are paused automatically until space is freed; seeding continues. */}
+          {nodeStats?.lowDisk && (
+            <div className="seed-card" style={{ background: 'rgba(230,160,30,0.08)', border: '1px solid rgba(230,160,30,0.4)' }}>
+              <div style={{ fontWeight: 700, color: 'var(--gold-text)', marginBottom: '4px' }}>
+                Low disk space
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                Only {nodeStats.diskFree || 'very little space'} free on the storage drive.
+                New downloads are paused until space is freed. Seeding of files you
+                already have continues normally.
+              </div>
+            </div>
+          )}
           <div className="seed-card">
             <h3>Peer-to-Peer Network</h3>
             <p style={{ marginBottom: '16px' }}>
@@ -158,11 +239,11 @@ export default function SettingsPage({
               </select>
             </div>
 
-            <div className="settings-row" style={{ border: 'none' }}>
+            <div className="settings-row">
               <div>
-                <div style={{ fontWeight: 500 }}>Upload Bandwidth Limit</div>
+                <div style={{ fontWeight: 500 }}>Download Bandwidth Limit</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Limit how much bandwidth is used for sharing:{' '}
+                  Limit how much bandwidth downloads (Archive.org / CDN) may use:{' '}
                   <strong style={{ color: 'var(--gold-text)' }}>
                     {bandwidthLimit === 0 ? 'Unlimited' : bandwidthLimit < 1 ? `${bandwidthLimit * 1000} Kbps` : `${bandwidthLimit} Mbps`}
                   </strong>
@@ -184,6 +265,161 @@ export default function SettingsPage({
                 <option value={0}>Unlimited</option>
               </select>
             </div>
+
+            {/* Real BitTorrent UPLOAD throttle (task 93). Opt-in: default off =
+                unlimited, so nothing changes unless the user turns it on. This
+                actually caps how fast sermons are shared to the peer swarm —
+                unlike the download limit above, which only affects HTTP fetches. */}
+            <div className="settings-row" style={uploadLimitEnabled ? undefined : { border: 'none' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>Limit upload speed</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Cap how fast sermons are shared to the peer swarm (BitTorrent uploads):{' '}
+                  <strong style={{ color: 'var(--gold-text)' }}>
+                    {uploadLimitEnabled ? `${uploadLimitKbps} KB/s` : 'Unlimited'}
+                  </strong>
+                </div>
+              </div>
+              <div
+                className={`toggle ${uploadLimitEnabled ? 'on' : ''}`}
+                onClick={() => onUploadLimitToggle(!uploadLimitEnabled)}
+              ></div>
+            </div>
+
+            {uploadLimitEnabled && (
+              <div className="settings-row" style={{ border: 'none' }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>Upload speed cap</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Maximum upload rate, in kilobytes per second
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="1"
+                    step="50"
+                    value={uploadKbpsDraft}
+                    onChange={e => setUploadKbpsDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') commitUploadKbps(); }}
+                    style={{ ...selectStyle, width: '90px', textAlign: 'right' }}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>KB/s</span>
+                  <button
+                    onClick={commitUploadKbps}
+                    disabled={!uploadKbpsDirty}
+                    title="Apply the upload speed cap"
+                    style={{
+                      ...setButtonStyle,
+                      color: uploadKbpsSaved ? 'var(--green)' : setButtonStyle.color,
+                      border: `1px solid ${uploadKbpsSaved ? 'var(--green)' : 'var(--border)'}`,
+                      opacity: (uploadKbpsDirty || uploadKbpsSaved) ? 1 : 0.5,
+                      cursor: uploadKbpsDirty ? 'pointer' : 'default',
+                    }}
+                  >
+                    {uploadKbpsSaved ? 'Set ✓' : 'Set'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Seeding schedule + monthly upload cap (task 108) — opt-in ──
+              Both default OFF, so seeding stays continuous unless the user opts in.
+              Enforcement lives in App.jsx (throttles uploads via set_upload_limit). */}
+          <div className="seed-card">
+            <h3>Seeding Schedule &amp; Limits</h3>
+            <p style={{ marginBottom: '16px' }}>
+              Optional controls over how much you share back to the peer swarm. Both
+              are off by default — leave them off to keep seeding continuously.
+            </p>
+
+            <div className="settings-row">
+              <div>
+                <div style={{ fontWeight: 500 }}>Only seed during set hours</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Outside the window, uploads throttle to near-zero (about 1 KB/s).
+                  Downloads and playback are unaffected — handy for overnight-only seeding.
+                </div>
+              </div>
+              <div
+                className={`toggle ${seedScheduleEnabled ? 'on' : ''}`}
+                onClick={() => onSeedScheduleToggle(!seedScheduleEnabled)}
+              ></div>
+            </div>
+
+            {seedScheduleEnabled && (
+              <div className="settings-row">
+                <div>
+                  <div style={{ fontWeight: 500 }}>Seeding window</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Local time. A window like 23:00 → 07:00 seeds overnight and throttles by day.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="time"
+                    value={seedStart}
+                    onChange={e => onSeedStartChange(e.target.value)}
+                    style={selectStyle}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>to</span>
+                  <input
+                    type="time"
+                    value={seedEnd}
+                    onChange={e => onSeedEndChange(e.target.value)}
+                    style={selectStyle}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="settings-row" style={{ border: 'none' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>Monthly upload cap</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Pause seeding once you've uploaded this much in a calendar month;
+                  it resumes automatically when the month resets.
+                  {uploadCapEnabled && (
+                    <>
+                      {' '}
+                      <strong style={{ color: 'var(--gold-text)' }}>
+                        {monthUsedGb.toFixed(2)} GB of {uploadCapGb} GB used this month
+                      </strong>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div
+                className={`toggle ${uploadCapEnabled ? 'on' : ''}`}
+                onClick={() => onUploadCapToggle(!uploadCapEnabled)}
+              ></div>
+            </div>
+
+            {uploadCapEnabled && (
+              <div className="settings-row" style={{ border: 'none' }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>Cap size</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Upload allowance per month, in gigabytes
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="1"
+                    step="10"
+                    value={uploadCapGb}
+                    onChange={e => {
+                      const n = parseInt(e.target.value, 10);
+                      if (Number.isFinite(n) && n > 0) onUploadCapGbChange(n);
+                    }}
+                    style={{ ...selectStyle, width: '90px', textAlign: 'right' }}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>GB</span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="seed-card">

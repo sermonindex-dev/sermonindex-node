@@ -1009,6 +1009,7 @@ input[type="password"]:focus, input[type="text"]:focus {
   border-radius: 11px;
   cursor: pointer;
   position: relative;
+  flex-shrink: 0; /* never let a long sibling description squeeze/clip the pill */
   transition: background 0.2s;
 }
 
@@ -1816,6 +1817,44 @@ input[type="password"]:focus, input[type="text"]:focus {
   overflow-y: auto;
 }
 
+/* ── In-app update alert ──────────────────────────────────────────────────────
+   Mounted inline in the Sidebar, directly above the scripture/announcement +
+   "Local Node Online" status box (replaces the old floating bottom-left pill).
+   Blends with the olive sidebar via the gold theme tokens, but reads as an
+   important, clickable alert: a gold accent bar + a soft attention pulse draw
+   the eye. The whole banner is one click to update (see UpdatePrompt.jsx). */
+.si-update-alert {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px 9px 11px;
+  background: var(--gold-dim);
+  border: 1px solid var(--gold);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  color: var(--sidebar-text);
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
+  animation: si-update-pulse 2.2s ease-in-out infinite;
+  transition: background 140ms ease, transform 140ms ease;
+}
+.si-update-alert--sidebar { margin: 0 12px 10px; }
+.si-update-alert:hover { background: var(--gold-glow); transform: translateY(-1px); }
+.si-update-alert:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.si-update-alert.is-working { cursor: default; animation: none; }
+.si-update-alert__spin { animation: si-update-spin 0.9s linear infinite; }
+
+@keyframes si-update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0); }
+  50%      { box-shadow: 0 0 12px 1px var(--gold-glow); }
+}
+@keyframes si-update-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .si-update-alert, .si-update-alert__spin { animation: none; }
+}
+
 /* ── TopBar health badge ── */
 .topbar-health-badge {
   display: flex;
@@ -1944,3 +1983,65 @@ input[type="password"]:focus, input[type="text"]:focus {
   opacity: 1;
   border-color: rgba(255, 255, 255, 0.5);
 }
+
+/* ═══════════════ DASHBOARD ═══════════════ */
+.dash { max-width: 1080px; margin: 0 auto; }
+@keyframes dash-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* welcome / status banner */
+.dash-hero { display: flex; align-items: center; gap: 24px; background: linear-gradient(135deg, #6b6b33, #545432); border-radius: var(--radius-lg); padding: 26px 30px; margin-bottom: 18px; overflow: hidden; }
+.dash-hero-copy { flex: 1; min-width: 0; }
+.dash-eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: #efe4bd; background: rgba(212,175,55,0.18); padding: 5px 12px; border-radius: 999px; margin-bottom: 14px; }
+.dash-dot { width: 7px; height: 7px; border-radius: 50%; background: #7bd389; animation: dash-pulse 2s infinite; flex-shrink: 0; }
+.dash-hero-copy h2 { color: #fff; font-size: 1.55rem; font-weight: 700; line-height: 1.2; margin: 0 0 8px; }
+.dash-hero-copy p { color: #e7e2cf; font-size: 0.92rem; line-height: 1.55; margin: 0 0 16px; max-width: 52ch; }
+.dash-hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.8rem; color: #d3ccb4; }
+.dash-hero-meta b { color: #fff; }
+.dash-hero-viz { width: 300px; flex-shrink: 0; align-self: stretch; display: flex; align-items: center; }
+.dash-hero-viz svg { width: 100%; height: 180px; }
+@media (max-width: 720px) { .dash-hero-viz { display: none; } }
+
+/* stat tiles */
+.dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.dash-tile { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 16px; }
+.dash-tile-val { font-size: 1.55rem; font-weight: 700; line-height: 1.1; }
+.dash-tile-label { font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; }
+
+/* two-column area */
+.dash-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; margin-bottom: 18px; }
+.dash-panel { margin-bottom: 0; }
+.dash-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.dash-panel-head h3 { margin: 0; }
+.dash-linkbtn { background: none; border: none; cursor: pointer; color: var(--gold-text); font-family: var(--font); font-size: 0.78rem; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; padding: 0; }
+.dash-linkbtn:hover { text-decoration: underline; }
+.dash-live { display: inline-flex; align-items: center; gap: 6px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--green); }
+.dash-net-nums { display: flex; flex-wrap: wrap; gap: 10px 26px; margin-bottom: 6px; }
+.dash-net-big { font-size: 1.7rem; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+.dash-net-cap { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+
+/* featured sermons */
+.dash-sermons { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.dash-sermon { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; font-family: var(--font); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s, transform 0.06s; }
+.dash-sermon:hover { border-color: var(--gold); background: var(--bg-secondary); transform: translateY(-1px); }
+.dash-sermon-go { flex-shrink: 0; display: flex; color: var(--text-muted); opacity: 0.5; transition: opacity 0.15s, color 0.15s; }
+.dash-sermon:hover .dash-sermon-go { opacity: 1; color: var(--gold-text); }
+.dash-sermon-info { flex: 1; min-width: 0; }
+.dash-sermon-title { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-sermon-speaker { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-sermon-tags { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
+.dash-type { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 1px 6px; border-radius: 4px; }
+.dash-type.audio { color: var(--gold-text); background: var(--gold-dim); }
+.dash-type.video { color: #fff; background: var(--olive); }
+.dash-dur { font-size: 0.68rem; color: var(--text-muted); }
+.dash-play { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer; background: var(--gold); color: var(--text-on-gold); display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
+.dash-play:hover { background: var(--gold-hover); }
+
+/* quick links */
+.dash-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.dash-link { display: flex; align-items: center; gap: 13px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 16px; cursor: pointer; text-align: left; font-family: var(--font); transition: border-color 0.15s, transform 0.06s, box-shadow 0.15s; }
+.dash-link:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 8px 22px -14px var(--gold-glow); }
+.dash-link-icon { flex-shrink: 0; width: 42px; height: 42px; border-radius: 10px; background: var(--gold-dim); color: var(--olive); display: flex; align-items: center; justify-content: center; }
+.dash-link-body { display: flex; flex-direction: column; min-width: 0; }
+.dash-link-title { font-size: 0.92rem; font-weight: 700; color: var(--text-primary); display: inline-flex; align-items: center; gap: 6px; }
+.dash-link-title svg { color: var(--text-muted); }
+.dash-link-desc { font-size: 0.74rem; color: var(--text-muted); margin-top: 2px; }

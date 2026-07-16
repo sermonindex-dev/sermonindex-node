@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCatalog } from '../services/catalog.js';
+import ReachabilityBanner from './ReachabilityBanner';
 
 // Tiny "Copied!" tooltip state hook
 function useCopiedTooltip(timeout = 1500) {
@@ -326,8 +327,18 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     { id: 'seeding', icon: icons.seeding, label: 'Sharing back', desc: 'Downloaded sermons being served to the network', st: seeding },
   ];
 
-  // Render — two-column layout with aligned bottoms
+  // Render — the user's own reachability banner sits above the two-column layout.
+  // `reachOpen` is the authoritative probe result only (true / false / null); we
+  // never upgrade it from an outbound upload count, so the banner stays honest.
   return (
+    <>
+      <ReachabilityBanner
+        running={!!status?.running}
+        port={status?.tcp_listen_port}
+        reachOpen={reach && typeof reach.open === 'boolean' ? reach.open : null}
+        testing={!!reach?.checking}
+        onTest={handleTestReachability}
+      />
     <div className="connections-layout">
       {/* ── LEFT COLUMN: Health + Status + Active Torrents ── */}
       <div className="connections-left">
@@ -684,6 +695,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         </div>
       </div>
     </div>
+    </>
   );
 }
 

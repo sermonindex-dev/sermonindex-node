@@ -342,6 +342,51 @@ fn load_settings() -> Result<String, String> {
     }
 }
 
+/// Read the persisted, opt-in BitTorrent upload-speed cap from settings.json.
+/// Returns the limit in BYTES/sec (as NonZeroU32), or `None` (= unlimited) when
+/// the cap is off, unset, or zero. The frontend persists two keys:
+///   `upload_limit_enabled` (bool) and `upload_limit_kbps` (number, KB/s).
+/// Reading it here lets `torrent_start` apply the cap atomically at session
+/// creation, so it also covers re-enabling P2P from the toggle.
+fn persisted_upload_limit_bps() -> Option<std::num::NonZeroU32> {
+    let settings_path = get_app_data_dir().join("settings.json");
+    let text = fs::read_to_string(&settings_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    // Off (or the key never set) → unlimited.
+    if value.get("upload_limit_enabled").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let kbps = value
+        .get("upload_limit_kbps")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    if kbps <= 0.0 {
+        return None;
+    }
+    let bps = (kbps * 1024.0) as u64;
+    std::num::NonZeroU32::new(bps.min(u32::MAX as u64) as u32)
+}
+
+/// Whether "Background Seeding" is enabled (keep running in the tray when the
+/// window is closed). Defaults to `true` when unset, so existing installs and
+/// first launches keep the current behaviour; only an explicit `false` changes
+/// it. Read fresh on each window-close so toggling takes effect without a restart.
+fn persisted_background_mode() -> bool {
+    let settings_path = get_app_data_dir().join("settings.json");
+    let text = match fs::read_to_string(&settings_path) {
+        Ok(t) => t,
+        Err(_) => return true,
+    };
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    value
+        .get("background_mode")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
 /// Get disk usage of the sermon downloads directory
 #[tauri::command]
 fn get_storage_usage() -> Result<StorageInfo, String> {
@@ -751,11 +796,28 @@ async fn torrent_start(
     // Route the torrent session's output through the configurable storage dir
     // so seeded/downloaded torrents land on the seed node's chosen drive.
     let download_dir = downloads_dir();
-    let handle = torrent_node::start(data_dir, download_dir).await?;
+    // Apply the user's opt-in upload cap at creation (None = unlimited).
+    let upload_bps = persisted_upload_limit_bps();
+    let handle = torrent_node::start(data_dir, download_dir, upload_bps).await?;
     let info = handle.info();
     ts.handle = Some(Arc::new(handle));
-    log::info!("[Torrent] Session started");
+    log::info!("[Torrent] Session started (upload cap: {:?} bytes/s)", upload_bps);
     Ok(info)
+}
+
+/// Set the session-wide BitTorrent UPLOAD rate limit at runtime.
+/// `bytes_per_sec == 0` means unlimited (removes the cap). Takes effect live on
+/// the running session; if no session is running this is a no-op error the
+/// frontend ignores (the cap is re-read from settings.json at next start).
+#[tauri::command]
+async fn set_upload_limit(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+    bytes_per_sec: u64,
+) -> Result<(), String> {
+    let handle = get_torrent_handle(&state).await?;
+    handle.set_upload_limit(bytes_per_sec);
+    log::info!("[Torrent] Upload cap set to {} bytes/s (0 = unlimited)", bytes_per_sec);
+    Ok(())
 }
 
 /// Stop the BitTorrent session
@@ -1026,10 +1088,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Hide window instead of closing — keep running in tray
+            // Closing the window: honour the "Background Seeding" setting.
+            // ON (default): hide to the tray and keep seeding/port-forwarding.
+            // OFF: actually quit so the node stops sharing when the user closes it.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                if persisted_background_mode() {
+                    let _ = window.hide();
+                    api.prevent_close();
+                } else {
+                    window.app_handle().exit(0);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1072,6 +1140,7 @@ pub fn run() {
             torrent_remove,
             torrent_prune_missing,
             torrent_session_stats,
+            set_upload_limit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

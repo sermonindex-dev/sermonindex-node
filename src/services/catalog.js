@@ -262,10 +262,25 @@ export async function initCatalog() {
   // Try API update in background (for new sermons added after app was built)
   fetchCatalogUpdate().catch(() => {});
 
-  // Load the canonical torrent MASTER LIST in the background.
-  // This is the trust anchor: sermons gain magnet/infoHash/torrentUrl fields
-  // and the app only ever joins those official swarms.
-  fetchMasterList().catch(() => {});
+  // Canonical torrent MASTER LIST — the trust anchor: sermons gain
+  // magnet/infoHash/torrentUrl fields and the app only ever joins those official
+  // swarms. Prefer the persistent cache so the node downloads master-list.json ONCE
+  // and re-applies it instantly (and offline) on every later launch. Only hit the
+  // network when there is NO cache; after that, refreshes are driven by the admin
+  // bumping master_list_version (see reconcileMasterListVersion, called from the
+  // heartbeat) instead of re-downloading the whole file on every start.
+  try {
+    const cached = _loadMasterListCache();
+    if (cached && cached.entries) {
+      const merged = applyMasterListEntries(cached.entries);
+      console.log(`[Catalog] Master list applied from cache — ${merged} sermons have canonical torrents (version: ${cached.version || 'local'})`);
+    } else {
+      fetchMasterList().catch(() => {});
+    }
+  } catch (e) {
+    console.warn('[Catalog] Master list cache load failed, fetching fresh:', e?.message || e);
+    fetchMasterList().catch(() => {});
+  }
 
   return catalog;
 }
@@ -278,15 +293,84 @@ export function hasMasterList() {
   return _masterListLoaded;
 }
 
+// ── Master-list persistent cache ───────────────────────────────────────────
+// A node downloads master-list.json ONCE, then re-applies the cached copy
+// instantly (and offline) on every subsequent launch. It only re-pulls when the
+// admin bumps `master_list_version` (delivered inside the heartbeat config →
+// reconcileMasterListVersion). This kills the "re-download the whole file on every
+// start" behaviour while keeping the trust anchor perfectly up to date on command.
+const MASTER_LIST_CACHE_KEY = 'si_master_list';                       // JSON { version, entries }
+const MASTER_LIST_APPLIED_VERSION_KEY = 'si_master_list_applied_version'; // string
+
+function _loadMasterListCache() {
+  try {
+    const raw = localStorage.getItem(MASTER_LIST_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.entries && typeof parsed.entries === 'object') return parsed;
+  } catch { /* corrupt/unavailable — treat as no cache */ }
+  return null;
+}
+
+function _saveMasterListCache(version, entries) {
+  // Quota-safe: master-list.json can be large. If the write throws (quota,
+  // private mode, etc.) just skip caching — the app still works, it just
+  // re-fetches on the next launch instead of serving from cache.
+  try {
+    localStorage.setItem(MASTER_LIST_CACHE_KEY, JSON.stringify({ version: version || '', entries }));
+  } catch (e) {
+    console.warn('[Catalog] Master list cache write skipped (storage quota?):', e?.message || e);
+  }
+}
+
+function _getAppliedMasterListVersion() {
+  try { return localStorage.getItem(MASTER_LIST_APPLIED_VERSION_KEY) || ''; } catch { return ''; }
+}
+
+function _setAppliedMasterListVersion(version) {
+  try { localStorage.setItem(MASTER_LIST_APPLIED_VERSION_KEY, String(version || '')); } catch { /* non-fatal */ }
+}
+
+/**
+ * Merge canonical torrent metadata from a master-list `entries` map into the
+ * in-memory catalog — sermons gain magnet/infoHash/torrentUrl/verifiedSize and the
+ * app only ever joins those official swarms. Reusable across the cache-apply and
+ * network-apply paths. Returns the number of catalog sermons matched.
+ */
+export function applyMasterListEntries(entries) {
+  if (!entries || typeof entries !== 'object') return 0;
+  let merged = 0;
+  for (const s of catalog) {
+    const m = entries[s.id];
+    if (m && m.info_hash) {
+      s.magnet = m.magnet;
+      s.infoHash = m.info_hash;
+      s.torrentUrl = m.torrent_url;
+      s.verifiedSize = m.size; // actual byte size, hashed — catalog sizes are unreliable
+      merged++;
+    }
+  }
+  if (merged > 0) {
+    _masterListLoaded = true;
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('si-master-list', { detail: { merged } }));
+    }
+  }
+  return merged;
+}
+
 // Retry schedule when the master list can't be fetched/parsed (transient CDN
 // or network trouble is common right after wake-from-sleep / app launch).
 const MASTER_LIST_RETRY_DELAYS_MS = [30_000, 60_000, 120_000];
 
-async function fetchMasterList() {
+// Fetch (with retries) → apply → re-cache. `cacheVersion` tags the persisted copy
+// (server-pushed version when known, else the applied version, else a local marker).
+// Resolves to true only on a successful fetch+apply, false after all retries fail.
+async function fetchMasterList(cacheVersion) {
   for (let attempt = 0; attempt <= MASTER_LIST_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      await _fetchMasterListOnce();
-      return; // success
+      await _fetchMasterListOnce(cacheVersion);
+      return true; // success
     } catch (err) {
       if (attempt < MASTER_LIST_RETRY_DELAYS_MS.length) {
         const delay = MASTER_LIST_RETRY_DELAYS_MS[attempt];
@@ -299,12 +383,14 @@ async function fetchMasterList() {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('si-master-list-failed'));
         }
+        return false;
       }
     }
   }
+  return false;
 }
 
-async function _fetchMasterListOnce() {
+async function _fetchMasterListOnce(cacheVersion) {
   // Native fetch first (Rust reqwest — immune to CDN CORS policy, which
   // blocks the webview from reading .json cross-origin). Browser fetch as
   // fallback for dev-in-browser mode.
@@ -320,21 +406,54 @@ async function _fetchMasterListOnce() {
     data = await res.json();
   }
   if (!data || !data.entries) throw new Error('Master list malformed (missing entries)');
-  let merged = 0;
-  for (const s of catalog) {
-    const m = data.entries[s.id];
-    if (m && m.info_hash) {
-      s.magnet = m.magnet;
-      s.infoHash = m.info_hash;
-      s.torrentUrl = m.torrent_url;
-      s.verifiedSize = m.size; // actual byte size, hashed — catalog sizes are unreliable
-      merged++;
-    }
+  const merged = applyMasterListEntries(data.entries);
+  // Persist across launches so the node doesn't re-download on every start. Tag it
+  // with the server-pushed version when known, else the version we already applied,
+  // else a local timestamp marker (so a later server version always differs → pull).
+  const version = cacheVersion || _getAppliedMasterListVersion() || `local-${Date.now()}`;
+  _saveMasterListCache(version, data.entries);
+  console.log(`[Catalog] Master list loaded from network — ${merged} sermons have canonical torrents (cached version: ${version})`);
+  return merged;
+}
+
+// Guards reconcile/force from stacking concurrent network pulls of the master list.
+let _masterListRefreshing = false;
+
+/**
+ * React to the server-pushed `master_list_version` (delivered inside the heartbeat
+ * config). This is how the admin "Force all nodes to refresh" button reaches every
+ * node: when the version differs from the one we last applied, force a fresh network
+ * pull (bypassing the cache), apply it, re-cache, and record the applied version.
+ * No-op when the version is empty or already applied. Guards concurrent runs.
+ */
+export async function reconcileMasterListVersion(serverVersion) {
+  const v = typeof serverVersion === 'string' ? serverVersion.trim() : '';
+  if (!v) return;                                   // empty = no forced version
+  if (v === _getAppliedMasterListVersion()) return; // already on this version
+  if (_masterListRefreshing) return;                // don't stack concurrent pulls
+  _masterListRefreshing = true;
+  try {
+    console.log(`[Catalog] master_list_version changed → forcing refresh (server: ${v})`);
+    const ok = await fetchMasterList(v); // fresh network pull, re-caches with version=v
+    if (ok) _setAppliedMasterListVersion(v); // only mark applied on real success
+  } catch (e) {
+    console.warn('[Catalog] Master list reconcile failed (will retry next heartbeat):', e?.message || e);
+  } finally {
+    _masterListRefreshing = false;
   }
-  _masterListLoaded = merged > 0;
-  console.log(`[Catalog] Master list loaded — ${merged} sermons have canonical torrents`);
-  if (merged > 0 && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('si-master-list', { detail: { merged } }));
+}
+
+/**
+ * Unconditionally re-pull the master list from the network and re-cache it
+ * (optional manual trigger). Resolves to true if a fresh copy was fetched + applied.
+ */
+export async function forceRefreshMasterList() {
+  if (_masterListRefreshing) return false;
+  _masterListRefreshing = true;
+  try {
+    return await fetchMasterList();
+  } finally {
+    _masterListRefreshing = false;
   }
 }
 

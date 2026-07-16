@@ -29,6 +29,17 @@ function fmtTime(ts) {
     : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
 }
 
+// Stable per-user name color derived from the node id — consistent across sessions.
+// Mid-tone saturated hues chosen to stay legible on both the light (#F1F1E8) and
+// dark (#262620) bubble backgrounds this app themes between.
+const NAME_COLORS = ['#cc4b37', '#2f80c4', '#3a9b6e', '#9b59b6', '#c77d17', '#17a2a2', '#c0559e', '#5566c9', '#7a8c2e', '#b5642e'];
+function userColor(node) {
+  const s = String(node || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return NAME_COLORS[h % NAME_COLORS.length];
+}
+
 // Module-level cache: remounting the page shows last-known messages instantly
 let _msgCache = [];
 
@@ -171,7 +182,7 @@ export default function CommunityPage() {
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconChat}</span> Community
         </h2>
-        <p>Fellowship with other nodes keeping the vault alive</p>
+        <p>Fellowship with others keeping the SermonIndex Node network alive</p>
       </div>
 
       {/* Identity — set once, shown as  #nodeid · Name  */}
@@ -233,20 +244,54 @@ export default function CommunityPage() {
                 <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                   {loadedOnce ? 'No messages yet — be the first to say hello.' : 'Loading messages…'}
                 </div>
-              ) : messages.map((m) => (
-                // One row per message: muted identity | larger text | faint time
-                <div key={m.id} style={{ display: 'flex', alignItems: 'baseline', gap: '14px' }}>
-                  <span title={`node ${m.node}`} style={{ color: 'var(--text-muted)', fontSize: '0.74rem', flexShrink: 0, width: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                    <span style={{ fontFamily: 'monospace', opacity: 0.7 }}>#{m.node}</span> · {m.name}
-                  </span>
-                  <span style={{ flex: 1, whiteSpace: 'pre-wrap', fontSize: '0.95rem', color: 'var(--text-primary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                    {m.text}
-                  </span>
-                  <span style={{ color: 'var(--text-muted)', opacity: 0.55, fontSize: '0.68rem', flexShrink: 0 }}>
-                    {fmtTime(m.ts)}
-                  </span>
-                </div>
-              ))}
+              ) : messages.map((m) => {
+                // Chat bubble: prominent colored name on top, small muted #node id
+                // beneath it, then the message. Own messages align right (gold bubble);
+                // moderator messages get a verified badge and a soft-yellow "forum" bubble.
+                const isMine = String(m.node) === nodeShort();
+                const isMod = m.is_moderator === true;
+                let bubbleBg, bubbleBorder, nameColor, idColor, textColor;
+                if (isMod) {
+                  bubbleBg = '#fdf6d8'; bubbleBorder = '#e4d08a';
+                  nameColor = '#8a6a12'; idColor = 'rgba(60,50,20,0.65)'; textColor = '#3a3320';
+                } else if (isMine) {
+                  bubbleBg = 'var(--gold-dim)'; bubbleBorder = 'var(--border)';
+                  nameColor = 'var(--gold-text)'; idColor = 'var(--text-muted)'; textColor = 'var(--text-primary)';
+                } else {
+                  bubbleBg = 'var(--bg-tertiary)'; bubbleBorder = 'var(--border)';
+                  nameColor = userColor(m.node); idColor = 'var(--text-muted)'; textColor = 'var(--text-primary)';
+                }
+                return (
+                  <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start' }}>
+                    <div style={{ maxWidth: '80%', minWidth: 0, padding: '8px 12px 9px', borderRadius: 'var(--radius)', background: bubbleBg, border: `1px solid ${bubbleBorder}` }}>
+                      {/* Sender name — prominent, inside the bubble; a verified badge marks moderators */}
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.95rem', color: nameColor, lineHeight: 1.25, wordBreak: 'break-word' }}>
+                          {m.name}
+                          {isMod && (
+                            <span title="Verified moderator" aria-label="Verified moderator" style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: 5, position: 'relative', top: '-1px' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" role="img" aria-hidden="true">
+                                <circle cx="12" cy="12" r="10" style={{ fill: 'var(--gold, #D4AF37)' }} />
+                                <path d="M7.5 12.5 L10.6 15.5 L16.5 8.7" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </span>
+                          )}
+                        </span>
+                        <span style={{ marginLeft: 'auto', color: idColor, opacity: 0.8, fontSize: '0.68rem', flexShrink: 0 }}>
+                          {fmtTime(m.ts)}
+                        </span>
+                      </div>
+                      {/* Node id — small, muted, secondary line under the name */}
+                      <div title={`node ${m.node}`} style={{ fontFamily: 'monospace', fontSize: '0.66rem', color: idColor, marginTop: '1px', marginBottom: '5px' }}>
+                        #{m.node}
+                      </div>
+                      <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', color: textColor, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                        {m.text}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             {!autoScroll && messages.length > 0 && (
               <button

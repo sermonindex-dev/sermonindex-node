@@ -5,12 +5,12 @@
  * Uploads built desktop installers to Bunny Storage, one folder per version, so
  * each release is served publicly at:
  *
- *     https://sermonindex1.b-cdn.net/app/releases/<version>/
+ *     https://sermonindex4.b-cdn.net/app/releases/<version>/
  *
  * It also writes a small manifest.json and a branded index.html download page in
  * that folder, and keeps a top-level releases.json listing every version.
  *
- * Credentials (same storage zone that backs the sermonindex1 pull zone — the
+ * Credentials (same storage zone that backs the sermonindex4 pull zone — the
  * AccessKey is the STORAGE ZONE PASSWORD from Bunny → Storage → your zone →
  * FTP & API Access, NOT your account API key):
  *
@@ -58,7 +58,7 @@ const NO_INDEX = args.includes('--no-index');
 // Override with --public-base or BUNNY_CDN_BASE if your zone's URL isn't the default.
 function normalizeBase(b) {
   b = String(b || '').trim().replace(/\/+$/, '');
-  if (!b) return 'https://sermonindex1.b-cdn.net';
+  if (!b) return 'https://sermonindex4.b-cdn.net';
   if (!/^https?:\/\//i.test(b)) b = `https://${b}`;
   return b;
 }
@@ -154,9 +154,9 @@ async function getJson(remotePath) {
 }
 
 // ── index.html download page ─────────────────────────────────────────────────
-function buildIndexHtml(version, files) {
+function buildIndexHtml(version, files, linkPrefix = './') {
   const rows = files.slice().sort((a, b) => a.order - b.order).map((f) => `
-      <a class="dl" href="./${encodeURIComponent(f.name)}">
+      <a class="dl" href="${linkPrefix}${encodeURIComponent(f.name)}">
         <span class="plat">${f.label}</span>
         <span class="meta">${f.name} · ${f.size}</span>
         <span class="btn">Download</span>
@@ -200,6 +200,61 @@ function buildIndexHtml(version, files) {
     • <b>Windows:</b> "More info" → "Run anyway".<br>
     • <b>Linux (AppImage):</b> <code>chmod +x</code> then run.
   </div>
+  <div class="foot">SermonIndex.net · freely given for the glory of Christ</div>
+</div></body></html>`;
+}
+
+// ── all-releases index page ───────────────────────────────────────────────────
+// Human-readable listing of every published release (newest first), built from
+// the merged releases.json object. Each row links to that version's own download
+// folder (./<version>/). Served at app/releases/index.html so that
+// https://sermonindex4.b-cdn.net/app/releases/ is the page to share with people.
+function buildReleasesIndexHtml(releasesIdx) {
+  const releases = (releasesIdx && Array.isArray(releasesIdx.releases)) ? releasesIdx.releases : [];
+  const fmtDate = (d) => {
+    const t = Date.parse(d);
+    return Number.isNaN(t) ? '' : new Date(t).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+  const rows = releases.map((r, i) => {
+    const ver = String(r.version || '');
+    const badge = i === 0 ? ' <span class="tag">Latest</span>' : '';
+    return `
+      <a class="dl" href="./${encodeURIComponent(ver)}/">
+        <span class="plat">${ver}${badge}</span>
+        <span class="meta">${fmtDate(r.date)}</span>
+        <span class="btn">Open</span>
+      </a>`;
+  }).join('');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SermonIndex Node Software — All Releases</title>
+<style>
+  :root { --olive:#5b6236; --olive2:#464b29; --gold:#b8912e; --ink:#2b2b26; --bg:#f4f1e9; --card:#fff; --muted:#7a7768; --border:#e2ddce; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:680px; margin:0 auto; padding:48px 20px 64px; }
+  .head { text-align:center; margin-bottom:32px; }
+  .head h1 { margin:0 0 4px; font-size:1.5rem; color:var(--olive2); }
+  .head .ver { color:var(--gold); font-weight:700; }
+  .head p { color:var(--muted); font-size:.92rem; margin:8px 0 0; }
+  .dl { display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:12px; text-decoration:none; color:inherit; transition:border-color .15s, transform .05s; }
+  .dl:hover { border-color:var(--gold); }
+  .dl:active { transform:translateY(1px); }
+  .plat { font-weight:700; font-size:.98rem; flex:0 0 auto; }
+  .meta { color:var(--muted); font-size:.78rem; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .btn { background:var(--olive); color:#fff; border-radius:8px; padding:8px 16px; font-size:.82rem; font-weight:700; flex:0 0 auto; }
+  .tag { display:inline-block; background:var(--gold); color:#fff; border-radius:6px; padding:1px 8px; font-size:.68rem; font-weight:700; vertical-align:middle; margin-left:8px; }
+  .empty { text-align:center; color:var(--muted); font-size:.9rem; }
+  .foot { text-align:center; color:var(--muted); font-size:.76rem; margin-top:28px; }
+</style></head>
+<body><div class="wrap">
+  <div class="head">
+    <h1>SermonIndex — Node Software</h1>
+    <div class="ver">All Releases</div>
+    <p>Every published build, newest first. Pick a version to see its downloads.</p>
+  </div>
+  ${rows || '<p class="empty">No releases published yet.</p>'}
   <div class="foot">SermonIndex.net · freely given for the glory of Christ</div>
 </div></body></html>`;
 }
@@ -260,7 +315,11 @@ async function main() {
   try {
     await put(`${REMOTE_ROOT}/${VERSION}/manifest.json`, Buffer.from(JSON.stringify(manifest, null, 2)), 'application/json');
     await put(`${REMOTE_ROOT}/${VERSION}/index.html`, Buffer.from(buildIndexHtml(VERSION, files)), 'text/html; charset=utf-8');
-    console.log('  ✓ manifest.json + index.html');
+    // Stable "latest download" landing page — a permanent URL (/app/download/)
+    // that always shows the most recently deployed version, with absolute links
+    // back to that version's folder so the buttons work from the /app/download/ path.
+    await put(`app/download/index.html`, Buffer.from(buildIndexHtml(VERSION, files, `${PUBLIC_BASE}/${REMOTE_ROOT}/${VERSION}/`)), 'text/html; charset=utf-8');
+    console.log('  ✓ manifest.json + index.html + latest landing (/app/download/)');
   } catch (e) {
     console.error(`  [!] manifest/index: ${e.message}`);
   }
@@ -279,6 +338,10 @@ async function main() {
       idx.updated = manifest.date;
       await put(`${REMOTE_ROOT}/releases.json`, Buffer.from(JSON.stringify(idx, null, 2)), 'application/json');
       console.log('  ✓ releases.json index updated');
+      // Human-readable all-releases index (app/releases/index.html) — built from the
+      // just-merged idx so it always includes the version we deployed this run.
+      await put(`${REMOTE_ROOT}/index.html`, Buffer.from(buildReleasesIndexHtml(idx)), 'text/html; charset=utf-8');
+      console.log(`  ✓ all-releases index page written (${REMOTE_ROOT}/index.html)`);
       if (!DRY_RUN) console.log('    (purge releases.json in the Bunny dashboard so the CDN serves the fresh list)');
     } catch (e) {
       console.error(`  [!] releases.json: ${e.message}`);

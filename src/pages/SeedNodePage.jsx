@@ -3,7 +3,6 @@ import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess } f
 import { TORRENT_PORT_RANGE } from '../services/constants.js';
 import { getNodeId } from '../services/heartbeat.js';
 
-const FORUMS_HARDWARE_GUIDE = 'https://www.sermonindex.net/forums/hardware-guide';
 const SEED_CONTACT_EMAIL = 'sermonindex@gmail.com';
 
 // ── Library sizing, split by scope ─────────────────────────────────────────
@@ -13,8 +12,8 @@ const SCOPE_INFO = {
   audio: {
     label: 'Audio library',
     sizeLabel: '~412 GB',
-    fileCount: 70749,
-    tagline: '~412 GB · 70,749 sermons · fits on a small external drive',
+    fileCount: 25587,
+    tagline: '~412 GB · 25,587 sermons · fits on a small external drive',
     // Require a comfortable margin above the ~412 GB payload.
     requiredBytes: 500 * 1000 * 1000 * 1000, // 500 GB
     requiredLabel: '500 GB',
@@ -22,8 +21,8 @@ const SCOPE_INFO = {
   full: {
     label: 'Everything (audio + video)',
     sizeLabel: '~2.4 TB',
-    fileCount: 82341, // 70,749 audio + 11,592 video
-    tagline: '~2.4 TB · adds 11,592 videos · needs a large drive',
+    fileCount: 33528, // 25,587 audio + 7,941 video
+    tagline: '~2.4 TB · adds 7,941 videos · needs a large drive',
     requiredBytes: 2600 * 1000 * 1000 * 1000, // 2.6 TB
     requiredLabel: '2.6 TB',
   },
@@ -95,6 +94,9 @@ export default function SeedNodePage({
   const [accessMsg, setAccessMsg] = useState('');
   const [reqEmail, setReqEmail] = useState('');
   const [requested, setRequested] = useState(false);
+  // Inline hardware-recommendations panel shown in the locked "What is a Seed
+  // Node?" card — expands in-app in place of the old external forums link.
+  const [showHardware, setShowHardware] = useState(false);
 
   // STEP 1 — what to host. Persisted to localStorage; default 'audio'.
   const [scope, setScope] = useState(() => {
@@ -416,17 +418,77 @@ export default function SeedNodePage({
           </p>
           <p>
             You choose how much to host. <strong>Audio-only</strong> is the practical, common choice:
-            <strong style={{ color: 'var(--gold-text)' }}> ~412 GB</strong> (70,749 sermons) that fits on a
+            <strong style={{ color: 'var(--gold-text)' }}> ~412 GB</strong> (25,587 sermons) that fits on a
             cheap external drive. Hosting <strong>everything, including video</strong>, is
             <strong style={{ color: 'var(--gold-text)' }}> ~2.4 TB</strong> and needs a large drive.
           </p>
-          <p>
+          <p style={{ marginBottom: showHardware ? '10px' : undefined }}>
             We recommend a dedicated NVMe or USB external drive. See our{' '}
-            <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold-text)' }}>
+            <span
+              role="button"
+              tabIndex={0}
+              aria-expanded={showHardware}
+              onClick={() => setShowHardware(v => !v)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowHardware(v => !v); } }}
+              style={{
+                color: 'var(--gold-text)', fontWeight: 600, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: '3px',
+              }}
+            >
               hardware setup guide
-            </a>{' '}
-            on the SermonIndex forums for recommendations (TerraMaster NVMe enclosures, etc.).
+              <span style={{
+                display: 'inline-block', fontSize: '0.85em', lineHeight: 1,
+                transform: showHardware ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease',
+              }}>
+                ▾
+              </span>
+            </span>{' '}
+            for a couple of simple, practical recommendations.
           </p>
+          {showHardware && (
+            <div style={{
+              margin: '0 0 4px',
+              padding: '14px 16px',
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border)',
+              borderLeft: '3px solid var(--gold-text)',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.6,
+            }}>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontWeight: 600, color: 'var(--gold-text)', marginBottom: '3px' }}>
+                  Option A — External NVMe drive (simplest)
+                </div>
+                <div>
+                  A <strong style={{ color: 'var(--text-primary)' }}>TerraMaster D4 SSD</strong> (NVMe)
+                  enclosure fitted with NVMe SSD sticks, plugged into your Mac or PC. Size it to your
+                  scope: <strong style={{ color: 'var(--gold-text)' }}>~500 GB</strong> is plenty for the
+                  audio library (~412 GB), or{' '}
+                  <strong style={{ color: 'var(--gold-text)' }}>~2.6 TB+</strong> if you also seed video
+                  (~2.4 TB). SSD/NVMe runs quieter and more reliably than spinning drives for an
+                  always-on node.
+                </div>
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontWeight: 600, color: 'var(--gold-text)', marginBottom: '3px' }}>
+                  Option B — Dedicated low-power node (Raspberry Pi)
+                </div>
+                <div>
+                  A <strong style={{ color: 'var(--text-primary)' }}>Raspberry Pi 5 (8 GB)</strong> in a{' '}
+                  <strong style={{ color: 'var(--text-primary)' }}>Pironman 5</strong> (Pro/Max) case with
+                  an NVMe SSD — a small, quiet box that sips power and stays out of the way. Leave it on
+                  24/7 to keep serving the library without tying up your main computer.
+                </div>
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                Either way: pick a drive sized for your chosen scope (audio vs everything), keep the node
+                powered on and online as much as possible — a reachable, port-forwarded node helps the
+                network the most.
+              </div>
+            </div>
+          )}
           <p>
             With seed nodes distributed across the world, the sermon library becomes essentially
             indestructible. No single point of failure. No government can censor it. The content lives
@@ -513,11 +575,9 @@ export default function SeedNodePage({
           Pick a folder on a drive with at least{' '}
           <strong style={{ color: 'var(--gold-text)' }}>{scopeInfo.requiredLabel}</strong> of free space
           ({scopeInfo.label.toLowerCase()} is {scopeInfo.sizeLabel}). We recommend a dedicated external
-          NVMe or USB drive. See our{' '}
-          <a href={FORUMS_HARDWARE_GUIDE} target="_blank" rel="noopener" style={{ color: 'var(--gold-text)' }}>
-            hardware guide
-          </a>{' '}
-          for recommended setups (TerraMaster NVMe, Samsung T7, etc.).
+          NVMe drive — for example a <strong style={{ color: 'var(--gold-text)' }}>TerraMaster D4</strong> NVMe
+          enclosure with NVMe sticks, or a <strong style={{ color: 'var(--gold-text)' }}>Raspberry Pi 5</strong> in
+          a Pironman 5 case with an NVMe SSD for a quiet, always-on node.
         </p>
         <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
           Downloads and seeding will use this exact folder. Changing it only affects future downloads —

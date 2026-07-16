@@ -193,7 +193,8 @@ class DownloadManager {
     this.maxConcurrent = 3;
     this.activeDownloads = 0;
     this.mode = SOURCE_MODE.CDN_PRIMARY;
-    this.bandwidthLimit = 0; // bytes/sec, 0 = unlimited
+    this.bandwidthLimit = 0; // bytes/sec, 0 = unlimited (throttles HTTP downloads)
+    this.storageLimitBytes = 0; // bytes, 0 = unlimited (caps total cached sermons)
     this.paused = false;
     this.totalDownloaded = 0;
     this.totalFiles = 0;
@@ -232,6 +233,11 @@ class DownloadManager {
     this.bandwidthLimit = mbps > 0 ? mbps * 125000 : 0;
   }
 
+  // Storage cap in GB (0 = unlimited). Enforced at the start of download().
+  setStorageLimit(gb) {
+    this.storageLimitBytes = gb > 0 ? gb * 1024 * 1024 * 1024 : 0;
+  }
+
   onProgress(callback) {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
@@ -249,6 +255,43 @@ class DownloadManager {
   async download(sermon) {
     if (this.queue.has(sermon.id) && this.queue.get(sermon.id).state === DL_STATE.COMPLETE) {
       return this.queue.get(sermon.id).magnet;
+    }
+
+    // ── Storage cap enforcement (opt-in; 0 = unlimited) ──────────────────
+    // Refuse a NEW download when the cache is already at/over the user's cap,
+    // or when this file would push it over. Files already on disk are never
+    // touched. `used` is the real on-disk size measured by the Rust side; if we
+    // can't measure it (e.g. running in a plain browser) we fail open.
+    if (this.storageLimitBytes > 0) {
+      const incoming = sermon.sizeBytes || sermon.totalBytes || 0;
+      let usedBytes = 0;
+      try {
+        const invoke = await loadTauri();
+        if (invoke) {
+          const usage = await invoke('get_storage_usage');
+          usedBytes = usage?.bytes || 0;
+        }
+      } catch { usedBytes = 0; }
+      if (usedBytes + incoming > this.storageLimitBytes) {
+        const capGb = (this.storageLimitBytes / (1024 ** 3)).toFixed(0);
+        const usedGb = (usedBytes / (1024 ** 3)).toFixed(1);
+        const blocked = {
+          sermon,
+          state: DL_STATE.ERROR,
+          progress: 0,
+          bytesDownloaded: 0,
+          totalBytes: incoming,
+          magnet: null,
+          infoHash: null,
+          error: `Storage limit reached — ${usedGb} GB of ${capGb} GB used. Raise the limit in Settings or free up space, then try again.`,
+          startTime: null,
+          source: null,
+          sourceUrl: null,
+        };
+        this.queue.set(sermon.id, blocked);
+        this._notify(sermon.id, blocked);
+        throw new Error(blocked.error);
+      }
     }
 
     const entry = {

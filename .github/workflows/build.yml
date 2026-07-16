@@ -89,6 +89,16 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            # Signed auto-updater artifacts (+ their .sig) — consumed by
+            # publish-update.mjs to build the multi-platform latest.json.
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz.sig
           if-no-files-found: ignore
 
   # After all platforms build, collect every installer and publish them to Bunny
@@ -117,3 +127,32 @@ jobs:
           BUNNY_STORAGE_HOST: ${{ secrets.BUNNY_STORAGE_HOST }}
           BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
         run: node scripts/deploy-installers.mjs --version "${{ github.ref_name }}" --dir dist-artifacts
+
+      # Build the multi-platform auto-update: discover every signed updater
+      # artifact under dist-artifacts (mac arm64/x64, Windows, Linux), upload
+      # them, and write ONE app/latest.json covering all of them. This is what
+      # already-installed apps poll on launch. Purge app/latest.json afterwards.
+      - name: Publish multi-platform auto-update to Bunny CDN
+        env:
+          BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          BUNNY_STORAGE_KEY: ${{ secrets.BUNNY_STORAGE_KEY }}
+          BUNNY_STORAGE_HOST: ${{ secrets.BUNNY_STORAGE_HOST }}
+          BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
+        run: node scripts/publish-update.mjs --version "${{ github.ref_name }}" --dir dist-artifacts --mode prompt
+
+      # Purge the Bunny edge so users immediately see the new version instead of a
+      # stale cached page. Re-fetches fresh copies of the update manifest, the
+      # releases index, and the permanent download page.
+      - name: Purge Bunny CDN cache
+        env:
+          BUNNY_API_KEY: ${{ secrets.BUNNY_API_KEY }}
+          BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
+        run: |
+          if [ -z "$BUNNY_API_KEY" ]; then echo "BUNNY_API_KEY not set — skipping purge"; exit 0; fi
+          urls="${BUNNY_CDN_BASE}/app/latest.json ${BUNNY_CDN_BASE}/app/releases/releases.json ${BUNNY_CDN_BASE}/app/download/"
+          for url in $urls; do
+            enc=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$url")
+            echo "Purging $url"
+            curl -s -X POST -H "AccessKey: $BUNNY_API_KEY" "https://api.bunny.net/purge?url=${enc}&async=false"
+            echo
+          done

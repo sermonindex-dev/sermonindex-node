@@ -48,6 +48,13 @@ const RETURN_MAX = 100;   // messages returned per GET
 const RATE_MS    = 5000;  // one message per node per 5s
 const EMPTY = { seq: 0, messages: [], bans: [], last_post: {} };
 
+// Community moderators — the node-admin dashboard stores a `moderator_ids` list
+// (short node IDs like "si-2098a") in its config. We read it from the public
+// config endpoint, cache it ~60s, and flag matching messages with is_moderator.
+const CONFIG_URL = "https://app.sermonindex.net/api/config";
+const MOD_TTL_MS = 60_000;                 // refresh the moderator list at most every ~60s
+let _modCache = { ids: [], ts: 0 };        // { ids: normalized short-id list, ts: last fetch }
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -84,6 +91,36 @@ const clean = (s, max) =>
 const isBanned = (state, nodeId) =>
   state.bans.some((b) => nodeId === b || nodeId.startsWith(b));
 
+// Normalize a node id for moderator comparison: strip a leading '#', lowercase.
+const normId = (s) => String(s || "").replace(/^#+/, "").trim().toLowerCase();
+
+// Fetch + cache (~60s) the moderator id list from the node-admin config. On any
+// failure keep the last-known list and just reset the timer (never blocks chat).
+async function getModeratorIds() {
+  const now = Date.now();
+  if (now - _modCache.ts < MOD_TTL_MS) return _modCache.ids;
+  try {
+    const res = await fetch(CONFIG_URL, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      const raw = data && data.config && typeof data.config.moderator_ids === "string" ? data.config.moderator_ids : "";
+      _modCache = { ids: raw.split(/[\s,]+/).map(normId).filter(Boolean), ts: now };
+    } else {
+      _modCache.ts = now; // keep last-known ids; back off until the next window
+    }
+  } catch {
+    _modCache.ts = now;   // network error — keep last-known ids, retry next window
+  }
+  return _modCache.ids;
+}
+
+// A message's short node id counts as a moderator if it matches a listed id
+// exactly, or a listed (full) id begins with the message's 8-char short id.
+const isModerator = (mods, node) => {
+  const n = normId(node);
+  return !!n && mods.some((e) => n === e || e.startsWith(n));
+};
+
 BunnySDK.net.http.serve(async (request) => {
   try {
     const url = new URL(request.url);
@@ -115,11 +152,11 @@ BunnySDK.net.http.serve(async (request) => {
     // ── GET: messages newer than ?since ─────────────────────────────
     if (request.method === "GET") {
       const since = parseInt(url.searchParams.get("since") || "0", 10) || 0;
-      const state = await loadState();
+      const [state, mods] = await Promise.all([loadState(), getModeratorIds()]);
       const messages = state.messages
         .filter((m) => m.id > since)
         .slice(-RETURN_MAX)
-        .map((m) => ({ id: m.id, name: m.name, node: m.node, text: m.text, ts: m.ts }));
+        .map((m) => ({ id: m.id, name: m.name, node: m.node, text: m.text, ts: m.ts, is_moderator: isModerator(mods, m.node) }));
       return json(200, { ok: true, messages });
     }
 

@@ -11,6 +11,11 @@ ipfs_debug.log
 *.key
 *.key.pub
 
+# Never commit release credentials (Bunny storage write-passwords, signing password,
+# CDN API key). scripts/release.mjs reads these locally; they must stay off GitHub.
+scripts/release.secrets.json
+release.secrets.json
+
 # Bundled speaker portraits — fetched locally via scripts/fetch-speaker-images.mjs
 # (run before building a release; the app falls back to the CDN if absent)
 public/images/speakers/

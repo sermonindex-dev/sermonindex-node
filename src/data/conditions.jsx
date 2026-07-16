@@ -3,14 +3,14 @@ import React from 'react';
 // Bump this string whenever the conditions text changes materially. The app
 // stores the agreed version in localStorage ('si-conditions-agreed'); if it no
 // longer matches CONDITIONS_VERSION, the agreement modal is shown again.
-export const CONDITIONS_VERSION = '2026-07-08';
+export const CONDITIONS_VERSION = '2026-07-14';
 
 // Short, plain-language summary shown on the About page (with a link to open the
 // full conditions modal). Keep each line to one idea.
 export const CONDITIONS_SUMMARY = [
   'These sermons are given freely for the glory of God — they may be shared, played, and used in ministry, but never sold or used commercially.',
   'Running a node volunteers a portion of your bandwidth and storage to preserve and re-share the archive with others over a peer-to-peer network.',
-  'Content is distributed unmodified, in its original form; the software is provided as-is, and no personal account or personal data is required.',
+  'Content is distributed unmodified, in its original form; the software is provided as-is, and no personal account or sign-in is required.',
 ];
 
 const h = {
@@ -112,12 +112,35 @@ export function ConditionsBody() {
         "as is," without warranty of any kind</strong>.
       </p>
 
-      <div style={h}>Your Privacy</div>
+      <div style={h}>Your Privacy — What Your Node Shares</div>
       <p style={p}>
-        No account, sign-up, or personal information is required. Your node uses a
-        randomly generated ID and shares only basic connectivity status (such as
-        whether it is reachable) so the network can measure its own health. It does
-        not collect your name, email, or the contents of your library.
+        No account, sign-up, sign-in, or personal information is required, and your
+        node is identified only by a randomly generated ID — never your name or email.
+      </p>
+      <p style={p}>
+        So the network can stay healthy, coordinate the sharing of files, and show
+        active nodes on the public node map, your node periodically reports the
+        following to the SermonIndex coordinator and the wider network:
+      </p>
+      <p style={p}>
+        • Its <strong style={{ color: 'var(--text-primary)' }}>approximate location</strong>,
+        estimated from your internet (IP) address — this includes approximate map
+        coordinates (latitude and longitude) and your city, region, and country. It is
+        an estimate used to place your node on the map, not precise GPS.<br />
+        • <strong style={{ color: 'var(--text-primary)' }}>Which sermons your node is
+        hosting and re-sharing</strong>, including their titles and speakers, so the
+        network knows where each recording is preserved.<br />
+        • <strong style={{ color: 'var(--text-primary)' }}>Node status and performance
+        diagnostics</strong> — for example whether it is reachable, its uptime,
+        connected peers, storage and bandwidth contributed, and app version.<br />
+        • <strong style={{ color: 'var(--text-primary)' }}>Recent activity log lines</strong>
+        from the node, which help diagnose connection problems and keep the archive running.
+      </p>
+      <p style={p}>
+        This information describes your <em>node</em> and its part in preserving the
+        archive — it is not tied to your identity. It does not include your name, your
+        email, your browsing, or any personal account. If you would prefer not to share,
+        you can pause or turn off P2P at any time in Settings.
       </p>
 
       <div style={h}>Our Prayer</div>
