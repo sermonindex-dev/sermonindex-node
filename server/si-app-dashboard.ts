@@ -33,11 +33,11 @@ const env = (k: string, d = ""): string =>
   (typeof process !== "undefined" && process.env && process.env[k]) ||
   d;
 
-const ADMIN_KEY = "***REMOVED***"; // single admin login password (hardcoded; no longer read from Bunny env)
+const ADMIN_KEY = env("ADMIN_KEY"); // set as a Bunny env var — never hardcode. Empty = all admin logins rejected (fail-closed).
 
 // When a BunnyDB is linked to an Edge Script, Bunny auto-injects these env vars.
 // Prefer them; fall back to DB_TOKEN/DB_URL if you set names manually.
-const DB_TOKEN = env("BUNNY_DATABASE_AUTH_TOKEN") || env("DB_TOKEN") || "***REMOVED***"; // hardcoded fallback (no env vars set)
+const DB_TOKEN = env("BUNNY_DATABASE_AUTH_TOKEN") || env("DB_TOKEN"); // Bunny auto-injects this when the DB is linked — never hardcode
 
 // The edge script talks to BunnyDB over HTTP (fetch), so the URL must be the
 // HTTPS pipeline endpoint — https://<host>/v2/pipeline. Bunny provides the
@@ -52,7 +52,7 @@ function normalizeDbUrl(raw: string): string {
   if (!/\/v2\/pipeline\/?$/.test(u)) u = u.replace(/\/+$/, "") + "/v2/pipeline";
   return u;
 }
-const DB_URL = normalizeDbUrl(env("BUNNY_DATABASE_URL") || env("DB_URL") || "libsql://***REMOVED***/");
+const DB_URL = normalizeDbUrl(env("BUNNY_DATABASE_URL") || env("DB_URL"));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // libSQL data layer (BunnyDB HTTP pipeline)

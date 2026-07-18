@@ -133,7 +133,7 @@ export function ConditionsBody() {
         • <strong style={{ color: 'var(--text-primary)' }}>Node status and performance
         diagnostics</strong> — for example whether it is reachable, its uptime,
         connected peers, storage and bandwidth contributed, and app version.<br />
-        • <strong style={{ color: 'var(--text-primary)' }}>Recent activity log lines</strong>
+        • <strong style={{ color: 'var(--text-primary)' }}>Recent activity log lines</strong>{' '}
         from the node, which help diagnose connection problems and keep the archive running.
       </p>
       <p style={p}>

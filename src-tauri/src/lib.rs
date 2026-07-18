@@ -1142,6 +1142,21 @@ pub fn run() {
             torrent_session_stats,
             set_upload_limit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // Build (not run) so we can observe process-level RunEvents below.
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, _event| {
+            // macOS: when the window is hidden to the tray (red-button close in
+            // Background Seeding mode) the app stays in the Dock. Clicking the
+            // Dock icon fires `Reopen`; re-show and focus the window so the Dock
+            // behaves like the tray's "Show SermonIndex" item. Without this a
+            // user who closed to the tray would click the Dock and see nothing.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                if let Some(window) = _app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }

@@ -7,6 +7,20 @@ const TOTAL_SERMONS = 33528;
 const AUDIO_FALLBACK = 25587;
 const VIDEO_FALLBACK = 7941;
 
+// Lifetime uploaded bytes — same source Your Stats reads, so the figure matches.
+function readUploadedLifetime() {
+  try { const raw = localStorage.getItem('si-uploaded-lifetime'); if (!raw) return 0; return Number(JSON.parse(raw).lifetime) || 0; } catch { return 0; }
+}
+function formatContribution(bytes) {
+  const b = Number(bytes) || 0;
+  const gb = b / 1e9;
+  if (gb >= 1) return `${gb.toFixed(gb >= 100 ? 0 : gb >= 10 ? 1 : 2)} GB`;
+  const mb = b / 1e6;
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  if (b > 0) return `${Math.max(1, Math.round(b / 1e3))} KB`;
+  return '0 GB';
+}
+
 // ── icons ────────────────────────────────────────────────────────────────────
 const I = {
   play: <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>,
@@ -182,7 +196,7 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, onNavi
   const tiles = [
     { value: total.toLocaleString(), label: 'Sermons in the library', color: 'var(--gold-text)' },
     { value: `${covLabel}%`, label: 'Your library coverage', color: 'var(--olive)' },
-    { value: peers.toLocaleString(), label: `Peer${peers === 1 ? '' : 's'} you're helping now`, color: 'var(--seed-blue)' },
+    { value: formatContribution(readUploadedLifetime()), label: "Data you've contributed", color: 'var(--seed-blue)' },
     { value: filesShared.toLocaleString(), label: "Files you're sharing", color: 'var(--green)' },
     { value: storageUsed, label: 'Storage used', color: 'var(--text-primary)' },
   ];
@@ -206,7 +220,6 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, onNavi
           <p>Every sermon you keep and share makes this archive a little more permanent &mdash; carried by believers around the world, not by any single server.</p>
           <div className="dash-hero-meta">
             {nodeId && <span>Node <b>#{nodeId.slice(0, 9)}</b></span>}
-            <span><b>{peers.toLocaleString()}</b> peer{peers === 1 ? '' : 's'} connected</span>
             <span><b>{filesShared.toLocaleString()}</b> files shared</span>
           </div>
         </div>
