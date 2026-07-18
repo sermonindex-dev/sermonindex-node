@@ -104,10 +104,14 @@ if (has('all-platforms') || has('ci')) {
   run('git', ['push', 'origin', tag], {}, REPO);
   console.log(`\n✓ Pushed ${tag}. GitHub Actions is now building + signing macOS (Apple Silicon + Intel), Windows,`);
   console.log('  and Linux, then publishing the multi-platform auto-update + download pages to sermonindex4.');
-  console.log('  Watch it under the repo\'s Actions tab.');
+  console.log('  Watch it under the repo\'s Actions tab — or track it live here:  node scripts/watch-release.mjs');
   console.log('  Requires repo secrets set in GitHub: TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD), BUNNY_STORAGE_ZONE, BUNNY_STORAGE_KEY.');
   console.log('  CI publishes to sermonindex4 only; for the one-time sermonindex1 migration mirror, afterward run:');
   console.log('    node scripts/release.mjs --skip-build --no-installers');
+  if (has('watch')) {
+    console.log('\n=== Watching the build (it runs on GitHub — Ctrl-C stops watching only, not the build) ===');
+    run('node', ['scripts/watch-release.mjs']);
+  }
   process.exit(0);
 }
 
