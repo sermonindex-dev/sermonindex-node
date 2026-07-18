@@ -5,7 +5,7 @@
  *
  * Responsibilities:
  *   1. Node API — the endpoints the desktop app's heartbeat service calls
- *      (POST /api/node/heartbeat, /api/node/shutdown, /api/node/command-result;
+ *      (POST /api/node/heartbeat, /api/node/ping, /api/node/shutdown, /api/node/command-result;
  *       GET /api/node/map, /api/node/stats, /api/config, /api/geo;
  *       and the new /api/seed/access + /api/seed/request).
  *      The response SHAPES here are the app-facing contract and must not change.
@@ -755,6 +755,33 @@ async function handleHeartbeat(req: Request): Promise<Response> {
     config,
     commands,
   });
+}
+
+/**
+ * POST /api/node/ping
+ * Ultra-light liveness beat sent by the Rust side of the desktop app (which is
+ * immune to macOS App Nap, unlike the JS setInterval heartbeat).
+ *
+ * Body: { node_id }
+ *
+ * This endpoint deliberately does the ABSOLUTE MINIMUM:
+ *   - a single UPDATE that touches only `last_seen` + `is_online`
+ *   - never INSERTs (an unknown node_id is a harmless 0-row no-op)
+ *   - never touches `shared_sermons`
+ *   - never bumps `total_heartbeats` (that stat must keep meaning "full beats")
+ *   - never writes any other node column
+ * so it is idempotent and safe to run concurrently with /api/node/heartbeat.
+ */
+async function handlePing(req: Request): Promise<Response> {
+  await ensureTables();
+  const body = await req.json().catch(() => ({}));
+
+  const nodeId = cleanNode(body.node_id);
+  if (!nodeId) return jsonResponse({ ok: false, error: "missing node_id" }, 400);
+
+  await dbQuery(`UPDATE nodes SET last_seen = ?, is_online = 1 WHERE node_id = ?`, [nowIso(), nodeId]);
+
+  return jsonResponse({ ok: true });
 }
 
 /** JSON.parse with a fallback. */
@@ -1712,6 +1739,7 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
   try {
     // ── App-facing API ──────────────────────────────────────────────────────
     if (path === "/api/node/heartbeat" && method === "POST") return await handleHeartbeat(req);
+    if (path === "/api/node/ping" && method === "POST") return await handlePing(req);
     if (path === "/api/node/shutdown" && method === "POST") return await handleShutdown(req);
     if (path === "/api/node/command-result" && method === "POST") return await handleCommandResult(req);
     if (path === "/api/node/map" && method === "GET") return await handleMap();

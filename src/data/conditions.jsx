@@ -44,7 +44,7 @@ export function ConditionsBody() {
   return (
     <div>
       <p style={{ ...p, color: 'var(--text-primary)' }}>
-        For more than twenty years, SermonIndex has been entrusted with a sacred
+        For over two decades, SermonIndex has been entrusted with a sacred
         privilege: preserving the preaching of God's Word so that it might continue
         to speak to future generations. This software carries that same trust onto
         the network of people who choose to help keep the archive alive. Please read

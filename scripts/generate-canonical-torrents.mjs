@@ -10,7 +10,9 @@
  *
  * Output (in --out, default ./canonical-output):
  *   torrents/<sermonId>.torrent   — canonical torrent (with CDN webseeds)
- *   master-list.json              — signed-ready master list
+ *   master-list.json              — the master list
+ *   master-list.json.sig          — detached ed25519 signature over its raw bytes
+ *                                   (written only if scripts/masterlist.key exists)
  *
  * The master list is RESUMABLE: re-running skips already-processed sermons,
  * so interruptions (or nightly runs for new sermons) are fine.
@@ -33,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signMasterList } from './sign-master-list.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -277,12 +280,21 @@ async function main() {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   persist();
 
+  // Detached ed25519 signature over the raw bytes we just wrote. Skipped (with a
+  // loud warning) if scripts/masterlist.key isn't present — never fatal here.
+  try {
+    signMasterList(OUT_DIR);
+  } catch (e) {
+    console.error(`[!] Signing failed: ${e.message}`);
+  }
+
   const mins = ((Date.now() - startedAt) / 60000).toFixed(1);
   console.log(`\nDone: ${done} ok, ${failed} failed, in ${mins} min`);
   console.log(`Master list: ${masterPath} (${Object.keys(master.entries).length} total entries)`);
   console.log(`\nNext steps:`);
   console.log(`  1. Upload ${join(OUT_DIR, 'torrents')}/*.torrent  →  ${TORRENT_PUBLIC_BASE}/`);
-  console.log(`  2. Upload master-list.json                        →  ${TORRENT_PUBLIC_BASE}/master-list.json`);
+  console.log(`  2. Upload master-list.json AND master-list.json.sig → ${TORRENT_PUBLIC_BASE}/`);
+  console.log(`     (the app verifies the signature and IGNORES an unsigned/invalid list)`);
   console.log(`  3. The app picks it up automatically; the website can link each magnet.`);
 }
 

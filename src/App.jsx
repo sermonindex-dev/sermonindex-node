@@ -77,6 +77,25 @@ import { fetchSeeds } from './services/network.js';
 const UPLOAD_OFF_BYTES = 1024;                            // ~1 KB/s ≈ seeding off
 const LOW_DISK_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GB free-space floor
 
+// ── Consent flag mirrored to disk, for the Rust side ────────────────────────
+// The first-launch agreement lives in localStorage, which the Rust backend
+// cannot read. The Rust liveness-ping task (a 3-minute tokio interval that
+// POSTs to /api/node/ping so the dashboard doesn't mark us OFFLINE when macOS
+// App Nap throttles the JS heartbeat) must never transmit anything before
+// consent, so we mirror the flag into the same settings.json the heartbeat
+// writes `node_id` into. Read-modify-write so we never clobber other keys.
+async function persistConsentFlag(agreed) {
+  try {
+    const current = await loadSettings();
+    const settings = { ...(current || {}) };
+    if (settings.conditions_agreed === !!agreed) return; // already correct — don't rewrite
+    settings.conditions_agreed = !!agreed;
+    await saveSettings(settings);
+  } catch (e) {
+    console.warn('[App] Persist consent flag failed:', e?.message || e);
+  }
+}
+
 // Parse "HH:MM" (24h) → minutes since midnight, or null when malformed.
 function hhmmToMinutes(hhmm) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
@@ -203,6 +222,13 @@ export default function App() {
   // once) always reads the latest value instead of the first-render capture.
   const conditionsAgreedRef = useRef(conditionsAgreed);
   useEffect(() => { conditionsAgreedRef.current = conditionsAgreed; }, [conditionsAgreed]);
+  // Mirror the consent flag into settings.json so the Rust liveness-ping task can
+  // read it (Rust can't see localStorage). Runs on mount — which is what backfills
+  // the flag for EXISTING users who agreed on a previous launch, otherwise their
+  // ping would stay disabled forever — and again whenever consent changes, so a
+  // withdrawal/reset writes `false`. persistConsentFlag no-ops when the on-disk
+  // value already matches, so this never spams writes.
+  useEffect(() => { persistConsentFlag(conditionsAgreed); }, [conditionsAgreed]);
   // Self-heal backoff bookkeeping (task 105): cap consecutive restart attempts,
   // no more than ~one attempt / 2 min, long cooldown before a fresh burst.
   const healAttemptsRef = useRef(0);
@@ -486,7 +512,10 @@ export default function App() {
         let selfShort = '';
         try { selfShort = String(hb?.getNodeId?.() || '').slice(0, 8); } catch {}
         const otherSeeds = selfShort ? seeds.filter(s => s.node !== selfShort) : seeds;
-        const count = Math.max(seeds.length, Array.isArray(mapNodes) ? mapNodes.length : 0);
+        // Nodes reporting to the network in the last 15 min — the SAME figure the
+        // Node Map header shows. (Previously Math.max'd with the seed directory,
+        // which is an unrelated set and made the badge disagree with the map.)
+        const count = Array.isArray(mapNodes) ? mapNodes.length : 0;
         setNodesOnline(count);
         setSeedsOnline(otherSeeds.length);
       } catch { /* keep last value */ }
@@ -590,6 +619,8 @@ export default function App() {
   const handleAgreeConditions = useCallback(() => {
     try { localStorage.setItem('si-conditions-agreed', CONDITIONS_VERSION); } catch {}
     setConditionsAgreed(true);
+    // The consent-mirroring effect below picks this up and writes
+    // `conditions_agreed: true` into settings.json for the Rust ping task.
     // Consent just granted — start P2P/heartbeat/geo/port-forward right away, no
     // app restart needed. init() has already run and stashed the starter here.
     try { startNetServicesRef.current?.(); }
@@ -863,6 +894,10 @@ export default function App() {
         setP2pRunning(true);
         setNodeOnline(true);
         healAttemptsRef.current = 0; // success — reset backoff
+        // The restarted librqbit session starts with NO upload limit applied. Clear
+        // the memo so the next policy tick re-applies the throttle/cap — otherwise
+        // the user's upload limit and seeding window are silently lost after a heal.
+        lastPolicyBytesRef.current = null;
         console.log('[App] Self-heal: torrent session recovered');
       } catch (e) {
         console.warn('[App] Self-heal attempt failed:', e?.message || e);

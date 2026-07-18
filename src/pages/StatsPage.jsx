@@ -407,7 +407,7 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconStats}</span> Your Stats
         </h2>
-        <p>Your contribution to preserving God's word for the world</p>
+        <p>Your contribution to preserving God's Word for the world</p>
       </div>
 
       {/* Hero — encouraging framing, the live stat tiles, and the one-click invite */}
@@ -475,7 +475,7 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
 
         <p style={{ marginTop: '6px', marginBottom: '16px' }}>
           Every sermon you hold and every byte you share keeps the library alive across the body of
-          Christ — impossible to erase. This is your part in preserving God's word for generations to come.
+          Christ — impossible to erase. This is your part in preserving God's Word for generations to come.
         </p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>

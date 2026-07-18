@@ -1,6 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { getNodeId } from '../services/heartbeat.js';
 
+// ── Time helpers for the seeding-window dropdowns ──
+// Stored/persisted format stays "HH:MM" (24-hour); the 12-hour text is display only.
+function to12h(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return String(hhmm || '');
+  const h24 = Number(m[1]) % 24;
+  const suffix = h24 < 12 ? 'AM' : 'PM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${m[2]} ${suffix}`;
+}
+
+// 48 half-hour slots: 00:00 → 23:30
+const TIME_SLOTS = Array.from({ length: 48 }, (_, i) => {
+  const h = String(Math.floor(i / 2)).padStart(2, '0');
+  const mm = i % 2 === 0 ? '00' : '30';
+  return `${h}:${mm}`;
+});
+
+// Normalize an incoming value to the "HH:MM" shape the options use, so the
+// <select> matches even if the stored value is e.g. "7:00".
+function normalizeTime(v) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v || ''));
+  return m ? `${String(Number(m[1]) % 24).padStart(2, '0')}:${m[2]}` : '';
+}
+
 export default function SettingsPage({
   contentMode,
   onModeChange,
@@ -131,6 +156,45 @@ export default function SettingsPage({
     setTimeout(() => setUploadKbpsSaved(false), 2000);
   };
 
+  // Muted, secondary "status" line used under the two section headings.
+  const summaryLineStyle = {
+    fontSize: '0.78rem',
+    color: 'var(--text-muted)',
+    marginBottom: '16px',
+    lineHeight: 1.5,
+  };
+
+  // Live one-liner for "Seeding Schedule & Limits" — reflects the actual state.
+  const seedSummary = [
+    seedScheduleEnabled && normalizeTime(seedStart) && normalizeTime(seedEnd)
+      ? `Seeding ${to12h(seedStart)} – ${to12h(seedEnd)}`
+      : 'Seeding around the clock',
+    uploadLimitEnabled && uploadLimitKbps > 0
+      ? `upload capped at ${uploadLimitKbps} KB/s`
+      : 'upload unlimited',
+    uploadCapEnabled && uploadCapGb > 0
+      ? `monthly cap ${uploadCapGb} GB`
+      : 'no monthly cap',
+  ].join(' · ');
+
+  // Live one-liner for "Peer-to-Peer Network" — degrades gracefully when
+  // nodeStats hasn't arrived yet or the counts are zero.
+  const p2pSummary = (() => {
+    if (!p2pEnabled) return "Off — you're downloading only, not sharing";
+    if (!p2pRunning) return 'Enabled, starting up…';
+    const peers = Number(nodeStats?.peersConnected) || 0;
+    const files = Number(nodeStats?.filesShared) || 0;
+    const storage = nodeStats?.storageUsed;
+    const parts = ['Running'];
+    parts.push(peers === 1 ? '1 peer connected' : `${peers} peers connected`);
+    parts.push(
+      files > 0
+        ? `sharing ${files} file${files === 1 ? '' : 's'}${storage ? ` (${storage})` : ''}`
+        : 'nothing shared yet'
+    );
+    return parts.join(' · ');
+  })();
+
   const modes = [
     {
       key: 'cdn',
@@ -178,11 +242,14 @@ export default function SettingsPage({
           )}
           <div className="seed-card">
             <h3>Peer-to-Peer Network</h3>
-            <p style={{ marginBottom: '16px' }}>
+            <p style={{ marginBottom: '8px' }}>
               SermonIndex is a peer-to-peer sermon library. When you download sermons, your computer
               helps share them with other believers around the world. The more people who run this app,
               the faster and more resilient the network becomes.
             </p>
+
+            {/* Live status of what's actually happening right now */}
+            <div style={summaryLineStyle}>{p2pSummary}</div>
 
             <div className="settings-row">
               <div>
@@ -243,9 +310,9 @@ export default function SettingsPage({
               <div>
                 <div style={{ fontWeight: 500 }}>Download Bandwidth Limit</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Limit how much bandwidth downloads (Archive.org / CDN) may use:{' '}
+                  Limit how much bandwidth downloads (Archive.org / CDN) may use, in bits per second:{' '}
                   <strong style={{ color: 'var(--gold-text)' }}>
-                    {bandwidthLimit === 0 ? 'Unlimited' : bandwidthLimit < 1 ? `${bandwidthLimit * 1000} Kbps` : `${bandwidthLimit} Mbps`}
+                    {bandwidthLimit === 0 ? 'Unlimited' : bandwidthLimit < 1 ? `${bandwidthLimit * 1000} kbps` : `${bandwidthLimit} Mbps`}
                   </strong>
                 </div>
               </div>
@@ -254,9 +321,9 @@ export default function SettingsPage({
                 onChange={e => onBandwidthChange(parseFloat(e.target.value))}
                 style={selectStyle}
               >
-                <option value={0.1}>100 Kbps</option>
-                <option value={0.25}>250 Kbps</option>
-                <option value={0.5}>500 Kbps</option>
+                <option value={0.1}>100 kbps</option>
+                <option value={0.25}>250 kbps</option>
+                <option value={0.5}>500 kbps</option>
                 <option value={1}>1 Mbps</option>
                 <option value={5}>5 Mbps</option>
                 <option value={10}>10 Mbps</option>
@@ -274,7 +341,7 @@ export default function SettingsPage({
               <div>
                 <div style={{ fontWeight: 500 }}>Limit upload speed</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Cap how fast sermons are shared to the peer swarm (BitTorrent uploads):{' '}
+                  Cap how fast sermons are shared to the peer swarm (BitTorrent uploads), in kilobytes per second:{' '}
                   <strong style={{ color: 'var(--gold-text)' }}>
                     {uploadLimitEnabled ? `${uploadLimitKbps} KB/s` : 'Unlimited'}
                   </strong>
@@ -329,10 +396,13 @@ export default function SettingsPage({
               Enforcement lives in App.jsx (throttles uploads via set_upload_limit). */}
           <div className="seed-card">
             <h3>Seeding Schedule &amp; Limits</h3>
-            <p style={{ marginBottom: '16px' }}>
+            <p style={{ marginBottom: '8px' }}>
               Optional controls over how much you share back to the peer swarm. Both
               are off by default — leave them off to keep seeding continuously.
             </p>
+
+            {/* Live summary of the settings currently in effect */}
+            <div style={summaryLineStyle}>{seedSummary}</div>
 
             <div className="settings-row">
               <div>
@@ -357,19 +427,31 @@ export default function SettingsPage({
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input
-                    type="time"
-                    value={seedStart}
+                  <select
+                    value={normalizeTime(seedStart)}
                     onChange={e => onSeedStartChange(e.target.value)}
                     style={selectStyle}
-                  />
+                  >
+                    {!TIME_SLOTS.includes(normalizeTime(seedStart)) && (
+                      <option value={normalizeTime(seedStart)}>{to12h(seedStart)}</option>
+                    )}
+                    {TIME_SLOTS.map(t => (
+                      <option key={t} value={t}>{to12h(t)}</option>
+                    ))}
+                  </select>
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>to</span>
-                  <input
-                    type="time"
-                    value={seedEnd}
+                  <select
+                    value={normalizeTime(seedEnd)}
                     onChange={e => onSeedEndChange(e.target.value)}
                     style={selectStyle}
-                  />
+                  >
+                    {!TIME_SLOTS.includes(normalizeTime(seedEnd)) && (
+                      <option value={normalizeTime(seedEnd)}>{to12h(seedEnd)}</option>
+                    )}
+                    {TIME_SLOTS.map(t => (
+                      <option key={t} value={t}>{to12h(t)}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}

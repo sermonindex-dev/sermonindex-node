@@ -42,7 +42,7 @@ export default function DonateBanner() {
       <div className="donate-banner-text">
         <div className="donate-banner-heading">Support SermonIndex</div>
         <p>
-          For more than 22 years, SermonIndex has preserved rare sermons and millions of
+          For over two decades, SermonIndex has preserved rare sermons and millions of
           historic Christian resources and Bibles — all completely free. Would you consider
           a gift to help keep this ministry going?
         </p>

@@ -390,22 +390,105 @@ async function fetchMasterList(cacheVersion) {
   return false;
 }
 
+// ── Master-list signature verification ─────────────────────────────────────
+// The master list is the trust anchor (sermon → infohash/magnet); the app only
+// joins swarms it lists. HTTPS alone doesn't protect it — whoever can write to
+// the CDN path could swap in false infohashes. So it's signed offline with an
+// ed25519 key and published with a detached signature at <url>.sig. The public
+// key is compiled into the Rust binary and verification happens there
+// (WKWebView's WebCrypto Ed25519 support is unreliable).
+//
+// FAIL CLOSED: missing, malformed, or invalid signature → the list is NOT
+// applied. The app keeps working (HTTP downloads are unaffected); it just falls
+// back to the previously-cached/bundled catalog rather than trusting unverified
+// canonical data.
+const MASTER_LIST_SIG_URL = `${MASTER_LIST_URL}.sig`;
+
+async function _fetchMasterListSignature() {
+  try {
+    const tauri = await import('@tauri-apps/api/core');
+    return await tauri.invoke('fetch_text', { url: MASTER_LIST_SIG_URL });
+  } catch {
+    const res = await fetch(MASTER_LIST_SIG_URL, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching master list signature`);
+    return await res.text();
+  }
+}
+
+/**
+ * Verify `text` against `signatureB64` via the Rust `verify_master_list` command.
+ * Returns true ONLY on a cryptographically valid signature. Never throws —
+ * every failure path (no signature, no Tauri/invoke, bad signature, unconfigured
+ * public key) returns false so the caller can simply refuse to apply the list.
+ */
+async function _verifyMasterList(text, signatureB64) {
+  if (!signatureB64 || typeof signatureB64 !== 'string' || !signatureB64.trim()) {
+    console.warn('[Catalog] Master list signature missing — refusing to apply (fail closed).');
+    return false;
+  }
+  let invoke;
+  try {
+    ({ invoke } = await import('@tauri-apps/api/core'));
+  } catch {
+    // Dev-in-browser / non-Tauri context: we cannot verify, so we must not trust.
+    console.warn('[Catalog] Master list signature cannot be verified outside Tauri — not applying (fail closed).');
+    return false;
+  }
+  try {
+    const ok = await invoke('verify_master_list', { data: text, signatureB64: signatureB64.trim() });
+    if (ok !== true) {
+      console.warn('[Catalog] Master list signature verification returned false — not applying.');
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[Catalog] Master list signature INVALID — not applying:', e?.message || e);
+    return false;
+  }
+}
+
 async function _fetchMasterListOnce(cacheVersion) {
   // Native fetch first (Rust reqwest — immune to CDN CORS policy, which
   // blocks the webview from reading .json cross-origin). Browser fetch as
-  // fallback for dev-in-browser mode.
+  // fallback for dev-in-browser mode. We keep the RAW TEXT around: the
+  // signature covers those exact bytes, not a re-serialization of them.
+  let text = null;
   let data = null;
   try {
     const tauri = await import('@tauri-apps/api/core');
-    const text = await tauri.invoke('fetch_text', { url: MASTER_LIST_URL });
+    text = await tauri.invoke('fetch_text', { url: MASTER_LIST_URL });
     data = JSON.parse(text);
   } catch (nativeErr) {
     console.warn('[Catalog] Native master-list fetch unavailable, trying browser fetch:', nativeErr?.message || nativeErr);
     const res = await fetch(MASTER_LIST_URL, { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching master list`);
-    data = await res.json();
+    text = await res.text();
+    data = JSON.parse(text);
   }
   if (!data || !data.entries) throw new Error('Master list malformed (missing entries)');
+
+  // Verify BEFORE applying or caching anything. A signature-fetch failure is
+  // treated exactly like a bad signature: don't trust the list.
+  let signatureB64 = null;
+  try {
+    signatureB64 = await _fetchMasterListSignature();
+  } catch (sigErr) {
+    console.warn('[Catalog] Master list signature unavailable:', sigErr?.message || sigErr);
+  }
+  if (!(await _verifyMasterList(text, signatureB64))) {
+    // Do NOT apply and do NOT cache — keep the previously-known/bundled catalog.
+    // Downloads over HTTP still work; only canonical torrent data is withheld.
+    // Thrown (not returned) so the normal retry schedule applies: that gives a
+    // self-healing window if the .json and .sig were briefly out of sync on the
+    // CDN, and it stops reconcileMasterListVersion from marking this version as
+    // successfully applied.
+    console.warn('[Catalog] Master list REJECTED (signature not verified) — keeping existing catalog; canonical torrent data not applied.');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('si-master-list-unverified'));
+    }
+    throw new Error('Master list signature verification failed');
+  }
+
   const merged = applyMasterListEntries(data.entries);
   // Persist across launches so the node doesn't re-download on every start. Tag it
   // with the server-pushed version when known, else the version we already applied,

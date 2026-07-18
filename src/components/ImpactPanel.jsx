@@ -172,7 +172,7 @@ export default function ImpactPanel() {
       </div>
 
       <p style={{ marginTop: '6px', marginBottom: '16px' }}>
-        You're helping preserve God's word for the world — every sermon you hold and every byte you
+        You're helping preserve God's Word for the world — every sermon you hold and every byte you
         share keeps the library alive and impossible to erase.
       </p>
 

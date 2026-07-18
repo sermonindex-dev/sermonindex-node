@@ -162,9 +162,25 @@ async function main() {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   persist();
 
-  // Master list is always (re)uploaded — it changes every generator run
+  // Master list is always (re)uploaded — it changes every generator run.
+  // The detached signature goes up FIRST: verifying clients fail closed, so a
+  // window where the .json is new but the .sig is stale/absent means nodes
+  // reject the list. Uploading the signature first keeps that window shut.
   const masterPath = join(OUT_DIR, 'master-list.json');
+  const sigPath = `${masterPath}.sig`;
   if (existsSync(masterPath)) {
+    if (existsSync(sigPath)) {
+      try {
+        await put(`${REMOTE_DIR}/master-list.json.sig`, readFileSync(sigPath));
+        console.log('master-list.json.sig uploaded ✓');
+      } catch (e) {
+        console.error(`[!] master-list.json.sig: ${e.message}`);
+        failed++;
+      }
+    } else {
+      console.warn('[!] No master-list.json.sig found — the app will REJECT this master list.');
+      console.warn('    Sign it first: node scripts/sign-master-list.mjs');
+    }
     try {
       await put(`${REMOTE_DIR}/master-list.json`, readFileSync(masterPath));
       console.log('master-list.json uploaded ✓');
@@ -178,7 +194,8 @@ async function main() {
   console.log(`Public URLs: https://sermonindex1.b-cdn.net/${REMOTE_DIR}/<id>.torrent`);
   console.log(`Master list: https://sermonindex1.b-cdn.net/${REMOTE_DIR}/master-list.json`);
   if (!DRY_RUN) {
-    console.log(`\nReminder: purge master-list.json in the Bunny dashboard so the CDN serves the fresh copy.`);
+    console.log(`\nReminder: purge BOTH master-list.json and master-list.json.sig in the Bunny`);
+    console.log(`dashboard so the CDN serves the fresh pair (a stale .sig fails verification).`);
   }
 }
 

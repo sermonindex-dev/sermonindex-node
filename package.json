@@ -1,6 +1,6 @@
 {
   "name": "sermonindex-app",
-  "version": "0.0.326",
+  "version": "0.0.327",
   "description": "SermonIndex Node Software — Decentralized P2P Sermon Library",
   "scripts": {
     "dev": "vite",

@@ -170,6 +170,45 @@ async function trySeedTorrent(filename, sermon = null) {
   }
 }
 
+// ── Resilience tuning ──────────────────────────────────────────────────────
+// Archive.org rate-limits aggressively during bulk pulls (429s, mid-stream
+// resets, occasional 5xx). These knobs turn a transient blip into a retry
+// instead of a permanent gap in a seed node's library.
+const MAX_ATTEMPTS_PER_SOURCE = 3;   // tries per source within one pass
+const SOURCE_PASSES = 2;             // full Archive→CDN rounds before failing the file
+const BATCH_RETRY_PASSES = 2;        // extra passes over the failed set at end of a batch
+const BASE_BACKOFF_MS = 1000;        // 1s → 2s → 4s → 8s …
+const MAX_BACKOFF_MS = 30000;        // hard ceiling per wait
+const MAX_RETRY_AFTER_MS = 120000;   // never obey an absurd Retry-After
+// A source that answers with one of these simply doesn't have the file —
+// retrying it is pointless (and looks like abuse). Fall back to the other source.
+const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 410, 451]);
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch { return 'source'; }
+}
+
+// Exponential backoff with jitter (jitter avoids a bulk run re-hitting the
+// host in lockstep after a rate-limit burst).
+function backoffDelay(attempt) {
+  const base = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt), MAX_BACKOFF_MS);
+  return Math.round(base + Math.random() * Math.min(base, 2000));
+}
+
+// Honor Retry-After on 429/503 — seconds or HTTP-date form.
+function parseRetryAfter(response) {
+  let raw = null;
+  try { raw = response.headers.get('retry-after'); } catch { return 0; }
+  if (!raw) return 0;
+  const secs = Number(raw);
+  if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, MAX_RETRY_AFTER_MS);
+  const when = Date.parse(raw);
+  if (!Number.isNaN(when)) return Math.max(0, Math.min(when - Date.now(), MAX_RETRY_AFTER_MS));
+  return 0;
+}
+
 export const DL_STATE = {
   QUEUED: 'queued',
   DOWNLOADING: 'downloading',
@@ -190,8 +229,12 @@ class DownloadManager {
   constructor() {
     this.queue = new Map();
     this.listeners = new Set();
-    this.maxConcurrent = 3;
+    // Conservative on purpose: Archive.org throttles per-client aggressively,
+    // and a 429 storm is what turns a bulk run into dozens of "failed" files.
+    // Bulk/seed runs are sequential anyway; this only caps ad-hoc parallelism.
+    this.maxConcurrent = 2;
     this.activeDownloads = 0;
+    this.lastBatchFailures = []; // [{ sermon, error }] from the last downloadBatch()
     this.mode = SOURCE_MODE.CDN_PRIMARY;
     this.bandwidthLimit = 0; // bytes/sec, 0 = unlimited (throttles HTTP downloads)
     this.storageLimitBytes = 0; // bytes, 0 = unlimited (caps total cached sermons)
@@ -407,23 +450,43 @@ class DownloadManager {
   }
 
   /**
-   * Retry a URL fetch up to maxRetries times with a small delay between attempts.
+   * Fetch one URL with retries: exponential backoff + jitter, Retry-After
+   * awareness, and HTTP Range resume of a partially received body.
+   *
+   * `maxAttempts` counts total tries for THIS source in THIS pass.
+   * A non-retryable status (404/403/401/410) aborts immediately and marks the
+   * error `fatalSource` so the caller stops re-trying that URL.
    */
-  async _fetchWithRetry(url, entry, maxRetries = 2) {
+  async _fetchWithRetry(url, entry, maxAttempts = MAX_ATTEMPTS_PER_SOURCE) {
+    // Partial-body state shared across attempts so a dropped connection can be
+    // resumed with `Range: bytes=<received>-` instead of starting over.
+    const partial = { chunks: [], received: 0, total: 0, acceptRanges: false };
     let lastError;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        return await this._fetchFromUrl(url, entry);
+        return await this._fetchFromUrl(url, entry, partial);
       } catch (e) {
         lastError = e;
-        if (attempt < maxRetries && e.message.includes('Incomplete download')) {
-          console.warn(`[DL] Attempt ${attempt + 1} failed (incomplete), retrying in 2s...`);
-          await new Promise(r => setTimeout(r, 2000));
-          // Reset progress for retry
+        if (e && e.fatalSource) throw e;                 // 404 etc — don't hammer it
+        if (attempt >= maxAttempts - 1) throw e;         // out of attempts here
+
+        const wait = e?.retryAfterMs > 0
+          ? Math.min(e.retryAfterMs, MAX_BACKOFF_MS)
+          : backoffDelay(attempt);
+        const resuming = partial.acceptRanges && partial.received > 0;
+        console.warn(
+          `[DL] ${hostOf(url)} attempt ${attempt + 1}/${maxAttempts} failed (${e.message})` +
+          ` — retrying in ${Math.round(wait / 100) / 10}s${resuming ? ` (resume @ ${partial.received} bytes)` : ''}`
+        );
+        await sleep(wait);
+
+        if (!resuming) {
+          // Can't resume — start this file over cleanly.
+          partial.chunks = [];
+          partial.received = 0;
           entry.bytesDownloaded = 0;
           entry.progress = 0;
-        } else {
-          throw e;
         }
       }
     }
@@ -431,92 +494,161 @@ class DownloadManager {
   }
 
   /**
-   * Try Archive.org first, then CDN — with retries for incomplete downloads
+   * Try Archive.org, then CDN — and if BOTH fail, come back around for another
+   * full pass (Archive → CDN) with backoff. Archive.org rate-limits hard during
+   * bulk pulls, so a second pass a few seconds later usually succeeds.
+   * Sources that return a definitive 404/410 are dropped from later passes.
    */
   async _fetchWithArchiveFallback(sermon, entry) {
-    // Try Archive.org first (free)
-    if (sermon.archiveUrl) {
-      try {
-        const bytes = await this._fetchWithRetry(sermon.archiveUrl, entry);
-        entry.source = 'archive.org';
-        entry.sourceUrl = sermon.archiveUrl;
-        return bytes;
-      } catch (e) {
-        console.warn(`[DL] Archive.org failed for "${sermon.title}": ${e.message}, trying CDN...`);
+    const sources = [];
+    if (sermon.archiveUrl) sources.push({ name: 'archive.org', url: sermon.archiveUrl });
+    if (sermon.cdnUrl) sources.push({ name: 'cdn', url: sermon.cdnUrl });
+    if (sources.length === 0) throw new Error('No available source for download');
+
+    const dead = new Set(); // sources that answered 404/410 — never retried
+    let lastError = null;
+
+    for (let pass = 0; pass < SOURCE_PASSES; pass++) {
+      const live = sources.filter(s => !dead.has(s.name));
+      if (live.length === 0) break;
+
+      if (pass > 0) {
+        const wait = backoffDelay(pass);
+        console.warn(`[DL] All sources failed for "${sermon.title}" — pass ${pass + 1}/${SOURCE_PASSES} in ${Math.round(wait / 100) / 10}s`);
+        await sleep(wait);
+        entry.bytesDownloaded = 0;
+        entry.progress = 0;
+      }
+
+      for (const src of live) {
+        try {
+          const bytes = await this._fetchWithRetry(src.url, entry);
+          entry.source = src.name;
+          entry.sourceUrl = src.url;
+          if (pass > 0 || src !== live[0]) {
+            console.log(`[DL] Recovered "${sermon.title}" via ${src.name} (pass ${pass + 1})`);
+          }
+          return bytes;
+        } catch (e) {
+          lastError = e;
+          if (e?.fatalSource) {
+            dead.add(src.name);
+            console.warn(`[DL] ${src.name} has no file for "${sermon.title}" (${e.message}) — dropping source`);
+          } else {
+            console.warn(`[DL] ${src.name} failed for "${sermon.title}": ${e.message}`);
+          }
+        }
       }
     }
 
-    // Fallback to Bunny CDN
-    if (sermon.cdnUrl) {
-      try {
-        const bytes = await this._fetchWithRetry(sermon.cdnUrl, entry);
-        entry.source = 'cdn';
-        entry.sourceUrl = sermon.cdnUrl;
-        return bytes;
-      } catch (e) {
-        console.warn(`[DL] CDN failed for "${sermon.title}": ${e.message}`);
-      }
-    }
-
-    throw new Error('No available source for download');
+    throw new Error(lastError ? `All sources failed — ${lastError.message}` : 'No available source for download');
   }
 
   /**
-   * Download from a URL with progress tracking and bandwidth throttling
+   * Download from a URL with progress tracking and bandwidth throttling.
+   * `partial` (optional) carries chunks already received on a previous attempt
+   * so this call can resume with a Range request instead of restarting.
    */
-  async _fetchFromUrl(url, entry) {
+  async _fetchFromUrl(url, entry, partial = null) {
+    const host = hostOf(url);
     // 5 minute timeout for the initial connection (the streaming read has its own implicit timeout)
     const controller = new AbortController();
     const connectionTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+    const resumeFrom = partial && partial.acceptRanges && partial.received > 0 ? partial.received : 0;
+    const headers = resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : undefined;
+
     let response;
     try {
-      response = await fetch(url, { signal: controller.signal });
+      response = await fetch(url, { signal: controller.signal, headers });
+    } catch (netErr) {
+      // Connection reset / DNS / abort — always worth another try.
+      const err = new Error(`Network error from ${host}: ${netErr?.message || netErr}`);
+      err.retryable = true;
+      throw err;
     } finally {
       clearTimeout(connectionTimeout);
     }
-    if (!response.ok) throw new Error(`HTTP ${response.status} from ${new URL(url).hostname}`);
 
-    const contentLength = parseInt(response.headers.get('content-length') || '0');
-    if (contentLength > 0) {
-      entry.totalBytes = contentLength;
+    if (!response.ok) {
+      const err = new Error(`HTTP ${response.status} from ${host}`);
+      err.status = response.status;
+      err.retryAfterMs = parseRetryAfter(response);
+      // 404/410/403/401 mean "this source doesn't have it" — try the OTHER
+      // source instead of hammering this one.
+      err.fatalSource = NON_RETRYABLE_STATUS.has(response.status);
+      throw err;
     }
+
+    // ── Size / resume bookkeeping ──────────────────────────────────────
+    const contentLength = parseInt(response.headers.get('content-length') || '0');
+    const acceptRanges = (response.headers.get('accept-ranges') || '').toLowerCase().includes('bytes');
+    let baseReceived = 0;
+    let expectedTotal = 0;
+
+    if (response.status === 206) {
+      // Server honoured our Range — keep what we already have.
+      baseReceived = resumeFrom;
+      const cr = response.headers.get('content-range') || '';
+      const m = /\/(\d+)\s*$/.exec(cr);
+      expectedTotal = m ? parseInt(m[1]) : (contentLength ? resumeFrom + contentLength : 0);
+    } else {
+      // 200 — full body (server ignored the Range header, or first attempt).
+      if (partial) { partial.chunks = []; partial.received = 0; }
+      expectedTotal = contentLength;
+    }
+    if (partial) {
+      partial.acceptRanges = acceptRanges || response.status === 206;
+      if (expectedTotal > 0) partial.total = expectedTotal;
+    }
+    if (expectedTotal > 0) entry.totalBytes = expectedTotal;
+
     // Use the best estimate of total size for progress calculation
-    const estimatedTotal = contentLength || entry.totalBytes || entry.sermon?.sizeBytes || 0;
+    const estimatedTotal = expectedTotal || entry.totalBytes || entry.sermon?.sizeBytes || 0;
 
     const reader = response.body.getReader();
-    const chunks = [];
-    let received = 0;
+    const chunks = partial ? partial.chunks : [];
+    let received = baseReceived;
     let lastNotify = 0;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      chunks.push(value);
-      received += value.length;
-      entry.bytesDownloaded = received;
-      // Calculate progress using best available size estimate
-      if (estimatedTotal > 0) {
-        entry.progress = Math.min((received / estimatedTotal) * 100, 99);
-      } else {
-        // No size info at all — show indeterminate-style progress (received bytes only)
-        entry.progress = -1; // signals "downloading but unknown total"
-      }
-      // Throttle notifications to max ~10 per second to avoid flooding React state updates
-      const now = Date.now();
-      if (now - lastNotify >= 100 || done) {
-        lastNotify = now;
-        this._notify(entry.sermon.id, entry);
-      }
+        chunks.push(value);
+        received += value.length;
+        if (partial) partial.received = received;
+        entry.bytesDownloaded = received;
+        // Calculate progress using best available size estimate
+        if (estimatedTotal > 0) {
+          entry.progress = Math.min((received / estimatedTotal) * 100, 99);
+        } else {
+          // No size info at all — show indeterminate-style progress (received bytes only)
+          entry.progress = -1; // signals "downloading but unknown total"
+        }
+        // Throttle notifications to max ~10 per second to avoid flooding React state updates
+        const now = Date.now();
+        if (now - lastNotify >= 100 || done) {
+          lastNotify = now;
+          this._notify(entry.sermon.id, entry);
+        }
 
-      // Bandwidth throttling
-      if (this.bandwidthLimit > 0) {
-        const elapsed = (Date.now() - entry.startTime) / 1000;
-        const targetTime = received / this.bandwidthLimit;
-        if (elapsed < targetTime) {
-          await new Promise(r => setTimeout(r, (targetTime - elapsed) * 1000));
+        // Bandwidth throttling
+        if (this.bandwidthLimit > 0) {
+          const elapsed = (Date.now() - entry.startTime) / 1000;
+          const targetTime = received / this.bandwidthLimit;
+          if (elapsed < targetTime) {
+            await new Promise(r => setTimeout(r, (targetTime - elapsed) * 1000));
+          }
         }
       }
+    } catch (streamErr) {
+      // Mid-stream drop. Whatever we already buffered stays in `partial`, so
+      // the next attempt resumes from here if the server supports Range.
+      const err = new Error(`Connection dropped at ${received} bytes from ${host}: ${streamErr?.message || streamErr}`);
+      err.retryable = true;
+      throw err;
     }
 
     // Final progress notification after loop completes
@@ -526,10 +658,12 @@ class DownloadManager {
 
     const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
 
-    // Integrity check: if server sent Content-Length, verify we got the full file
-    if (contentLength > 0 && totalLength < contentLength) {
-      const pct = Math.round((totalLength / contentLength) * 100);
-      throw new Error(`Incomplete download: got ${totalLength} of ${contentLength} bytes (${pct}%) from ${new URL(url).hostname}`);
+    // Integrity check: if the server told us a total, verify we got the full file
+    if (expectedTotal > 0 && totalLength < expectedTotal) {
+      const pct = Math.round((totalLength / expectedTotal) * 100);
+      const err = new Error(`Incomplete download: got ${totalLength} of ${expectedTotal} bytes (${pct}%) from ${host}`);
+      err.retryable = true;
+      throw err; // partial retained → next attempt resumes
     }
 
     const result = new Uint8Array(totalLength);
@@ -543,41 +677,92 @@ class DownloadManager {
   }
 
   /**
-   * Batch download for seed nodes
+   * Batch download for seed nodes / bulk speaker pulls.
+   *
+   * Runs sequentially in the given order, then automatically re-queues anything
+   * that failed for up to `retryPasses` additional passes (with backoff between
+   * passes) before reporting. The surviving failures are kept on
+   * `lastBatchFailures` so the UI can offer a "Retry failed" button.
    */
-  async downloadBatch(sermons, onBatchProgress) {
+  async downloadBatch(sermons, onBatchProgress, options = {}) {
+    const retryPasses = Number.isInteger(options.retryPasses) ? options.retryPasses : BATCH_RETRY_PASSES;
+    const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
     const total = sermons.length;
     let completed = 0;
-    let failed = 0;
+    const failures = new Map(); // sermonId → { sermon, error }
+    let pending = [...sermons];
 
-    for (const sermon of sermons) {
-      if (this.paused) {
-        await new Promise(r => {
-          const check = setInterval(() => {
-            if (!this.paused) { clearInterval(check); r(); }
-          }, 1000);
-        });
+    const emit = (pass, retrying) => {
+      if (!onBatchProgress) return;
+      onBatchProgress({
+        total,
+        completed,
+        failed: failures.size,
+        progress: total > 0 ? (completed / total) * 100 : 0,
+        totalBytes: this.totalDownloaded,
+        pass,            // 0 = first run, ≥1 = automatic retry pass
+        retrying,        // true while re-running the failed set
+        remaining: total - completed,
+      });
+    };
+
+    for (let pass = 0; pass <= retryPasses; pass++) {
+      if (pending.length === 0) break;
+      if (shouldStop()) break;
+
+      if (pass > 0) {
+        const wait = backoffDelay(pass + 1); // ~4–8s+ before re-attacking a rate-limited host
+        console.warn(`[DL] Batch: ${pending.length} file(s) failed — automatic retry pass ${pass}/${retryPasses} in ${Math.round(wait / 1000)}s`);
+        emit(pass, true);
+        await sleep(wait);
       }
 
-      try {
-        await this.download(sermon);
-        completed++;
-      } catch {
-        failed++;
-      }
+      const roundFailures = [];
+      for (const sermon of pending) {
+        if (shouldStop()) break;
+        if (this.paused) {
+          await new Promise(r => {
+            const check = setInterval(() => {
+              if (!this.paused || shouldStop()) { clearInterval(check); r(); }
+            }, 1000);
+          });
+        }
 
-      if (onBatchProgress) {
-        onBatchProgress({
-          total,
-          completed,
-          failed,
-          progress: (completed / total) * 100,
-          totalBytes: this.totalDownloaded,
-        });
+        try {
+          await this.download(sermon);
+          completed++;
+          failures.delete(sermon.id);
+        } catch (e) {
+          roundFailures.push(sermon);
+          failures.set(sermon.id, { sermon, error: e?.message || String(e) });
+        }
+
+        emit(pass, pass > 0);
       }
+      pending = roundFailures;
     }
 
-    return { total, completed, failed };
+    this.lastBatchFailures = [...failures.values()];
+    if (failures.size > 0) {
+      console.warn(`[DL] Batch finished: ${completed}/${total} complete, ${failures.size} failed after ${retryPasses + 1} pass(es)`);
+    } else {
+      console.log(`[DL] Batch finished: ${completed}/${total} complete, 0 failed`);
+    }
+    emit(retryPasses, false);
+
+    return { total, completed, failed: failures.size, failures: this.lastBatchFailures };
+  }
+
+  /** Sermons that were still failing at the end of the last batch run. */
+  getFailedDownloads() {
+    return (this.lastBatchFailures || []).map(f => f.sermon);
+  }
+
+  /** Re-run just the failures from the last batch (for a "Retry failed" button). */
+  async retryFailedDownloads(onBatchProgress, options = {}) {
+    const sermons = this.getFailedDownloads();
+    if (sermons.length === 0) return { total: 0, completed: 0, failed: 0, failures: [] };
+    return this.downloadBatch(sermons, onBatchProgress, options);
   }
 
   pause() { this.paused = true; }

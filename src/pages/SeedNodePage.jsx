@@ -19,7 +19,7 @@ const SCOPE_INFO = {
     requiredLabel: '500 GB',
   },
   full: {
-    label: 'Everything (audio + video)',
+    label: 'Full library (audio + video)',
     sizeLabel: '~2.4 TB',
     fileCount: 33528, // 25,587 audio + 7,941 video
     tagline: '~2.4 TB · adds 7,941 videos · needs a large drive',
@@ -129,6 +129,8 @@ export default function SeedNodePage({
   // STEP 4 — download
   const [downloading, setDownloading] = useState(false);
   const [batchProgress, setBatchProgress] = useState(null);
+  // Files still failing after the download manager's automatic retry passes.
+  const [failedItems, setFailedItems] = useState([]);
   const [isPaused, setIsPaused] = useState(false);
 
   // On unlock, show whatever storage dir the backend already has configured.
@@ -304,22 +306,37 @@ export default function SeedNodePage({
   }, [reachPort]);
 
   // ── STEP 4: scope-filtered bulk download ──────────────────────────────────
-  const startFullDownload = useCallback(async () => {
-    if (!downloadManager) return;
+  const runSeedBatch = useCallback(async (toDownload) => {
+    if (!downloadManager || toDownload.length === 0) return;
     setDownloading(true);
+    setFailedItems([]);
 
-    const toDownload = scope === 'audio'
-      ? catalog.filter(s => s.type === 'audio' && !s.downloaded)
-      : catalog.filter(s => !s.downloaded);
-
+    let result = { failures: [] };
     try {
-      await downloadManager.downloadBatch(toDownload, (progress) => {
+      // downloadBatch retries each file (backoff + Archive↔CDN fallback) and
+      // then automatically re-runs the whole failed set a couple of times
+      // before it reports anything as failed.
+      result = await downloadManager.downloadBatch(toDownload, (progress) => {
         setBatchProgress({ ...progress });
       });
     } catch (err) {
       console.error('[SeedNode] Batch download error:', err);
     }
-  }, [catalog, downloadManager, scope]);
+    setFailedItems(result.failures || []);
+    setDownloading(false);
+  }, [downloadManager]);
+
+  const startFullDownload = useCallback(() => {
+    const toDownload = scope === 'audio'
+      ? catalog.filter(s => s.type === 'audio' && !s.downloaded)
+      : catalog.filter(s => !s.downloaded);
+    runSeedBatch(toDownload);
+  }, [catalog, scope, runSeedBatch]);
+
+  const retryFailed = useCallback(() => {
+    const sermons = failedItems.map(f => f.sermon).filter(Boolean);
+    runSeedBatch(sermons);
+  }, [failedItems, runSeedBatch]);
 
   const togglePause = useCallback(() => {
     if (!downloadManager) return;
@@ -343,8 +360,8 @@ export default function SeedNodePage({
   const scopePercent = scopeTotal > 0 ? (scopeDownloaded / scopeTotal) * 100 : 0;
 
   const displayProgress = batchProgress
-    ? { completed: batchProgress.completed, total: batchProgress.total, failed: batchProgress.failed, percent: batchProgress.progress }
-    : { completed: scopeDownloaded, total: scopeTotal, failed: 0, percent: scopePercent };
+    ? { completed: batchProgress.completed, total: batchProgress.total, failed: batchProgress.failed, percent: batchProgress.progress, retrying: !!batchProgress.retrying }
+    : { completed: scopeDownloaded, total: scopeTotal, failed: 0, percent: scopePercent, retrying: false };
 
   // ─── LOCKED STATE ─────────────────────────────────────────────────
 
@@ -362,7 +379,7 @@ export default function SeedNodePage({
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>{iconLock} Request Seed Node Access</h3>
           <p>
             Seed node access is granted per device by the SermonIndex admin — the seed nodes are the
-            trusted backbone of the peer-to-peer network. Your node's unique id is:
+            trusted backbone of the peer-to-peer network. Your node's unique ID is:
           </p>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '10px 0' }}>
@@ -371,17 +388,17 @@ export default function SeedNodePage({
             </code>
             <button
               className="btn"
-              onClick={() => { try { navigator.clipboard.writeText(nodeId); setAccessMsg('Full node id copied to clipboard.'); } catch {} }}
+              onClick={() => { try { navigator.clipboard.writeText(nodeId); setAccessMsg('Full node ID copied to clipboard.'); } catch {} }}
               style={{ padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
             >
-              Copy full id
+              Copy full ID
             </button>
           </div>
 
           <p>
             Enter your email and request access below — or email{' '}
             <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold-text)' }}>{SEED_CONTACT_EMAIL}</a>{' '}
-            with the node id above. Once the admin enables your node, press <strong>Check access</strong>.
+            with the node ID above. Once the admin enables your node, press <strong>Check access</strong>.
           </p>
 
           <div style={{ display: 'flex', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
@@ -574,7 +591,7 @@ export default function SeedNodePage({
         <p>
           Pick a folder on a drive with at least{' '}
           <strong style={{ color: 'var(--gold-text)' }}>{scopeInfo.requiredLabel}</strong> of free space
-          ({scopeInfo.label.toLowerCase()} is {scopeInfo.sizeLabel}). We recommend a dedicated external
+          — the {scopeInfo.label.toLowerCase()} is {scopeInfo.sizeLabel}. We recommend a dedicated external
           NVMe drive — for example a <strong style={{ color: 'var(--gold-text)' }}>TerraMaster D4</strong> NVMe
           enclosure with NVMe sticks, or a <strong style={{ color: 'var(--gold-text)' }}>Raspberry Pi 5</strong> in
           a Pironman 5 case with an NVMe SSD for a quiet, always-on node.
@@ -622,7 +639,7 @@ export default function SeedNodePage({
         {storageVerified && !storageError && (
           <p style={{ color: 'var(--green)', fontSize: '0.82rem', marginTop: '8px' }}>
             ✓ Storage set and space verified
-            {diskInfo ? ` — ${diskInfo.available_formatted} free (${diskInfo.available_tb} TB), enough for ${scopeInfo.label.toLowerCase()} (${scopeInfo.sizeLabel}).` : '.'}
+            {diskInfo ? ` — ${diskInfo.available_formatted} free (${diskInfo.available_tb} TB), enough for the ${scopeInfo.label.toLowerCase()} at ${scopeInfo.sizeLabel}.` : '.'}
           </p>
         )}
       </div>
@@ -699,6 +716,21 @@ export default function SeedNodePage({
               Already downloaded: <strong style={{ color: 'var(--gold-text)' }}>{scopeDownloaded.toLocaleString()}</strong>
               {' '}· Remaining: <strong>{scopeRemaining.toLocaleString()}</strong>
             </p>
+            {failedItems.length > 0 && (
+              <div style={{
+                padding: '12px 14px', marginBottom: '14px', borderRadius: 'var(--radius)',
+                background: 'var(--bg-tertiary)', border: '1px solid var(--red)',
+              }}>
+                <div style={{ fontWeight: 600, color: 'var(--red)', marginBottom: '4px' }}>
+                  {failedItems.length} file{failedItems.length === 1 ? '' : 's'} failed after retries
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  Every other file finished. These are usually temporary source hiccups (rate limiting or a
+                  dropped connection) — retrying later almost always clears them.
+                </div>
+                <button className="btn btn-gold" onClick={retryFailed}>Retry failed ({failedItems.length})</button>
+              </div>
+            )}
             {scopeRemaining > 0 ? (
               <button className="btn btn-gold" onClick={startFullDownload}>
                 {scopeDownloaded > 0 ? `Resume ${scope === 'audio' ? 'Audio' : 'Full'} Library Download` : `Start ${scope === 'audio' ? 'Audio' : 'Full'} Library Download`}
@@ -723,7 +755,8 @@ export default function SeedNodePage({
             </div>
             {displayProgress.failed > 0 && (
               <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: '6px' }}>
-                {displayProgress.failed} files failed — will retry on next batch
+                {displayProgress.failed} file{displayProgress.failed === 1 ? '' : 's'} failed so far
+                {displayProgress.retrying ? ' — retrying them now…' : ' — they are retried automatically at the end of the run'}
               </p>
             )}
             <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
@@ -790,7 +823,7 @@ export default function SeedNodePage({
             <div style={{ fontWeight: 500 }}>Hosting</div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>What this node is set to carry</div>
           </div>
-          <span style={{ color: 'var(--gold-text)', fontWeight: 600 }}>{scopeInfo.label} ({scopeInfo.sizeLabel})</span>
+          <span style={{ color: 'var(--gold-text)', fontWeight: 600 }}>{scopeInfo.label} · {scopeInfo.sizeLabel}</span>
         </div>
         <div className="settings-row">
           <div>

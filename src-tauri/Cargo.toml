@@ -1,6 +1,6 @@
 [package]
 name = "sermonindex-app"
-version = "0.0.326"
+version = "0.0.327"
 description = "SermonIndex Sermon Library — Decentralized P2P sermon sharing"
 authors = ["SermonIndex"]
 license = ""
@@ -27,6 +27,8 @@ dirs = "5"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 base64 = "0.22"
+# Detached ed25519 signature verification for the canonical master list
+ed25519-dalek = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # ── BitTorrent node (librqbit — the engine behind rqbit) ──

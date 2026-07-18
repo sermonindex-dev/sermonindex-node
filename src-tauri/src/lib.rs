@@ -16,11 +16,14 @@ mod torrent_node;
 /// Arc so commands can clone it out and release the lock before long awaits.
 struct TorrentState {
     handle: Option<Arc<torrent_node::TorrentHandle>>,
+    /// Background liveness-ping task (see `spawn_liveness_ping`). Lives here
+    /// beside the session handle so it starts and stops with the session.
+    liveness: Option<tauri::async_runtime::JoinHandle<()>>,
 }
 
 impl TorrentState {
     fn new() -> Self {
-        Self { handle: None }
+        Self { handle: None, liveness: None }
     }
 }
 
@@ -367,6 +370,112 @@ fn persisted_upload_limit_bps() -> Option<std::num::NonZeroU32> {
     std::num::NonZeroU32::new(bps.min(u32::MAX as u64) as u32)
 }
 
+// ============================================================
+// Liveness ping — keeps the dashboard from showing us OFFLINE
+// ============================================================
+//
+// The JS heartbeat runs on a 5-minute setInterval in the webview, which macOS
+// App Nap throttles hard once the window is hidden. The dashboard treats a node
+// as offline at `now - last_seen > 15min`, so a perfectly healthy seeding node
+// would go dark. This task pings from the Rust side, which App Nap can't touch.
+//
+// It is deliberately NOT the heartbeat: `/api/node/ping` only bumps
+// `last_seen` + `is_online`. It never rewrites the node's stats, never touches
+// `shared_sermons`, and never counts toward `total_heartbeats` — so the two
+// coexist and the JS beat remains the sole source of the full node record.
+
+/// Ping cadence. Well under the dashboard's 15-minute offline cutoff, so a node
+/// survives a couple of dropped pings before it is ever marked offline.
+const LIVENESS_PING_SECS: u64 = 180;
+const LIVENESS_PING_URL: &str = "https://app.sermonindex.net/api/node/ping";
+
+/// The node id to ping with — but ONLY once the user has accepted the
+/// first-launch conditions. The frontend mirrors that consent into
+/// settings.json as `conditions_agreed` precisely because Rust cannot read the
+/// localStorage flag the UI gates on. `None` means "stay completely silent":
+/// no consent yet, no node id, or an unreadable/!malformed settings file.
+fn liveness_ping_node_id() -> Option<String> {
+    let settings_path = get_app_data_dir().join("settings.json");
+    let text = fs::read_to_string(&settings_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    // Consent gate — anything other than an explicit `true` means don't transmit.
+    if value.get("conditions_agreed").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let node_id = value.get("node_id").and_then(|v| v.as_str())?.trim().to_string();
+    if node_id.is_empty() {
+        return None;
+    }
+    Some(node_id)
+}
+
+/// Spawn the liveness-ping loop. Every failure is swallowed and logged — this
+/// task must never panic, never block startup, and never affect shutdown.
+/// The returned handle is stored in `TorrentState` and aborted by `torrent_stop`.
+fn spawn_liveness_ping() -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        // One client for the life of the task (connection reuse); short timeout
+        // so a hung request can never stack up behind the next tick.
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("[Liveness] HTTP client build failed, ping disabled: {e}");
+                return;
+            }
+        };
+
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(LIVENESS_PING_SECS));
+        // If the machine sleeps, don't fire a burst of catch-up pings on wake.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            // First tick completes immediately, so the session start is announced
+            // right away and then every LIVENESS_PING_SECS thereafter.
+            ticker.tick().await;
+
+            // Re-read every tick: consent can be granted (or the node id created)
+            // while the app is already running.
+            let node_id = match liveness_ping_node_id() {
+                Some(id) => id,
+                None => continue, // no consent / no id → skip this tick entirely
+            };
+
+            // Hand-built body rather than `.json()` so we don't need reqwest's
+            // optional `json` feature; serde_json handles escaping.
+            let body = match serde_json::to_string(&serde_json::json!({ "node_id": node_id })) {
+                Ok(b) => b,
+                Err(e) => {
+                    log::debug!("[Liveness] body encode failed: {e}");
+                    continue;
+                }
+            };
+
+            match client
+                .post(LIVENESS_PING_URL)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    log::debug!("[Liveness] ping ok");
+                }
+                Ok(resp) => {
+                    // A 404 here just means the edge script hasn't been redeployed
+                    // with /api/node/ping yet — harmless, the JS heartbeat carries on.
+                    log::debug!("[Liveness] ping returned HTTP {}", resp.status());
+                }
+                Err(e) => {
+                    log::debug!("[Liveness] ping failed (offline?): {e}");
+                }
+            }
+        }
+    })
+}
+
 /// Whether "Background Seeding" is enabled (keep running in the tray when the
 /// window is closed). Defaults to `true` when unset, so existing installs and
 /// first launches keep the current behaviour; only an explicit `false` changes
@@ -385,6 +494,20 @@ fn persisted_background_mode() -> bool {
         .get("background_mode")
         .and_then(|v| v.as_bool())
         .unwrap_or(true)
+}
+
+/// Bring the main window back to the user: un-minimize FIRST, then show, then
+/// focus. Order matters — a window that was minimized (yellow button / taskbar)
+/// is still "visible" as far as `show()` is concerned, so `show()` alone is a
+/// no-op and the window appears stuck in the Dock/taskbar. Every path that
+/// restores the window (tray menu, tray click, Dock reopen, second launch)
+/// routes through here so they all behave identically.
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Get disk usage of the sermon downloads directory
@@ -554,6 +677,63 @@ async fn fetch_text(url: String) -> Result<String, String> {
         return Err(format!("HTTP {}", resp.status()));
     }
     resp.text().await.map_err(|e| format!("read failed: {e}"))
+}
+
+// ── Canonical master-list signature verification ────────────────────────────
+// The master list is the trust anchor: it maps sermon -> infohash/magnet, and the
+// app only ever joins swarms listed there. Serving it over HTTPS alone is not
+// enough — anyone able to write to the CDN path could swap in false infohashes.
+// So it is signed offline with an ed25519 key and published with a detached
+// signature (master-list.json.sig, base64 of the 64-byte signature) over the RAW
+// BYTES of the JSON. Raw bytes, not re-serialized JSON, so there is no
+// canonicalization mismatch to exploit.
+//
+// The public key is compiled into this binary — replacing it requires shipping a
+// new (code-signed) build, which is exactly the property we want.
+//
+// Generate with: node scripts/gen-masterlist-key.mjs   (see SECURITY.md)
+const MASTER_LIST_PUBKEY_B64: &str = "ftEG8YFMh/SgY7kGKz2qGfZgKaLY/k4uvOzRgmJSk7o=";
+
+/// Verify the detached ed25519 signature of the master list.
+/// `data` is the exact JSON text as received; `signature_b64` is the contents of
+/// master-list.json.sig. Returns Ok(true) only on a valid signature — every other
+/// outcome is an Err, so the caller cannot mistake a failure for a pass.
+#[tauri::command]
+fn verify_master_list(data: String, signature_b64: String) -> Result<bool, String> {
+    use base64::Engine;
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    if MASTER_LIST_PUBKEY_B64 == "REPLACE_ME_AFTER_KEYGEN" {
+        return Err(
+            "Master-list public key not configured — run scripts/gen-masterlist-key.mjs and \
+             paste the public key into MASTER_LIST_PUBKEY_B64 (see SECURITY.md)"
+                .to_string(),
+        );
+    }
+
+    let pk_bytes = base64::engine::general_purpose::STANDARD
+        .decode(MASTER_LIST_PUBKEY_B64.trim())
+        .map_err(|e| format!("Bad master-list public key (not base64): {}", e))?;
+    let pk_arr: [u8; 32] = pk_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("Bad master-list public key: expected 32 bytes, got {}", pk_bytes.len()))?;
+    let verifying_key = VerifyingKey::from_bytes(&pk_arr)
+        .map_err(|e| format!("Bad master-list public key: {}", e))?;
+
+    // Tolerate the trailing newline the signer writes.
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(signature_b64.trim())
+        .map_err(|e| format!("Signature is not valid base64: {}", e))?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|e| format!("Malformed signature: {}", e))?;
+
+    // verify_strict rejects weak/small-order keys that plain verify would accept.
+    verifying_key
+        .verify_strict(data.as_bytes(), &signature)
+        .map_err(|_| "Master list signature INVALID — refusing to trust this list".to_string())?;
+
+    Ok(true)
 }
 
 /// Open a URL in the system default browser (used by the Donate banner)
@@ -802,6 +982,13 @@ async fn torrent_start(
     let info = handle.info();
     ts.handle = Some(Arc::new(handle));
     log::info!("[Torrent] Session started (upload cap: {:?} bytes/s)", upload_bps);
+    // Start the Rust-side liveness ping alongside the session (once). It is
+    // consent-gated internally, so spawning it here transmits nothing until the
+    // user has accepted the conditions.
+    if ts.liveness.is_none() {
+        ts.liveness = Some(spawn_liveness_ping());
+        log::info!("[Liveness] Ping task started ({}s interval)", LIVENESS_PING_SECS);
+    }
     Ok(info)
 }
 
@@ -824,6 +1011,12 @@ async fn set_upload_limit(
 #[tauri::command]
 async fn torrent_stop(state: tauri::State<'_, Arc<Mutex<TorrentState>>>) -> Result<(), String> {
     let mut ts = state.lock().await;
+    // Stop the liveness ping first — nothing should keep reporting us as online
+    // once the session is going down.
+    if let Some(task) = ts.liveness.take() {
+        task.abort();
+        log::info!("[Liveness] Ping task stopped");
+    }
     if let Some(handle) = ts.handle.take() {
         handle.stop().await;
         log::info!("[Torrent] Session stopped");
@@ -951,10 +1144,9 @@ pub fn run() {
         // and the existing window is shown instead (duplicate sessions corrupt
         // torrent state and confuse volunteers).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            // The first instance may be hidden in the tray or minimized — restore
+            // it rather than leaving the user staring at nothing after re-launching.
+            show_main_window(app);
         }))
         // Auto-updater: checks the CDN endpoint for signed releases; the
         // process plugin lets the frontend relaunch after installing one.
@@ -1050,16 +1242,12 @@ pub fn run() {
                 .on_menu_event(move |app_handle, event| {
                     match event.id().as_ref() {
                         "show" => {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            show_main_window(app_handle);
                         }
                         "network" => {
                             // Show window and navigate to settings page
+                            show_main_window(app_handle);
                             if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
                                 let _ = window.eval("window.__navigateToSettings && window.__navigateToSettings()");
                             }
                         }
@@ -1076,11 +1264,7 @@ pub fn run() {
                         button_state: MouseButtonState::Up,
                         ..
                     } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
@@ -1118,6 +1302,7 @@ pub fn run() {
             open_url_in_player,
             open_url,
             fetch_text,
+            verify_master_list,
             save_sermon_file,
             create_sermon_file,
             append_sermon_chunk,
@@ -1153,10 +1338,7 @@ pub fn run() {
             // user who closed to the tray would click the Dock and see nothing.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
-                if let Some(window) = _app_handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(_app_handle);
             }
         });
 }
