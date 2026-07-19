@@ -49,7 +49,10 @@ let _lastCheck = 0;
 async function getUpdateMode() {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const txt = await invoke('fetch_text', { url: UPDATE_MANIFEST });
+    // Cache-bust: latest.json is served with a long max-age, so a plain request
+    // can return a stale manifest for a long time. That would silently defeat the
+    // emergency 'force' lever (and report an old mode), so always ask the origin.
+    const txt = await invoke('fetch_text', { url: `${UPDATE_MANIFEST}?t=${Date.now()}` });
     const json = JSON.parse(txt);
     return json && json.mode === 'force' ? 'force'
       : json && json.mode === 'silent' ? 'silent'

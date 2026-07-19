@@ -239,7 +239,31 @@ async function sendHeartbeat() {
     // Lifetime uploaded bytes — this node's contribution to network data transfer.
     const uploadedLifetime = accumulateUploaded((p2pStatus && p2pStatus.uploaded_bytes) || 0);
 
+    // Seed telemetry — scope-relative progress, so the admin dashboard can answer
+    // "is this a FULL seed node?". This is deliberately NOT library_coverage: that
+    // is bytes-downloaded over the ENTIRE catalog (audio + video), so a complete
+    // audio-scope seed would report ~30% forever. getSeedProgress() measures against
+    // the node's own chosen scope, which is the number that actually means something.
+    //
+    // On ANY failure we omit the three keys entirely rather than sending zeros. The
+    // server treats an absent key as "preserve existing value" (COALESCE), so a
+    // transient error can't blank out good data on the dashboard.
+    let seedTelemetry = {};
+    try {
+      const { getSeedProgress } = await import('./catalog');
+      const scope = localStorage.getItem('si-seed-scope') || 'audio';
+      const sp = getSeedProgress(scope);
+      if (sp && Number.isFinite(sp.pct)) {
+        seedTelemetry = {
+          seed_scope: scope === 'full' ? 'full' : 'audio',
+          seed_progress: Math.max(0, Math.min(100, sp.pct)),
+          seed_verified: !!sp.verified,
+        };
+      }
+    } catch { /* omit — server preserves the last known values */ }
+
     const payload = {
+      ...seedTelemetry,
       node_id: getNodeId(),
       protocol: 'bittorrent',
       files_stored: stats.filesShared || 0,

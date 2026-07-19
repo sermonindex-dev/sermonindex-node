@@ -33,8 +33,9 @@ function buildMagnet(infoHash, name) {
   return m;
 }
 
-import { probeReachability } from '../services/network.js';
+import { probeReachability, saveReachability } from '../services/network.js';
 import { TORRENT_PORT_MIN, TORRENT_PORT_RANGE } from '../services/constants.js';
+import CgnatNotice from './CgnatNotice.jsx';
 
 // Max log entries to keep in memory
 const MAX_LOG_ENTRIES = 150;
@@ -173,8 +174,8 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     (async () => {
       const r = await probeReachability(status.tcp_listen_port);
       if (cancelled || !r) return;
-      setReach({ open: r.open });
-      try { localStorage.setItem('si-reach', JSON.stringify({ open: r.open, ts: Date.now() })); } catch {}
+      setReach(r);
+      saveReachability(r);
     })();
     return () => { cancelled = true; };
   }, [p2pRunning, status?.tcp_listen_port, reach]);
@@ -198,7 +199,14 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     if (uploadedTotal > 0) return { key: 'ok', label: 'Working — peers have downloaded from you', color: 'var(--green)', on: true };
     if (reach?.checking) return { key: 'checking', label: 'Testing…', color: 'var(--gold-text)', on: true };
     if (reach?.open === true) return { key: 'ok', label: 'Reachable from the internet ✓', color: 'var(--green)', on: true };
-    if (reach?.open === false) return { key: 'closed', label: 'Not reachable from outside', color: 'var(--orange)', on: true };
+    // IPv4 closed but IPv6 open is a REACHABLE node, not a closed one. This is
+    // the standard outcome on Starlink and mobile broadband, and calling it
+    // "closed" was the single most misleading thing this panel said.
+    if (reach?.open_v6 === true) return { key: 'ok', label: 'Reachable over IPv6 ✓', color: 'var(--green)', on: true };
+    // Port closed is a DIFFERENT shape of node, not a broken one — say so
+    // plainly and in a neutral colour, rather than an orange "not reachable"
+    // that reads like a fault the user has failed to fix.
+    if (reach?.open === false) return { key: 'closed', label: 'Closed — you connect out to peers instead', color: 'var(--seed-blue)', on: true };
     if (natpmp.startsWith('mapped')) return { key: 'ok', label: 'Port opened automatically (NAT-PMP)', color: 'var(--green)', on: true };
     if (natpmp === 'trying') return { key: 'unknown', label: 'Trying automatic setup (UPnP / NAT-PMP)…', color: 'var(--gold-text)', on: true };
     return { key: 'unknown', label: 'Unknown — automatic setup not confirmed', color: 'var(--gold-text)', on: true };
@@ -221,8 +229,10 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     //                "leaf": you download and upload OUT to reachable peers)
     //   Good       — reachable from the internet (peers can connect to you)
     //   Excellent  — reachable AND actively serving (a peer connected / bytes uploaded)
-    const reachable = reach?.open === true;
-    const closed = reach?.open === false;
+    // Reachable means "a peer out there can open a connection to us" — over
+    // EITHER address family. An IPv6-only-reachable node is a full node.
+    const reachable = reach?.open === true || reach?.open_v6 === true;
+    const closed = reach?.open === false && reach?.open_v6 !== true;
     const serving = livePeers >= 1 || uploadedTotal > 0;
     if (reachable && serving) return 100;   // Excellent
     if (reachable) return 75;               // Good — backbone-ready
@@ -231,8 +241,28 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     return 45;                              // Fair — running, reachability not confirmed yet
   })();
 
-  const healthLabel = healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore > 0 ? 'Fair' : 'Offline';
-  const healthColor = healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore > 0 ? 'var(--orange)' : 'var(--text-muted)';
+  // A port-closed node that is demonstrably working — peers connected, or bytes
+  // actually uploaded — is not a degraded node. It's a LEAF: it can't be found,
+  // so it does the finding, and it uploads to every peer it reaches. Users on
+  // Starlink, T-Mobile Home Internet or mobile broadband can never be anything
+  // else, so labelling them an orange "Fair" was both discouraging and wrong.
+  // The score is unchanged (no flattery) — only the framing is honest now.
+  // (An IPv6-reachable node is excluded here — it isn't a leaf at all.)
+  const isLeafContributing =
+    reach?.open === false && reach?.open_v6 !== true && (livePeers >= 1 || uploadedTotal > 0);
+
+  // Truly unreachable: neither address family let anyone in. Everything that
+  // used to key off `reach?.open === false` alone must use this instead, or an
+  // IPv6-reachable node gets shown leaf copy and port-forward instructions it
+  // does not need.
+  const unreachableBoth = reach?.open === false && reach?.open_v6 !== true;
+
+  const healthLabel = isLeafContributing
+    ? 'Leaf node — contributing'
+    : healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore > 0 ? 'Fair' : 'Offline';
+  const healthColor = isLeafContributing
+    ? 'var(--seed-blue)'
+    : healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore > 0 ? 'var(--orange)' : 'var(--text-muted)';
 
   // ─── Reachability test ──────────────────────────────────────────────────
   // Tries the SermonIndex probe endpoint; if it isn't deployed yet, falls
@@ -244,9 +274,22 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     addLog(`Testing whether port ${port} is reachable from the internet...`);
     const result = await probeReachability(port);
     if (result) {
-      setReach({ open: result.open });
-      try { localStorage.setItem('si-reach', JSON.stringify({ open: result.open, ts: Date.now() })); } catch {}
-      addLog(result.open ? `Port ${port} is OPEN — you are reachable ✓` : `Port ${port} is CLOSED — see "Help the network more" below`, result.open ? 'success' : 'warn');
+      setReach(result);
+      saveReachability(result);
+      if (result.open) {
+        addLog(`Port ${port} is OPEN — you are reachable ✓`, 'success');
+      } else if (result.open_v6) {
+        // Reachable over IPv6 only. A real, good outcome — log it as success so
+        // the activity log doesn't contradict the green banner.
+        addLog(`IPv4 port ${port} is closed, but peers CAN reach you over IPv6 (${result.ipv6}) ✓`, 'success');
+      } else {
+        addLog(`Port ${port} is CLOSED — your node still uploads to every peer it reaches`, 'warn');
+        if (result.has_ipv6 && result.v6_probe === 'ok') {
+          addLog('Your IPv6 address was dialled too and did not answer — your router is likely blocking incoming IPv6', 'warn');
+        } else if (result.v6_probe === 'unsupported') {
+          addLog('IPv6 could not be tested (the test server has no IPv6 route) — this says nothing about your connection', 'warn');
+        }
+      }
       return;
     }
     // Probe service not configured/reachable — fall back to canyouseeme.org.
@@ -336,6 +379,10 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         running={!!status?.running}
         port={status?.tcp_listen_port}
         reachOpen={reach && typeof reach.open === 'boolean' ? reach.open : null}
+        reachOpen6={!!reach?.open_v6}
+        v6Probe={reach?.v6_probe || 'none'}
+        hasIpv6={!!reach?.has_ipv6}
+        cgnat={!!reach?.cgnat}
         testing={!!reach?.checking}
         onTest={handleTestReachability}
       />
@@ -447,6 +494,28 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
             </div>
           ))}
 
+          {/* The honest reassurance for unreachable nodes, in the MAIN status
+              area — it used to be the last line inside a collapsed <details>,
+              where the people who most needed to read it never saw it. */}
+          {unreachableBoth && (
+            <div style={{
+              marginTop: '12px',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border)',
+              borderLeft: '3px solid var(--seed-blue)',
+              fontSize: '0.8rem',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.6,
+            }}>
+              <strong style={{ color: 'var(--text-primary)' }}>You are still helping.</strong>{' '}
+              Your node finds other nodes on its own and uploads to every peer it can reach — including
+              sermons you finished downloading long ago. Nobody can knock on your door, so you go and
+              knock on theirs.
+            </div>
+          )}
+
           {/* Plain-language help — only relevant if not confirmed reachable */}
           <details style={{ marginTop: '10px' }}>
             <summary style={{ fontSize: '0.78rem', color: 'var(--gold-text)', cursor: 'pointer', fontWeight: 600 }}>
@@ -458,17 +527,26 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                 connect <em>directly</em> to your node, you become part of the network's backbone —
                 especially valuable for seed nodes.
               </p>
+
+              {/* For an unreachable node, explain the one cause nobody can fix
+                  BEFORE handing out router instructions that may be impossible
+                  to follow. Everyone else still gets the guide unchanged. */}
+              {unreachableBoth && (
+                <CgnatNotice
+                  detected={!!reach?.cgnat}
+                  v6Firewalled={!!reach?.has_ipv6 && reach?.v6_probe === 'ok' && reach?.open_v6 === false}
+                  style={{ marginTop: 0, marginBottom: '10px' }}
+                />
+              )}
+
               <p style={{ marginBottom: '8px' }}>
-                The app tries to open its port automatically (UPnP and NAT-PMP). If the test above says
-                you're not reachable, the usual fix is one of:
+                Otherwise, the app tries to open its port automatically (UPnP and NAT-PMP). If the test
+                above says you're not reachable, the usual fix is one of:
               </p>
-              <p style={{ marginBottom: '8px' }}>
+              <p style={{ marginBottom: 0 }}>
                 1. In your router's settings, turn on <strong>UPnP</strong>, then restart this app.<br />
                 2. Or add a port forward: <strong>TCP {status?.tcp_listen_port || TORRENT_PORT_MIN}</strong> (or the
                 range {TORRENT_PORT_RANGE}) to this computer.
-              </p>
-              <p style={{ marginBottom: 0, color: 'var(--text-muted)' }}>
-                Not reachable? You still help — your node uploads to every peer it can reach.
               </p>
             </div>
           </details>

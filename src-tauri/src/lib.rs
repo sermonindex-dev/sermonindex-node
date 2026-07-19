@@ -753,6 +753,113 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Global IPv6 discovery (for the inbound-reachability probe) ─────────────
+//
+// The node binds dual-stack `[::]:42800`, so on a connection with real IPv6 it
+// can accept IPv6 peers even when IPv4 inbound is impossible (CGNAT: Starlink,
+// T-Mobile Home Internet, most mobile broadband). To *measure* that honestly the
+// edge probe has to dial our IPv6 address back, which means we first have to
+// know which address the outside world should dial.
+
+/// Well-known global IPv6 resolvers used purely as *route-selection* targets.
+/// Nothing is ever sent to them: a connected UDP socket only records a
+/// destination locally so the kernel can pick a route and a source address.
+const V6_ROUTE_TARGETS: [&str; 2] = [
+    "[2001:4860:4860::8888]:53", // Google Public DNS
+    "[2606:4700:4700::1111]:53", // Cloudflare
+];
+
+/// Could a peer somewhere else on the public internet actually dial this
+/// address? Everything below is a hand-check of the reserved ranges, because
+/// `Ipv6Addr::is_global()` is unstable on stable Rust and must not be used.
+fn is_globally_routable_v6(ip: &std::net::Ipv6Addr) -> bool {
+    // ::1 (loopback), :: (unspecified) and ff00::/8 (multicast) all have stable
+    // std helpers, so use them rather than re-deriving the bit patterns.
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return false;
+    }
+
+    let o = ip.octets();   // 16 bytes, network order
+    let s = ip.segments(); // 8 u16 groups, network order
+
+    // Link-local, fe80::/10. A /10 fixes the top 10 bits of the address, which
+    // all live in the first 16-bit group. 0xffc0 == 1111_1111_1100_0000 keeps
+    // exactly those 10 bits; the prefix value is 0xfe80. This still matches
+    // febf:: (the last address in the block) and does NOT match fec0::
+    // (site-local, handled separately just below).
+    if s[0] & 0xffc0 == 0xfe80 {
+        return false;
+    }
+
+    // Deprecated site-local, fec0::/10 (RFC 3879). Same /10 mask as link-local
+    // (0xffc0 keeps the top 10 bits); the prefix value is 0xfec0. Formally
+    // abandoned and never routed on the public internet, so it can't be dialled.
+    if s[0] & 0xffc0 == 0xfec0 {
+        return false;
+    }
+
+    // Unique-local, fc00::/7. A /7 fixes the top 7 bits, which live entirely in
+    // the first octet. 0xfe == 1111_1110 keeps those 7 bits; the prefix value is
+    // 0xfc == 1111_1100. So both fc00::/8 and fd00::/8 match, which is right —
+    // the /7 covers the pair. These are private, never routed between sites.
+    if o[0] & 0xfe == 0xfc {
+        return false;
+    }
+
+    // IPv4-mapped, ::ffff:0:0/96 — 80 zero bits, then 16 one bits, then the
+    // IPv4 address. Bytes 0..=9 must be zero and bytes 10,11 must be 0xff.
+    if o[..10].iter().all(|&b| b == 0) && o[10] == 0xff && o[11] == 0xff {
+        return false;
+    }
+
+    // IPv4-compatible ::a.b.c.d (deprecated) and anything else in ::/96 —
+    // 96 leading zero bits, i.e. the first 12 bytes are all zero.
+    if o[..12].iter().all(|&b| b == 0) {
+        return false;
+    }
+
+    // Documentation prefix 2001:db8::/32 — reserved for examples, never routed.
+    if s[0] == 0x2001 && s[1] == 0x0db8 {
+        return false;
+    }
+
+    true
+}
+
+/// This machine's globally-routable IPv6 source address(es), or an empty vec.
+///
+/// Uses the dependency-free "connected UDP socket" trick: binding `[::]:0` and
+/// then `connect()`ing to a global address SENDS NO PACKETS — `connect` on a UDP
+/// socket only stores the peer locally, which forces the OS to run its route
+/// lookup and bind the source address it would really use for global IPv6
+/// egress. `local_addr()` then reports exactly the address a remote peer should
+/// dial. Every failure mode (no IPv6 stack, no default route, no global address)
+/// simply yields fewer entries; this never errors.
+#[tauri::command]
+fn local_ipv6() -> Vec<String> {
+    use std::net::{SocketAddr, UdpSocket};
+    let mut found: Vec<String> = Vec::new();
+    for target in V6_ROUTE_TARGETS {
+        let sock = match UdpSocket::bind("[::]:0") {
+            Ok(s) => s,
+            Err(_) => continue, // no IPv6 stack at all
+        };
+        if sock.connect(target).is_err() {
+            continue; // no route to global IPv6
+        }
+        if let Ok(SocketAddr::V6(v6)) = sock.local_addr() {
+            let ip = *v6.ip();
+            if is_globally_routable_v6(&ip) {
+                let s = ip.to_string();
+                if !found.contains(&s) {
+                    found.push(s);
+                }
+            }
+        }
+    }
+    found
+}
+
 /// Delete a downloaded sermon file
 #[tauri::command]
 fn delete_sermon_file(filename: String) -> Result<(), String> {
@@ -1302,6 +1409,7 @@ pub fn run() {
             open_url_in_player,
             open_url,
             fetch_text,
+            local_ipv6,
             verify_master_list,
             save_sermon_file,
             create_sermon_file,

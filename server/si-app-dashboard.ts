@@ -169,6 +169,10 @@ async function ensureTables(): Promise<void> {
         app_version TEXT DEFAULT '0.0.0',
         node_type TEXT DEFAULT 'user',
         reachable INTEGER DEFAULT 0,
+        seed_scope TEXT DEFAULT '',
+        seed_progress REAL DEFAULT 0,
+        seed_verified INTEGER DEFAULT 0,
+        peak_storage_bytes INTEGER DEFAULT 0,
         last_seen TEXT,
         first_seen TEXT,
         total_heartbeats INTEGER DEFAULT 0,
@@ -198,6 +202,7 @@ async function ensureTables(): Promise<void> {
         sermons_shared INTEGER DEFAULT 0,
         total_files INTEGER DEFAULT 0,
         total_storage_bytes INTEGER DEFAULT 0,
+        total_storage_bytes_all INTEGER DEFAULT 0,
         total_uploaded_bytes INTEGER DEFAULT 0,
         countries INTEGER DEFAULT 0
       )`,
@@ -304,6 +309,15 @@ async function ensureTables(): Promise<void> {
   try { await dbQuery(`ALTER TABLE stats_snapshots ADD COLUMN total_uploaded_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
   // Region/state (e.g. "BC") reported alongside city/country in the heartbeat.
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN region TEXT DEFAULT ''`); } catch { /* exists */ }
+  // Seed telemetry (app v0.0.328+): which slice of the catalog the node set out to
+  // seed, how far through that slice it is, and whether the seed verified complete.
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN seed_scope TEXT DEFAULT ''`); } catch { /* exists */ }
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN seed_progress REAL DEFAULT 0`); } catch { /* exists */ }
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN seed_verified INTEGER DEFAULT 0`); } catch { /* exists */ }
+  // High-water mark of storage a node has ever held (mirrors uploaded_bytes: monotonic).
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN peak_storage_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
+  // All-time storage downloaded across every node ever (sum of peak_storage_bytes).
+  try { await dbQuery(`ALTER TABLE stats_snapshots ADD COLUMN total_storage_bytes_all INTEGER DEFAULT 0`); } catch { /* exists */ }
 
   _tablesCreated = true;
 }
@@ -502,6 +516,10 @@ label{display:block;font-size:0.74rem;color:var(--text2);margin-bottom:4px;font-
 .b-user{background:rgba(112,112,53,0.15);color:var(--olive);}
 .b-node{background:rgba(61,138,65,0.15);color:var(--green);}
 .b-peer{background:rgba(184,92,0,0.15);color:var(--orange);}
+.bar{position:relative;height:7px;min-width:84px;border-radius:20px;background:var(--tertiary);overflow:hidden;}
+.bar>i{display:block;height:100%;background:var(--gold);border-radius:20px;}
+.bar>i.done{background:var(--green);}
+.bar-l{font-size:0.7rem;color:var(--muted);margin-top:3px;display:block;}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .chart-wrap{position:relative;height:300px;}
@@ -545,6 +563,7 @@ ${THEME_RESTORE_SCRIPT}
       ${link("/admin", "Overview", "overview")}
       ${link("/admin/graph", "Graph", "graph")}
       ${link("/admin/nodes", "Nodes", "nodes")}
+      ${link("/admin/seed-nodes", "Seed Nodes", "seed-nodes")}
       ${link("/admin/config", "Config", "config")}
       ${link("/logout", "Sign Out", "logout")}
     </div>
@@ -644,6 +663,23 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   // anything else (null/undefined) = unknown → stored as 0.
   const reachable = body.reachable === true ? 1 : (body.reachable === false ? 0 : 0);
 
+  // Seed telemetry (app v0.0.328+). CRITICAL: older clients omit these keys
+  // entirely, and an omitted field must never overwrite a previously-good value.
+  // `null` here means "not reported" — the upsert below COALESCEs null back to the
+  // existing column value, so an old client's heartbeat leaves the data untouched.
+  // A field that IS present but invalid is deliberately normalised (''/0), which
+  // lets a node legitimately clear its own state.
+  const hasSeedScope = body.seed_scope !== undefined && body.seed_scope !== null;
+  const seedScopeIn: string | null = hasSeedScope
+    ? (body.seed_scope === "audio" || body.seed_scope === "full" ? String(body.seed_scope) : "")
+    : null;
+  const hasSeedProgress = body.seed_progress !== undefined && body.seed_progress !== null;
+  const seedProgressIn: number | null = hasSeedProgress
+    ? Math.max(0, Math.min(100, toNum(body.seed_progress, 0)))
+    : null;
+  const hasSeedVerified = body.seed_verified !== undefined && body.seed_verified !== null;
+  const seedVerifiedIn: number | null = hasSeedVerified ? (body.seed_verified ? 1 : 0) : null;
+
   // If the app couldn't geolocate itself, try a server-side IP lookup. Also
   // backfill the region (province/state) if we still don't have one — reusing a
   // region already resolved for this node so we don't re-query every heartbeat.
@@ -672,20 +708,36 @@ async function handleHeartbeat(req: Request): Promise<Response> {
     `INSERT INTO nodes
       (node_id, lat, lon, city, country, region, files_stored, storage_used_bytes, uploaded_bytes, peers_connected,
        uptime_seconds, library_coverage, content_mode, app_version, node_type, reachable,
+       seed_scope, seed_progress, seed_verified, peak_storage_bytes,
        last_seen, first_seen, total_heartbeats, is_online)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
      ON CONFLICT(node_id) DO UPDATE SET
        lat=excluded.lat, lon=excluded.lon, city=excluded.city, country=excluded.country, region=excluded.region,
        files_stored=excluded.files_stored, storage_used_bytes=excluded.storage_used_bytes,
        uploaded_bytes=MAX(nodes.uploaded_bytes, excluded.uploaded_bytes),
+       peak_storage_bytes=MAX(nodes.peak_storage_bytes, excluded.peak_storage_bytes),
        peers_connected=excluded.peers_connected, uptime_seconds=excluded.uptime_seconds,
        library_coverage=excluded.library_coverage, content_mode=excluded.content_mode,
        app_version=excluded.app_version, node_type=excluded.node_type,
        reachable=excluded.reachable,
+       seed_scope=COALESCE(?, nodes.seed_scope),
+       seed_progress=COALESCE(?, nodes.seed_progress),
+       seed_verified=COALESCE(?, nodes.seed_verified),
        last_seen=excluded.last_seen,
        total_heartbeats=nodes.total_heartbeats+1,
        is_online=1`,
-    [nodeId, lat, lon, city, country, region, filesStored, storageBytes, uploadedBytes, peers, uptime, coverage, contentMode, appVersion, nodeType, reachable, ts, ts],
+    // NOTE ON ARG ORDER: the ? placeholders bind positionally in the order they
+    // appear in the SQL, so the three DO UPDATE params come after every VALUES
+    // param. The VALUES row uses the defaulted forms ('' / 0) so a brand-new node
+    // never stores NULL; the DO UPDATE clause uses the nullable forms so an
+    // omitted field COALESCEs back to the row's existing value.
+    [
+      nodeId, lat, lon, city, country, region, filesStored, storageBytes, uploadedBytes, peers,
+      uptime, coverage, contentMode, appVersion, nodeType, reachable,
+      seedScopeIn ?? "", seedProgressIn ?? 0, seedVerifiedIn ?? 0, storageBytes,
+      ts, ts,
+      seedScopeIn, seedProgressIn, seedVerifiedIn,
+    ],
   );
 
   // Record shared sermons from body.seeded_torrents.
@@ -806,7 +858,7 @@ async function maybeWriteSnapshot(): Promise<void> {
     }
 
     const online = isoMinutesAgo(15);
-    const [onlineRow, seedRow, filesRow, sermonsRow, countryRow, uploadedRow] = await Promise.all([
+    const [onlineRow, seedRow, filesRow, sermonsRow, countryRow, uploadedRow, peakRow] = await Promise.all([
       dbQuery(`SELECT COUNT(*) c FROM nodes WHERE is_online=1 AND last_seen >= ?`, [online]),
       dbQuery(`SELECT COUNT(*) c FROM nodes WHERE is_online=1 AND last_seen >= ? AND node_type='seed'`, [online]),
       dbQuery(
@@ -823,12 +875,15 @@ async function maybeWriteSnapshot(): Promise<void> {
       dbQuery(`SELECT COUNT(DISTINCT country) c FROM nodes WHERE is_online=1 AND last_seen >= ?`, [online]),
       // Data transferred is cumulative across all nodes (not online-gated).
       dbQuery(`SELECT COALESCE(SUM(uploaded_bytes),0) u FROM nodes`),
+      // All-time storage downloaded: every node ever, at its high-water mark.
+      // Deliberately NOT online-gated and NOT last_seen-gated.
+      dbQuery(`SELECT COALESCE(SUM(peak_storage_bytes),0) p FROM nodes`),
     ]);
 
     await dbQuery(
       `INSERT INTO stats_snapshots
-         (ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, total_uploaded_bytes, countries)
-       VALUES (?,?,?,?,?,?,?,?)`,
+         (ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, total_storage_bytes_all, total_uploaded_bytes, countries)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
       [
         nowIso(),
         toInt(onlineRow.rows[0]?.c, 0),
@@ -836,6 +891,7 @@ async function maybeWriteSnapshot(): Promise<void> {
         toInt(sermonsRow.rows[0]?.c, 0),
         toInt(filesRow.rows[0]?.f, 0),
         toInt(filesRow.rows[0]?.s, 0),
+        toInt(peakRow.rows[0]?.p, 0),
         toInt(uploadedRow.rows[0]?.u, 0),
         toInt(countryRow.rows[0]?.c, 0),
       ],
@@ -1119,11 +1175,22 @@ async function handleLogout(req: Request): Promise<Response> {
 /** Fetch stats_snapshots as arrays for charting (oldest → newest). */
 async function loadSnapshots(limit = 200): Promise<any> {
   const { rows } = await dbQuery(
-    `SELECT ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, total_uploaded_bytes, countries
+    `SELECT ts, nodes_online, seed_nodes, sermons_shared, total_files, total_storage_bytes, total_storage_bytes_all, total_uploaded_bytes, countries
        FROM stats_snapshots ORDER BY id DESC LIMIT ?`,
     [limit],
   );
   rows.reverse(); // chronological
+
+  const GB = 1073741824;
+  const toGB = (b: number) => Math.round((b / GB) * 100) / 100;
+  // total_storage_bytes_all only starts being recorded from the deploy that added
+  // the column, so every snapshot older than that reads 0. Blanking the LEADING
+  // zeros (null = gap in Chart.js) keeps the chart honest — it starts where the
+  // data starts instead of drawing a cliff up from a zero we never actually measured.
+  const rawAll = rows.map((r: any) => toInt(r.total_storage_bytes_all, 0));
+  let firstAll = rawAll.findIndex((v: number) => v > 0);
+  if (firstAll < 0) firstAll = rawAll.length; // never recorded → all gaps
+
   return {
     labels: rows.map((r: any) => new Date(r.ts).toLocaleString()),
     nodesOnline: rows.map((r: any) => toInt(r.nodes_online, 0)),
@@ -1132,6 +1199,12 @@ async function loadSnapshots(limit = 200): Promise<any> {
     totalFiles: rows.map((r: any) => toInt(r.total_files, 0)),
     // For the "Data Transferred" chart — cumulative uploaded, in MB for readable axis.
     dataTransferredMB: rows.map((r: any) => Math.round(toInt(r.total_uploaded_bytes, 0) / 1048576)),
+    // For the "Storage on the Network" chart — both series in GB for a readable axis.
+    // storageLiveGB: what online nodes are holding right now (full history).
+    // storageAllGB: all-time downloaded across every node ever (history starts at deploy).
+    storageLiveGB: rows.map((r: any) => toGB(toInt(r.total_storage_bytes, 0))),
+    storageAllGB: rawAll.map((v: number, i: number) => (i < firstAll ? null : toGB(v))),
+    storageAllCount: rawAll.length - firstAll,
     countries: rows.map((r: any) => toInt(r.countries, 0)),
     count: rows.length,
   };
@@ -1188,7 +1261,7 @@ function configEditor(rows: any[], compact = false): string {
 async function pageOverview(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
-  const [stat, ever, sermons, snaps] = await Promise.all([
+  const [stat, ever, sermons, snaps, replication, closedOnly, mediaSplit] = await Promise.all([
     dbQuery(
       `SELECT COUNT(*) online,
               SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
@@ -1206,6 +1279,38 @@ async function pageOverview(): Promise<Response> {
       [online],
     ),
     loadSnapshots(200),
+    // Replication depth across ONLINE nodes: how many sermons sit on exactly one
+    // node (they vanish from the network the moment that node leaves), plus the
+    // average number of copies per sermon.
+    dbQuery(
+      `SELECT COUNT(*) total,
+              COALESCE(SUM(CASE WHEN cnt=1 THEN 1 ELSE 0 END),0) single,
+              COALESCE(AVG(cnt),0) avgCopies
+         FROM (SELECT s.sermon_id, COUNT(DISTINCT s.node_id) cnt
+                 FROM shared_sermons s JOIN nodes n ON n.node_id=s.node_id
+                WHERE n.is_online=1 AND n.last_seen >= ?
+                GROUP BY s.sermon_id)`,
+      [online],
+    ),
+    // Sermons whose only online holders are port-closed peers — nothing serving
+    // them can accept an inbound connection, so they are much harder to obtain.
+    dbQuery(
+      `SELECT COUNT(*) c FROM (
+         SELECT s.sermon_id
+           FROM shared_sermons s JOIN nodes n ON n.node_id=s.node_id
+          WHERE n.is_online=1 AND n.last_seen >= ?
+          GROUP BY s.sermon_id
+         HAVING SUM(CASE WHEN n.reachable=1 OR n.node_type='seed' THEN 1 ELSE 0 END)=0)`,
+      [online],
+    ),
+    // Audio vs video split of what is actually available on online nodes.
+    dbQuery(
+      `SELECT COALESCE(NULLIF(s.type,''),'audio') t, COUNT(DISTINCT s.sermon_id) c
+         FROM shared_sermons s JOIN nodes n ON n.node_id=s.node_id
+        WHERE n.is_online=1 AND n.last_seen >= ?
+        GROUP BY t ORDER BY c DESC`,
+      [online],
+    ),
   ]);
 
   const s = stat.rows[0] || {};
@@ -1220,6 +1325,38 @@ async function pageOverview(): Promise<Response> {
     statCard(toInt(ever.rows[0]?.ever, 0), "All-Time Nodes") +
     statCard(toInt(sermons.rows[0]?.c, 0), "Sermons Shared");
 
+  // ── Network resilience (right now, online nodes only) ──────────────────────
+  const rep = replication.rows[0] || {};
+  const repTotal = toInt(rep.total, 0);
+  const repSingle = toInt(rep.single, 0);
+  const repAvg = Math.round(toNum(rep.avgCopies, 0) * 100) / 100;
+  const repPct = repTotal > 0 ? Math.round((repSingle / repTotal) * 100) : 0;
+  const closedOnlyCount = toInt(closedOnly.rows[0]?.c, 0);
+  const audioCount = toInt((mediaSplit.rows.find((r: any) => r.t === "audio") || {}).c, 0);
+  const videoCount = toInt((mediaSplit.rows.find((r: any) => r.t === "video") || {}).c, 0);
+  const otherCount = mediaSplit.rows
+    .filter((r: any) => r.t !== "audio" && r.t !== "video")
+    .reduce((sum: number, r: any) => sum + toInt(r.c, 0), 0);
+
+  const resilienceSection = `
+    <h2>Network Resilience <span class="muted" style="font-size:0.7rem;font-weight:400;">(online nodes, right now)</span></h2>
+    <div class="card">
+      <p class="sub"><strong>Single-copy sermons are content at risk</strong> — they exist on exactly one online node, so they leave the network entirely the moment that node goes offline. Everything below is measured across nodes that have heartbeat in the last 15 minutes.</p>
+      ${
+        repTotal > 0
+          ? `<div class="stats">
+              ${statCardColor(repSingle, `Single-copy sermons · at risk (${repPct}% of ${repTotal})`, repSingle > 0 ? "var(--orange)" : "var(--green)")}
+              ${statCard(repAvg, "Avg copies per sermon")}
+              ${statCardColor(closedOnlyCount, "Only on port-closed peers", closedOnlyCount > 0 ? "var(--orange)" : "var(--green)")}
+              ${statCard(audioCount, "Audio sermons available")}
+              ${statCard(videoCount, "Video sermons available")}
+              ${otherCount ? statCard(otherCount, "Other media available") : ""}
+            </div>
+            <p class="sub" style="margin-top:12px;">“Only on port-closed peers” means every online node holding that sermon has a closed BitTorrent port — those peers cannot accept inbound connections, so the content is reachable only opportunistically and is much harder to obtain.</p>`
+          : '<div class="empty">No sermons reported by online nodes yet.</div>'
+      }
+    </div>`;
+
   const chartData = JSON.stringify(snaps);
 
   // NOTE: The remote-config key/value editor and the content-source-mode toggle
@@ -1230,6 +1367,8 @@ async function pageOverview(): Promise<Response> {
     <h1>Overview</h1>
     <p class="sub">Live network health for the SermonIndex node backbone.</p>
     <div class="stats">${cards}</div>
+
+    ${resilienceSection}
 
     <h2>Network Activity</h2>
     <div class="card">
@@ -1306,8 +1445,11 @@ async function pageGraph(): Promise<Response> {
     <h2>Sermons Shared</h2>
     <div class="card"><div class="chart-wrap big"><canvas id="c2"></canvas></div></div>
 
-    <h2>Files Stored</h2>
-    <div class="card"><div class="chart-wrap big"><canvas id="c3"></canvas></div></div>
+    <h2>Storage on the Network (GB)</h2>
+    <div class="card">
+      <p class="sub">“Live on nodes” is what online nodes are holding right now. “Downloaded all-time” sums every node's highest-ever storage, so it counts content that has since gone offline — it only has history from the deploy that started recording it.</p>
+      <div class="chart-wrap big"><canvas id="c3"></canvas></div>
+    </div>
 
     <h2>Data Transferred (MB)</h2>
     <div class="card"><div class="chart-wrap big"><canvas id="c4"></canvas></div></div>
@@ -1334,9 +1476,29 @@ async function pageGraph(): Promise<Response> {
               scales:{ x:{ ticks:{ color:textColor, maxTicksLimit:8 }, grid:{ display:false } },
                        y:{ beginAtZero:true, ticks:{ color:textColor }, grid:{ color:gridColor } } } } });
         }
+        // Two-series variant of mountain(): the primary series keeps the filled
+        // mountain look, the secondary is a lighter dashed line so the two never
+        // read as one shape. Nulls in a series are drawn as gaps (spanGaps:false),
+        // which is what keeps "Downloaded all-time" from faking a climb out of 0
+        // for the snapshots taken before that column existed.
+        function dual(id, aLabel, aData, aLine, aRgb, bLabel, bData, bLine){
+          var el=document.getElementById(id); if(!el) return;
+          if(!d.count){ el.parentElement.innerHTML='<div class="empty">No snapshots yet.</div>'; return; }
+          var ctx=el.getContext('2d');
+          new Chart(ctx,{ type:'line',
+            data:{ labels:d.labels, datasets:[
+              { label:aLabel, data:aData, borderColor:aLine, backgroundColor:grad(ctx,aRgb), fill:true, tension:0.4, pointRadius:0, borderWidth:3, spanGaps:false },
+              { label:bLabel, data:bData, borderColor:bLine, backgroundColor:'transparent', fill:false, tension:0.4, pointRadius:0, borderWidth:2, borderDash:[6,4], spanGaps:false }
+            ]},
+            options:{ responsive:true, maintainAspectRatio:false,
+              plugins:{ legend:{ labels:{ color:textColor, font:{ family:'Verdana' } } } },
+              scales:{ x:{ ticks:{ color:textColor, maxTicksLimit:8 }, grid:{ display:false } },
+                       y:{ beginAtZero:true, ticks:{ color:textColor }, grid:{ color:gridColor } } } } });
+        }
         mountain('c1','Nodes online', d.nodesOnline, '#707035', '112,112,53');
         mountain('c2','Sermons shared', d.sermonsShared, '#967d1f', '212,175,55');
-        mountain('c3','Files stored', d.totalFiles, '#3d8a41', '61,138,65');
+        dual('c3','Live on nodes (GB)', d.storageLiveGB, '#967d1f', '212,175,55',
+                  'Downloaded all-time (GB)', d.storageAllGB, '#2d6cb5');
         mountain('c4','Data transferred (MB)', d.dataTransferredMB, '#2d6cb5', '45,108,181');
       })();
     </script>`;
@@ -1348,11 +1510,11 @@ async function pageGraph(): Promise<Response> {
 async function pageNodes(): Promise<Response> {
   await ensureTables();
 
-  const [pending, nodes] = await Promise.all([
-    // Pending seed requests: requested but not yet enabled.
+  const [pendingCount, nodes] = await Promise.all([
+    // Pending seed requests are reviewed on the dedicated Seed Nodes page now —
+    // only the count is kept here, as a pointer.
     dbQuery(
-      `SELECT node_id, email, requested_at FROM seed_access
-        WHERE enabled=0 AND requested_at IS NOT NULL ORDER BY requested_at DESC`,
+      `SELECT COUNT(*) c FROM seed_access WHERE enabled=0 AND requested_at IS NOT NULL`,
     ),
     // Nodes joined with seed_access flag and a per-node shared-sermon count.
     dbQuery(
@@ -1459,32 +1621,14 @@ async function pageNodes(): Promise<Response> {
       }
     </div>`;
 
-  // Pending seed requests block.
-  const pendingRows = pending.rows
-    .map(
-      (r: any) => `<tr>
-        <td><code>#${escapeHtml(String(r.node_id).slice(0, 8))}</code> <span class="mono muted">${escapeHtml(r.node_id)}</span></td>
-        <td>${r.email ? escapeHtml(r.email) : '<span class="muted">—</span>'}</td>
-        <td class="muted">${escapeHtml(timeAgo(r.requested_at))}</td>
-        <td>
-          <form method="POST" action="/admin/seed" class="inline-form">
-            <input type="hidden" name="node_id" value="${escapeHtml(r.node_id)}">
-            <input type="hidden" name="enable" value="1">
-            <button class="btn sm green" type="submit">Enable</button>
-          </form>
-        </td>
-      </tr>`,
-    )
-    .join("");
-
+  // Seed requests moved to the dedicated Seed Nodes page — leave a pointer here.
+  const nPending = toInt(pendingCount.rows[0]?.c, 0);
   const pendingSection = `
-    <h2>Pending Seed Requests</h2>
-    <div class="card" style="overflow-x:auto;">
-      ${
-        pending.rows.length
-          ? `<table><thead><tr><th>Node</th><th>Email</th><th>Requested</th><th></th></tr></thead><tbody>${pendingRows}</tbody></table>`
-          : '<div class="empty">No pending seed requests.</div>'
-      }
+    <div class="card">
+      <p class="sub" style="margin:0;">Seed requests and every granted seed node are managed on the
+        <a href="/admin/seed-nodes">Seed Nodes</a> page.${
+          nPending ? ` <span class="badge b-peer">${nPending} pending request${nPending === 1 ? "" : "s"}</span>` : ""
+        }</p>
     </div>`;
 
   // Full node table with flip switch.
@@ -1561,6 +1705,201 @@ async function pageNodes(): Promise<Response> {
   return htmlResponse(page("Nodes", "nodes", body));
 }
 
+/**
+ * GET /admin/seed-nodes — the seed-access queue and every granted seed node.
+ *
+ * LEFT JOIN, deliberately: a node can request seed access (or be granted it)
+ * before it has ever sent a heartbeat, so seed_access rows with no matching
+ * nodes row must still be listed — those are exactly the cases worth seeing.
+ */
+async function pageSeedNodes(): Promise<Response> {
+  await ensureTables();
+
+  const online = isoMinutesAgo(15);
+  const { rows } = await dbQuery(
+    `SELECT sa.node_id, sa.email, sa.enabled, sa.requested_at, sa.enabled_at,
+            n.city, n.region, n.country, n.is_online, n.last_seen, n.node_type, n.reachable,
+            n.files_stored, n.storage_used_bytes, n.library_coverage, n.uploaded_bytes,
+            n.app_version, n.uptime_seconds, n.seed_scope, n.seed_progress, n.seed_verified,
+            (SELECT COUNT(*) FROM shared_sermons ss WHERE ss.node_id = sa.node_id) AS seeding_now
+       FROM seed_access sa LEFT JOIN nodes n ON n.node_id = sa.node_id
+      ORDER BY sa.enabled DESC, sa.requested_at DESC`,
+  );
+
+  // Same 15-minute online rule the rest of the dashboard uses.
+  const onlineCutoff = new Date(online).getTime();
+  const isOnlineRow = (r: any) =>
+    toInt(r.is_online, 0) === 1 && !!r.last_seen && new Date(r.last_seen).getTime() >= onlineCutoff;
+
+  const granted = rows.filter((r: any) => toInt(r.enabled, 0) === 1);
+  const pending = rows.filter((r: any) => toInt(r.enabled, 0) === 0 && r.requested_at);
+
+  // Header figures — all across GRANTED seeds only.
+  const grantedOnline = granted.filter(isOnlineRow).length;
+  const grantedStorage = granted.reduce((s: number, r: any) => s + toInt(r.storage_used_bytes, 0), 0);
+  const grantedUploaded = granted.reduce((s: number, r: any) => s + toInt(r.uploaded_bytes, 0), 0);
+
+  // Two problems that are otherwise invisible:
+  //   neverSeen  — granted, but the node has never sent a single heartbeat.
+  //   notSeeding — granted, but still reporting as a plain user node, i.e. the
+  //                user hasn't unlocked/restarted the app into seed mode yet.
+  const neverSeen = granted.filter((r: any) => !r.last_seen && r.node_type === null).length;
+  const notSeeding = granted.filter((r: any) => r.node_type !== null && r.node_type !== "seed").length;
+
+  const cards =
+    statCard(granted.length, "Granted seed nodes") +
+    statCardColor(grantedOnline, "Granted & online now", "var(--green)") +
+    statCardColor(pending.length, "Pending requests", pending.length ? "var(--orange)" : "var(--muted)") +
+    statCard(fmtBytes(grantedStorage), "Storage across granted seeds") +
+    statCard(fmtBytes(grantedUploaded), "Uploaded across granted seeds");
+
+  const warnings =
+    (neverSeen
+      ? `<span class="badge b-peer" title="Seed access was granted but this node has never sent a heartbeat.">⚠ Granted, never seen · ${neverSeen}</span>`
+      : "") +
+    (notSeeding
+      ? `<span class="badge b-peer" title="Approved for seeding but still reporting as a regular user node — the app has not been unlocked/restarted into seed mode.">⚠ Granted, not running as seed · ${notSeeding}</span>`
+      : "");
+  const warningsRow = warnings ? `<div class="row" style="margin-top:14px;">${warnings}</div>` : "";
+
+  // ── Cell renderers ─────────────────────────────────────────────────────────
+  const idCell = (r: any) =>
+    `<td><code>#${escapeHtml(String(r.node_id).slice(0, 8))}</code></td>`;
+  const emailCell = (r: any) =>
+    `<td>${r.email ? escapeHtml(r.email) : '<span class="muted">—</span>'}</td>`;
+  const locCell = (r: any) =>
+    `<td>${r.last_seen ? escapeHtml(fmtLocation(r.city, r.region, r.country)) : '<span class="muted">—</span>'}</td>`;
+  const statusCell = (r: any) => {
+    if (!r.last_seen) return '<td><span class="badge b-off" title="No heartbeat has ever been received from this node.">never seen</span></td>';
+    return `<td>${isOnlineRow(r) ? '<span class="badge b-on">online</span>' : '<span class="badge b-off">offline</span>'}</td>`;
+  };
+  // Scope badge: which slice of the catalog the node set out to seed.
+  const scopeCell = (r: any) => {
+    const scope = String(r.seed_scope || "");
+    if (scope === "audio") return '<td><span class="badge b-node" title="Seeding the audio-only slice of the catalog.">Audio</span></td>';
+    if (scope === "full") return '<td><span class="badge b-seed" title="Seeding the full catalog, audio and video.">Full</span></td>';
+    return '<td><span class="muted">—</span></td>';
+  };
+  /**
+   * Seed progress — scope-relative, as reported by the node itself.
+   * A node that has not reported the new telemetry shows "—", NOT a fallback to
+   * library_coverage: coverage is measured against a different denominator and
+   * presenting it as seed progress would be misleading.
+   */
+  const progressCell = (r: any) => {
+    const scope = String(r.seed_scope || "");
+    const pct = toNum(r.seed_progress, 0);
+    if (!scope && !(pct > 0)) {
+      return '<td><span class="muted" title="This node has not reported seed progress — requires app v0.0.328+.">—</span><span class="bar-l">requires app v0.0.328+</span></td>';
+    }
+    const clamped = Math.max(0, Math.min(100, pct));
+    const shown = Math.round(clamped * 10) / 10;
+    const scopeLabel = scope === "audio" ? "of audio catalog" : scope === "full" ? "of full catalog" : "of seed scope";
+    return `<td style="min-width:120px;">
+      <div class="bar" title="${escapeHtml(shown + "% " + scopeLabel)}"><i class="${clamped >= 95 ? "done" : ""}" style="width:${clamped}%;"></i></div>
+      <span class="bar-l">${escapeHtml(shown + "% " + scopeLabel)}</span>
+    </td>`;
+  };
+  // "Full seed?" — the node's own verification that it holds >=95% of its scope.
+  const verifiedCell = (r: any) => {
+    const scope = String(r.seed_scope || "");
+    if (!scope && !(toNum(r.seed_progress, 0) > 0)) return '<td><span class="muted">—</span></td>';
+    return toInt(r.seed_verified, 0) === 1
+      ? '<td><span class="badge b-on" title="The node verified it holds at least 95% of its seed scope.">✓</span></td>'
+      : '<td><span class="badge b-off" title="Not yet verified as a complete seed of its scope.">✗</span></td>';
+  };
+  // Catalog coverage is a DIFFERENT measure from seed progress — see the tooltip.
+  const coverageCell = (r: any) => {
+    if (!r.last_seen) return '<td><span class="muted">—</span></td>';
+    const cov = Math.round(toNum(r.library_coverage, 0) * 10) / 10;
+    return `<td title="Share of the ENTIRE catalog — including video — held by this node. A complete audio-only seed reads well under 100% here.">${cov}%</td>`;
+  };
+  const numCell = (v: any) => `<td>${toInt(v, 0)}</td>`;
+  const bytesCell = (v: any) => `<td>${escapeHtml(fmtBytes(toInt(v, 0)))}</td>`;
+  const versionCell = (r: any) =>
+    `<td class="mono">${r.app_version ? escapeHtml(r.app_version) : "—"}</td>`;
+  const lastSeenCell = (r: any) => `<td class="muted">${escapeHtml(timeAgo(r.last_seen))}</td>`;
+  // Reuses the shared /admin/seed flip handler — no separate approval path.
+  const flipCell = (r: any, enable: 0 | 1) =>
+    `<td><form method="POST" action="/admin/seed" class="inline-form">
+       <input type="hidden" name="node_id" value="${escapeHtml(r.node_id)}">
+       <input type="hidden" name="enable" value="${enable}">
+       <input type="hidden" name="back" value="seed-nodes">
+       <button class="btn sm ${enable === 1 ? "green" : "red"}" type="submit">${enable === 1 ? "Enable" : "Disable"}</button>
+     </form></td>`;
+
+  // ── Pending requests (first — this is the queue that needs action) ─────────
+  const pendingRows = pending
+    .map(
+      (r: any) => `<tr>
+        ${idCell(r)}${emailCell(r)}${locCell(r)}${statusCell(r)}${versionCell(r)}
+        <td class="muted">${escapeHtml(timeAgo(r.requested_at))}</td>
+        ${lastSeenCell(r)}
+        ${flipCell(r, 1)}
+      </tr>`,
+    )
+    .join("");
+
+  const pendingSection = `
+    <h2>Pending requests</h2>
+    <div class="card" style="overflow-x:auto;">
+      ${
+        pending.length
+          ? `<table><thead><tr>
+              <th>Node</th><th>Email</th><th>Location</th><th>Status</th><th>Version</th>
+              <th>Requested</th><th>Last seen</th><th>Approve</th>
+            </tr></thead><tbody>${pendingRows}</tbody></table>`
+          : '<div class="empty">No pending seed requests.</div>'
+      }
+    </div>`;
+
+  // ── Granted seed nodes ────────────────────────────────────────────────────
+  const grantedRows = granted
+    .map((r: any) => {
+      const notSeed = r.node_type !== null && r.node_type !== "seed";
+      const flag = !r.last_seen
+        ? ' <span class="badge b-peer" title="Granted but never seen — this node has never sent a heartbeat.">never seen</span>'
+        : notSeed
+          ? ' <span class="badge b-peer" title="Granted but still reporting as a regular user node — not running as a seed yet.">not seeding</span>'
+          : "";
+      return `<tr>
+        <td><code>#${escapeHtml(String(r.node_id).slice(0, 8))}</code>${flag}</td>
+        ${emailCell(r)}${locCell(r)}${statusCell(r)}${scopeCell(r)}${progressCell(r)}${verifiedCell(r)}
+        ${numCell(r.seeding_now)}${numCell(r.files_stored)}${bytesCell(r.storage_used_bytes)}${bytesCell(r.uploaded_bytes)}
+        ${coverageCell(r)}${versionCell(r)}${lastSeenCell(r)}
+        <td class="muted">${escapeHtml(r.requested_at ? timeAgo(r.requested_at) : "—")}</td>
+        <td class="muted">${escapeHtml(r.enabled_at ? timeAgo(r.enabled_at) : "—")}</td>
+        ${flipCell(r, 0)}
+      </tr>`;
+    })
+    .join("");
+
+  const grantedSection = `
+    <h2>Granted seed nodes</h2>
+    <div class="card" style="overflow-x:auto;">
+      ${
+        granted.length
+          ? `<table><thead><tr>
+              <th>Node</th><th>Email</th><th>Location</th><th>Status</th><th>Scope</th>
+              <th>Seed progress</th><th>Full seed?</th><th>Seeding now</th><th>Files</th>
+              <th>Storage</th><th>Uploaded</th><th>Catalog coverage (all media)</th>
+              <th>Version</th><th>Last seen</th><th>Requested</th><th>Granted</th><th>Seed access</th>
+            </tr></thead><tbody>${grantedRows}</tbody></table>`
+          : '<div class="empty">No seed nodes have been granted yet.</div>'
+      }
+    </div>`;
+
+  const body = `
+    <h1>Seed Nodes</h1>
+    <p class="sub">Approve seed access and watch every granted seed. “Seed progress” is scope-relative and reported by the node itself; “catalog coverage” is measured against the entire catalog, so the two do not match.</p>
+    <div class="stats">${cards}</div>
+    ${warningsRow}
+    ${pendingSection}
+    ${grantedSection}`;
+
+  return htmlResponse(page("Seed Nodes", "seed-nodes", body));
+}
+
 /** GET /admin/config — full config editor. */
 async function pageConfig(): Promise<Response> {
   await ensureTables();
@@ -1605,6 +1944,8 @@ async function adminSeedFlip(req: Request): Promise<Response> {
   const form = await req.formData().catch(() => null);
   const nodeId = cleanNode(form ? form.get("node_id") : "");
   const enable = form && String(form.get("enable")) === "1" ? 1 : 0;
+  // Optional: which page submitted the flip, so the admin lands back where they were.
+  const back = form && String(form.get("back") || "") === "seed-nodes" ? "/admin/seed-nodes" : "/admin/nodes";
   if (!nodeId) return errorPage("Missing node id.");
   const ts = nowIso();
 
@@ -1623,7 +1964,7 @@ async function adminSeedFlip(req: Request): Promise<Response> {
     },
   ]);
 
-  return redirect("/admin/nodes");
+  return redirect(back);
 }
 
 /** POST /admin/node-command — queue a command a node runs on its next heartbeat. */
@@ -1765,6 +2106,7 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
       if (path === "/admin" && method === "GET") return await pageOverview();
       if (path === "/admin/graph" && method === "GET") return await pageGraph();
       if (path === "/admin/nodes" && method === "GET") return await pageNodes();
+      if (path === "/admin/seed-nodes" && method === "GET") return await pageSeedNodes();
       if (path === "/admin/config" && method === "GET") return await pageConfig();
 
       // POST actions

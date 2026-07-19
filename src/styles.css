@@ -2018,6 +2018,10 @@ input[type="password"]:focus, input[type="text"]:focus {
 .dash-net-nums { display: flex; flex-wrap: wrap; gap: 10px 26px; margin-bottom: 6px; }
 .dash-net-big { font-size: 1.7rem; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
 .dash-net-cap { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+/* Seeding-schedule note under the peer figure: muted when informational,
+   amber when the user's own schedule is currently throttling uploads. */
+.dash-seed-note { font-size: 0.74rem; color: var(--text-muted); line-height: 1.4; margin: 6px 0 0; }
+.dash-seed-note.paused { color: var(--orange); font-weight: 600; }
 
 /* featured sermons */
 .dash-sermons { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }

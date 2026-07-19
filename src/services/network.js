@@ -2,7 +2,7 @@
  * SermonIndex Network Services — client wrapper.
  *
  * Talks to the Bunny Edge Script in server/network-edge-script.js:
- *   POST /probe  { port }           → { ok, open, ip, port }
+ *   POST /probe  { port, ipv6? }    → { ok, open, ip, port, open_v6, ipv6, v6_probe }
  *   POST /seeds  { node_id, port, scope } → { ok, reachable }
  *   GET  /seeds                     → { ok, seeds:[...] }
  *
@@ -16,25 +16,153 @@ export const NETWORK_API = 'https://app-endpoints-gkb5p.bunny.run';
 const isConfigured = () => !NETWORK_API.includes('REPLACE-WITH');
 
 /**
- * Ask the server to TCP-connect back to our public IP:port.
- * Returns { open:boolean, ip, port } or null if the service isn't reachable
- * (caller should fall back to canyouseeme.org).
+ * Is this IPv4 address inside the carrier-grade NAT range, 100.64.0.0/10?
+ * (RFC 6598 — the block ISPs use for the "shared" address space between the
+ * customer's router and the carrier's own NAT.)
+ *
+ * A /10 fixes the first 10 bits: the whole first octet (100) plus the top TWO
+ * bits of the second octet, which must be `01`. That makes the second octet
+ * anything from 0b01000000 (64) to 0b01111111 (127) — so the range runs
+ * 100.64.0.0 through 100.127.255.255 inclusive. Note 100.63.x.x and 100.128.x.x
+ * are ordinary public addresses and must NOT match.
+ *
+ * Deliberately conservative: anything we can't parse with confidence (IPv6,
+ * hostnames, empty, malformed, out-of-range octets) returns false, so the app
+ * falls back to its normal "port closed" messaging rather than telling someone
+ * they're behind CGNAT when we don't actually know.
+ */
+export function isCgnatAddress(ip) {
+  if (typeof ip !== 'string') return false;
+  const m = ip.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;                       // not a plain IPv4 literal
+  const oct = m.slice(1).map(Number);
+  if (oct.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  return oct[0] === 100 && oct[1] >= 64 && oct[1] <= 127;
+}
+
+/**
+ * This machine's own globally-routable IPv6 address(es), from the Rust
+ * `local_ipv6` command. Empty array when there is no IPv6, when the command
+ * isn't available (older build / browser dev server), or on any error.
+ *
+ * We have to discover this locally because nothing else can: the probe server
+ * sees whatever address our HTTPS request happened to arrive on, and the
+ * address a BitTorrent peer should dial is the one the OS would pick for global
+ * IPv6 egress. Rust asks the kernel that question directly.
+ */
+export async function localIpv6() {
+  try {
+    const tauri = await import('@tauri-apps/api/core');
+    const list = await tauri.invoke('local_ipv6');
+    return Array.isArray(list) ? list.filter((s) => typeof s === 'string' && s.includes(':')).slice(0, 3) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Ask the server to TCP-connect back to us — over IPv4 AND, when we have one,
+ * over IPv6 — and report what it actually measured.
+ *
+ * Returns { open, open_v6, ip, ipv6, port, v6_probe, has_ipv6, cgnat } or null
+ * if the service isn't reachable (caller should fall back to canyouseeme.org).
+ *
+ *   open      IPv4 inbound worked. UNCHANGED in meaning; the seed directory and
+ *             every older reader still depend on exactly this field.
+ *   open_v6   an IPv6 peer really did open a TCP connection to us. On a CGNAT
+ *             connection (Starlink, T-Mobile Home Internet, mobile broadband)
+ *             this is routinely true while `open` is permanently false — that
+ *             person IS reachable, just not over IPv4.
+ *   v6_probe  'ok' the edge genuinely attempted an IPv6 dial (so open_v6 means
+ *             something) · 'unsupported' the edge could not make an IPv6 socket
+ *             at all, so open_v6:false says nothing about the user and must NOT
+ *             be shown as a failure · 'error' unexpected · 'invalid' our
+ *             addresses were rejected · 'none' we had no IPv6 to offer.
+ *   has_ipv6  this machine has a global IPv6 address of its own. Combined with
+ *             open_v6 === false and v6_probe === 'ok', that is the actionable
+ *             diagnosis "your router is firewalling inbound IPv6".
+ *
+ * `cgnat` is true ONLY when the address the probe saw is itself inside
+ * 100.64.0.0/10. In practice this rarely fires: the probe reports the address it
+ * observes, which for most carrier-NAT customers is the carrier's public egress
+ * IP — the 100.64.x.x address lives on the customer's own WAN interface, which
+ * the server can't see. So treat `cgnat === false` as "not proven", never as
+ * "definitely not behind CGNAT". A successful IPv6 dial-back is the reliable
+ * signal that replaces it.
  */
 export async function probeReachability(port) {
   if (!isConfigured() || !port) return null;
+  const mine = await localIpv6();
   try {
     const res = await fetch(`${NETWORK_API}/probe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ port }),
-      signal: AbortSignal.timeout(15000),
+      body: JSON.stringify(mine.length ? { port, ipv6: mine } : { port }),
+      signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) return null;
     const data = await res.json();
-    return data && data.ok ? { open: !!data.open, ip: data.ip, port: data.port } : null;
+    if (!data || !data.ok) return null;
+    // Older deployments of the edge script don't know about IPv6 at all; they
+    // simply omit these fields, which reads as "no IPv6 result" — never as a
+    // failure. `open` keeps working either way.
+    return {
+      open: !!data.open,
+      open_v6: !!data.open_v6,
+      ip: data.ip || null,
+      ipv6: data.ipv6 || null,
+      port: data.port,
+      v6_probe: typeof data.v6_probe === 'string' ? data.v6_probe : 'none',
+      has_ipv6: mine.length > 0,
+      cgnat: isCgnatAddress(data.ip),
+    };
   } catch {
     return null;
   }
+}
+
+// ── Last-probe cache ────────────────────────────────────────────────────────
+// One place that reads/writes localStorage['si-reach'], so every view (the
+// Connections panel, the banner, the Seed Node page, the TopBar health score,
+// the heartbeat) sees the same reachability facts without re-probing.
+// Shape: { open:boolean, open_v6:boolean, ip:string|null, ipv6:string|null,
+//          v6_probe:string, has_ipv6:boolean, cgnat:boolean, ts:number }
+// The IPv6 fields are ADDITIVE. `open` keeps its exact old meaning and position
+// so anything already reading si-reach (TopBar health score, heartbeat) is
+// unaffected; readers that predate IPv6 simply ignore the extra keys.
+const REACH_KEY = 'si-reach';
+
+/** Remember the latest probe result. Never throws. */
+export function saveReachability({
+  open, open_v6 = false, ip = null, ipv6 = null,
+  v6_probe = 'none', has_ipv6 = false, cgnat = false,
+} = {}) {
+  try {
+    localStorage.setItem(REACH_KEY, JSON.stringify({
+      open: !!open,
+      open_v6: !!open_v6,
+      ip,
+      ipv6,
+      v6_probe: String(v6_probe || 'none'),
+      has_ipv6: !!has_ipv6,
+      cgnat: !!cgnat,
+      ts: Date.now(),
+    }));
+  } catch { /* private mode / quota — the UI still works, it just re-probes */ }
+}
+
+/** The latest probe result, or null if there isn't one. Never throws. */
+export function readReachability() {
+  try {
+    const r = JSON.parse(localStorage.getItem(REACH_KEY) || 'null');
+    if (!r || typeof r.open !== 'boolean') return null;
+    // Entries written before the IPv6 probe existed have no v6 keys — fill them
+    // with "we don't know", never with "failed".
+    return {
+      open_v6: false, ipv6: null, v6_probe: 'none', has_ipv6: false, cgnat: false,
+      ...r,
+    };
+  } catch { return null; }
 }
 
 /** Register/refresh this node in the seed-backbone directory. Fire-and-forget. */

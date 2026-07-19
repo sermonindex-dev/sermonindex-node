@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
-import { getNodeId, fetchNodeMap } from '../services/heartbeat.js';
+import { getNodeId } from '../services/heartbeat.js';
+import { subscribe as subscribeNodeMap } from '../services/nodeMapStore.js';
 import { getSeedProgress } from '../services/catalog.js';
 
 const TOTAL_SERMONS = 33528;
@@ -132,7 +133,7 @@ function DashSermon({ s, onOpen }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-export default function DashboardPage({ nodeStats, libraryStats, catalog, onNavigate, onOpenSermon }) {
+export default function DashboardPage({ nodeStats, libraryStats, catalog, seedStatus, onNavigate, onOpenSermon }) {
   const cat = Array.isArray(catalog) ? catalog : [];
   const total = libraryStats?.totalFiles || TOTAL_SERMONS;
   const peers = Number(nodeStats?.peersConnected) || 0;
@@ -178,20 +179,15 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, onNavi
     setPeersSample((prev) => [...prev, peers].slice(-26));
   }, [peers]);
 
-  // network-wide reach (best-effort)
+  // Network-wide reach, from the SHARED node-map store — so this stays live
+  // (it used to be fetched once on mount and could sit hours out of date) and
+  // always agrees with the sidebar badge and the Node Map page.
   const [net, setNet] = useState({ nodes: null, countries: null });
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const list = await fetchNodeMap();
-        if (!alive || !Array.isArray(list)) return;
-        const countries = new Set(list.map((n) => n && n.country).filter(Boolean));
-        setNet({ nodes: list.length, countries: countries.size });
-      } catch { /* offline — leave nulls */ }
-    })();
-    return () => { alive = false; };
-  }, []);
+  useEffect(() => subscribeNodeMap((snap) => {
+    if (!snap.ts) return; // nothing fetched yet — keep showing nulls
+    const countries = new Set(snap.nodes.map((n) => n && n.country).filter(Boolean));
+    setNet({ nodes: snap.count, countries: countries.size });
+  }), []);
 
   const tiles = [
     { value: total.toLocaleString(), label: 'Sermons in the library', color: 'var(--gold-text)' },
@@ -304,6 +300,16 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, onNavi
               <div className="dash-net-cap">peers you're serving</div>
             </div>
           </div>
+          {/* Seeding-window state (App.jsx owns the math). Outside the window uploads
+              are throttled to ~1 KB/s, so the peer count legitimately falls — say so,
+              otherwise it reads as a bug. Nothing rendered when no schedule is set. */}
+          {seedStatus?.throttled ? (
+            <div className="dash-seed-note paused">
+              ⏸ Seeding paused by your schedule{seedStatus.resumesAt ? ` — resumes ${seedStatus.resumesAt}` : ''}
+            </div>
+          ) : seedStatus?.windowLabel ? (
+            <div className="dash-seed-note">Seeding window {seedStatus.windowLabel}</div>
+          ) : null}
           <div style={{ margin: '4px 0 10px' }}>
             <AreaSparkline data={peersSample} />
           </div>

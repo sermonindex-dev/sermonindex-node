@@ -92,8 +92,20 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
             # Signed auto-updater artifacts (+ their .sig) — consumed by
             # publish-update.mjs to build the multi-platform latest.json.
+            #
+            # With `createUpdaterArtifacts: true` (Tauri v2 layout) ONLY macOS
+            # gets a separate updater bundle (.app.tar.gz). Windows and Linux
+            # RE-USE the installers already listed above and emit a bare .sig
+            # beside them: nsis/*-setup.exe.sig, msi/*.msi.sig,
+            # appimage/*.AppImage.sig. Missing these .sig files is what kept
+            # windows-x86_64 / linux-x86_64 out of latest.json.
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.sig
+            # v1Compatible layout — only produced if createUpdaterArtifacts is
+            # ever switched to "v1Compatible"; ignored when absent.
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip
@@ -139,7 +151,7 @@ jobs:
           BUNNY_STORAGE_KEY: ${{ secrets.BUNNY_STORAGE_KEY }}
           BUNNY_STORAGE_HOST: ${{ secrets.BUNNY_STORAGE_HOST }}
           BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
-        run: node scripts/publish-update.mjs --version "${{ github.ref_name }}" --dir dist-artifacts --mode prompt
+        run: node scripts/publish-update.mjs --version "${{ github.ref_name }}" --dir dist-artifacts --mode prompt --require-all
 
       # Purge the Bunny edge so users immediately see the new version instead of a
       # stale cached page. Re-fetches fresh copies of the update manifest, the

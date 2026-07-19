@@ -1,24 +1,44 @@
 import React, { useState } from 'react';
+import CgnatNotice from './CgnatNotice.jsx';
 
 /**
  * ReachabilityBanner — the user's OWN reachability status, made prominent and
- * honest. Mirrors the network map's seed/node/peer color scheme:
+ * honest. There are THREE real outcomes, not two:
  *
- *   reachable (port open) → NODE  (green)         — a full node serving peers
- *   port closed           → PEER  (yellow / gold) — downloads but can't serve as strongly
+ *   1. IPv4 inbound works              → NODE (green). Fully reachable.
+ *   2. IPv4 closed, IPv6 inbound works → NODE (green). Also genuinely reachable
+ *      — over IPv6. This is the NORMAL GOOD OUTCOME on Starlink, T-Mobile Home
+ *      Internet and mobile broadband, where IPv4 inbound is impossible forever
+ *      but the ISP hands out real routable IPv6. Treating this person as
+ *      "unreachable" (as the old two-state banner did) was simply wrong, and
+ *      sent them off to port-forward something that can never work.
+ *   3. Neither                         → LEAF (blue). The existing honest
+ *      "you still contribute by connecting outward" messaging.
  *
  * Honesty rule: this NEVER claims "reachable" unless the probe actually said so.
- * `reachOpen` is the authoritative probe result (true / false / null-unknown);
- * an outbound upload count is deliberately NOT treated as proof of reachability.
+ * `reachOpen` / `reachOpen6` are authoritative probe results; an outbound upload
+ * count is deliberately NOT treated as proof of reachability. And open_v6:false
+ * is only believed when v6Probe === 'ok' — if the probe server itself couldn't
+ * make an IPv6 connection we say nothing rather than blaming the user.
  *
  * Props:
  *   running  {boolean}          — the P2P session is up
  *   port     {number|null}      — the node's TCP listening port
- *   reachOpen {boolean|null}    — probe result: true=open, false=closed, null=unknown
+ *   reachOpen {boolean|null}    — IPv4 probe result: true=open, false=closed, null=unknown
+ *   reachOpen6 {boolean}        — an IPv6 peer really connected to us
+ *   v6Probe  {string}           — 'ok' | 'unsupported' | 'error' | 'invalid' | 'none'
+ *                                 (only 'ok' makes reachOpen6===false meaningful)
+ *   hasIpv6  {boolean}          — this machine has a global IPv6 address of its own
+ *   cgnat    {boolean}          — the probe actually saw a carrier-NAT (100.64/10)
+ *                                 address. Usually false even for CGNAT users, so
+ *                                 the copy is worded as a possibility either way.
  *   testing  {boolean}          — a reachability test is in flight
  *   onTest   {function}         — optional: trigger a (re)test
  */
-export default function ReachabilityBanner({ running, port, reachOpen, testing, onTest }) {
+export default function ReachabilityBanner({
+  running, port, reachOpen, reachOpen6 = false, v6Probe = 'none',
+  hasIpv6 = false, cgnat, testing, onTest,
+}) {
   // Inline "how to open your port" directions — collapsed by default, expands
   // in place (no external link). Hook is declared unconditionally, above the
   // early returns, so hook order stays stable across renders.
@@ -72,23 +92,65 @@ export default function ReachabilityBanner({ running, port, reachOpen, testing, 
     );
   }
 
-  // ── Port closed → PEER (yellow / gold), honest + actionable ──
-  if (reachOpen === false) {
+  // ── IPv4 closed but IPv6 OPEN → still a full node, over IPv6. This is a
+  // POSITIVE result and must be shown as one: peers with IPv6 (a large and
+  // growing share of the network) connect straight to this node. Deliberately
+  // NO port-forward instructions here — there is nothing to fix.
+  if (reachOpen === false && reachOpen6 === true) {
     return (
-      <div style={{ ...box('rgba(212,175,55,0.12)', 'rgba(212,175,55,0.40)'), alignItems: 'flex-start' }}>
-        <span style={glyph('var(--gold-text)')}>⚠</span>
+      <div style={box('rgba(61,138,65,0.12)', 'rgba(61,138,65,0.40)')}>
+        <span style={glyph('var(--green)')}>✓</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={title('var(--gold-text)')}>
-            Port closed — right now you're a <em>peer</em>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={title('var(--green)')}>Reachable over IPv6 — your node is a full node</span>
+            <span style={{
+              fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
+              color: 'var(--gold-text)', background: 'var(--gold-dim)', padding: '2px 8px', borderRadius: '10px',
+            }}>
+              Backbone
+            </span>
           </div>
           <div style={sub}>
-            You download and share back to peers you can reach, but you can't serve as strongly as a
-            reachable node. Open{' '}
+            We connected to your node from the outside world, so other people can too — they reach you on the
+            newer kind of internet address (IPv6). The older kind (IPv4) is closed, which is completely normal
+            on Starlink, T-Mobile Home Internet and mobile broadband: those providers share one old-style
+            address between many homes, but give every home a real modern one. Nothing to change here, and
+            nothing to forward. Thank you for strengthening the network.
+          </div>
+        </div>
+        {testBtn}
+      </div>
+    );
+  }
+
+  // ── Port closed → LEAF node. Honest, and deliberately NOT alarming: for a
+  // great many people (Starlink, T-Mobile Home Internet, mobile broadband) this
+  // is permanent and unfixable, and they are still contributing every day.
+  if (reachOpen === false) {
+    return (
+      <div style={{ ...box('rgba(45,108,181,0.10)', 'rgba(45,108,181,0.35)'), alignItems: 'flex-start' }}>
+        <span style={glyph('var(--seed-blue)')}>◈</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={title('var(--seed-blue)')}>
+            Your node is a <em>leaf</em> — still sharing, just not reachable
+          </div>
+          <div style={sub}>
+            Other people can't connect <em>to</em> you, so your node goes out and connects to them instead —
+            and uploads sermons to every peer it reaches. If you can open{' '}
             {port
               ? <>port <strong style={{ color: 'var(--text-primary)' }}>{port}</strong></>
               : <>your node's port</>}{' '}
-            on your router to become a reachable <strong>node</strong>.
+            on your router you'll also become a meeting point for others. Many people can't, and that's
+            genuinely fine.
           </div>
+
+          {/* The router-firewall diagnosis only counts when the edge really did
+              attempt an IPv6 connection (v6Probe === 'ok'). If it couldn't, the
+              silence tells us nothing about this user and we stay quiet. */}
+          <CgnatNotice
+            detected={!!cgnat}
+            v6Firewalled={hasIpv6 && v6Probe === 'ok' && reachOpen6 === false}
+          />
 
           {/* Inline, collapsible directions — reuses the gold "disclosure" idiom
               from the Connections panel's "Help the network more" section, with a

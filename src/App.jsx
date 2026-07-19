@@ -68,7 +68,9 @@ import { startHeartbeat, stopHeartbeat, fetchConfig, loadNodeIdFromDisk } from '
 import { loadSettings, saveSettings } from './services/tauriStore.js';
 import { startUpdateChecks } from './services/updater.js';
 import { fetchUnreadCount, chatPrefs } from './services/chatNotify.js';
-import { fetchSeeds } from './services/network.js';
+import { fetchSeeds, readReachability } from './services/network.js';
+import { subscribe as subscribeNodeMap } from './services/nodeMapStore.js';
+import { to12h } from './utils/time.js';
 
 // ── Seeding-policy helpers (task 108) + low-disk floor (task 105) ────────────
 // "Off" is represented as a tiny ~1 KB/s cap, NOT 0 — the native set_upload_limit
@@ -116,6 +118,26 @@ function isWithinSeedWindow(startStr, endStr, now = new Date()) {
   if (start === null || end === null || start === end) return true;
   const cur = now.getHours() * 60 + now.getMinutes();
   return start < end ? (cur >= start && cur < end) : (cur >= start || cur < end);
+}
+
+// User-facing view of the seeding window, derived from the SAME window math the
+// policy effect enforces (isWithinSeedWindow above) — never re-derived elsewhere.
+// Outside the window uploads are clamped to UPLOAD_OFF_BYTES, so BitTorrent peers
+// drift away and the peer count falls; without this the drop looks like a bug.
+// Returns all-null/false (i.e. "say nothing") when the schedule is off, the times
+// are malformed, or start === end — the same cases isWithinSeedWindow fails OPEN on.
+function computeSeedStatus(enabled, startStr, endStr, now = new Date()) {
+  const start = hhmmToMinutes(startStr);
+  const end = hhmmToMinutes(endStr);
+  if (!enabled || start === null || end === null || start === end) {
+    return { throttled: false, resumesAt: null, windowLabel: null };
+  }
+  const inWindow = isWithinSeedWindow(startStr, endStr, now);
+  return {
+    throttled: !inWindow,
+    resumesAt: inWindow ? null : to12h(startStr), // when seeding picks back up
+    windowLabel: `${to12h(startStr)} – ${to12h(endStr)}`,
+  };
 }
 
 // This calendar month's key in the node's LOCAL time, e.g. "2026-07".
@@ -183,6 +205,9 @@ export default function App() {
   const [seedScheduleEnabled, setSeedScheduleEnabled] = useState(false);
   const [seedStart, setSeedStart] = useState('23:00');
   const [seedEnd, setSeedEnd] = useState('07:00');
+  // Read-only mirror of the seeding window for the UI (Dashboard + Settings).
+  // Recomputed on the existing policy tick below — no extra timer.
+  const [seedStatus, setSeedStatus] = useState(() => ({ throttled: false, resumesAt: null, windowLabel: null }));
   const [uploadCapEnabled, setUploadCapEnabled] = useState(false);
   const [uploadCapGb, setUploadCapGb] = useState(100);
   // Low-disk guard (task 105): warning surfaced in nodeStats/UI; blocks new downloads.
@@ -492,17 +517,19 @@ export default function App() {
     };
   }, []);
 
-  // Poll the live node count for the sidebar (reachable backbone from the seed
-  // directory, plus any nodes the analytics map reports — whichever is larger).
+  // Sidebar node-count badge. Reads the SHARED node-map store, which is the same
+  // snapshot the Node Map page and the Dashboard render — so the badge can never
+  // disagree with the page it links to. (It used to run its own 60s fetch.)
+  useEffect(() => subscribeNodeMap(snap => setNodesOnline(snap.count)), []);
+
+  // Seed backbone count — a DIFFERENT dataset (the seed directory), so it keeps
+  // its own poll.
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
       try {
         const hb = await import('./services/heartbeat.js').catch(() => null);
-        const [seeds, mapNodes] = await Promise.all([
-          fetchSeeds().catch(() => []),
-          hb?.fetchNodeMap ? hb.fetchNodeMap().catch(() => []) : Promise.resolve([]),
-        ]);
+        const seeds = await fetchSeeds().catch(() => []);
         if (cancelled) return;
         // Exclude OUR OWN node from the seed count. Otherwise a volunteer who ran
         // the reachability test on the Seed Node page (which registers them in the
@@ -512,11 +539,6 @@ export default function App() {
         let selfShort = '';
         try { selfShort = String(hb?.getNodeId?.() || '').slice(0, 8); } catch {}
         const otherSeeds = selfShort ? seeds.filter(s => s.node !== selfShort) : seeds;
-        // Nodes reporting to the network in the last 15 min — the SAME figure the
-        // Node Map header shows. (Previously Math.max'd with the seed directory,
-        // which is an unrelated set and made the badge disagree with the map.)
-        const count = Array.isArray(mapNodes) ? mapNodes.length : 0;
-        setNodesOnline(count);
         setSeedsOnline(otherSeeds.length);
       } catch { /* keep last value */ }
     };
@@ -546,11 +568,13 @@ export default function App() {
         // the last probe result (written by the Connections page) if it's fresh.
         let reachOpen = null;
         try {
-          const raw = localStorage.getItem('si-reach');
-          if (raw) {
-            const r = JSON.parse(raw);
-            if (r && Date.now() - (r.ts || 0) < 30 * 60 * 1000) reachOpen = !!r.open;
-          }
+          const r = readReachability();
+          // "Reachable" means a peer can open a connection to us over EITHER
+          // address family. An IPv6-only-reachable node (the normal outcome on
+          // Starlink and mobile broadband) is a full node, so it must score as
+          // one here too — otherwise the TopBar contradicts the Connections
+          // panel's green "Reachable over IPv6" banner.
+          if (r && Date.now() - (r.ts || 0) < 30 * 60 * 1000) reachOpen = !!r.open || !!r.open_v6;
         } catch {}
         const serving = livePeers >= 1 || uploaded > 0;
 
@@ -562,8 +586,13 @@ export default function App() {
         else if (serving) score = 60;
         else if (reachOpen === false) score = 35;
         else score = 45;
-        const label = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score > 0 ? 'Fair' : 'Offline';
-        const color = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--gold-text)' : score > 0 ? 'var(--orange)' : 'var(--text-muted)';
+        // Same "leaf node" tier as ConnectionsPanel: port closed but
+        // demonstrably uploading is a valid shape of node, not a warning.
+        const isLeaf = status?.running && reachOpen === false && serving;
+        const label = isLeaf ? 'Leaf node — contributing'
+          : score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score > 0 ? 'Fair' : 'Offline';
+        const color = isLeaf ? 'var(--seed-blue)'
+          : score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--gold-text)' : score > 0 ? 'var(--orange)' : 'var(--text-muted)';
         setNetworkHealth({ label, color, score });
       } catch {}
     };
@@ -923,6 +952,17 @@ export default function App() {
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
+
+      // Surface the window state to the UI first — this must happen even on the
+      // early-return paths below (schedule off, P2P not up) so the indicator is
+      // always truthful. Identity-stable when nothing changed, so no extra renders.
+      setSeedStatus((prev) => {
+        const next = computeSeedStatus(seedScheduleEnabled, seedStart, seedEnd);
+        return (prev.throttled === next.throttled
+          && prev.resumesAt === next.resumesAt
+          && prev.windowLabel === next.windowLabel) ? prev : next;
+      });
+
       const policyActive = seedScheduleEnabled || (uploadCapEnabled && uploadCapGb > 0);
       const base = uploadLimitEnabled && uploadLimitKbps > 0 ? Math.round(uploadLimitKbps * 1024) : 0; // 0 = unlimited
 
@@ -1384,7 +1424,7 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case 'dashboard':
-        return <DashboardPage nodeStats={realStats} libraryStats={getLibraryStats()} catalog={getCatalog()} onNavigate={navigateTo} onOpenSermon={(s) => { setSearch(s.title); navigateTo('library'); }} />;
+        return <DashboardPage nodeStats={realStats} libraryStats={getLibraryStats()} catalog={getCatalog()} seedStatus={seedStatus} onNavigate={navigateTo} onOpenSermon={(s) => { setSearch(s.title); navigateTo('library'); }} />;
       case 'library':
         return <LibraryPage sermons={catalogWithDlState} currentSermon={currentSermon} isPlaying={isPlaying} onPlay={playSermon} onDownload={handleDownload} onOpenExternal={openInDefaultPlayer} search={search} onSearch={setSearch} />;
       case 'downloads':
@@ -1402,7 +1442,7 @@ export default function App() {
       case 'connections':
         return <ConnectionsPage p2pRunning={p2pRunning} p2pEnabled={p2pEnabled} onP2pToggle={handleP2pToggle} />;
       case 'settings':
-        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={handleBandwidthChange} storageLimit={storageLimit} onStorageLimitChange={handleStorageLimitChange} backgroundMode={backgroundMode} onBackgroundModeChange={handleBackgroundModeChange} uploadLimitEnabled={uploadLimitEnabled} onUploadLimitToggle={handleUploadLimitToggle} uploadLimitKbps={uploadLimitKbps} onUploadLimitKbpsChange={handleUploadLimitKbpsChange} seedScheduleEnabled={seedScheduleEnabled} onSeedScheduleToggle={handleSeedScheduleToggle} seedStart={seedStart} onSeedStartChange={handleSeedStartChange} seedEnd={seedEnd} onSeedEndChange={handleSeedEndChange} uploadCapEnabled={uploadCapEnabled} onUploadCapToggle={handleUploadCapToggle} uploadCapGb={uploadCapGb} onUploadCapGbChange={handleUploadCapGbChange} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} onNavigate={navigateTo} onShowConditions={() => setConditionsOpen(true)} />;
+        return <SettingsPage contentMode={contentMode} onModeChange={handleModeChange} nodeOnline={nodeOnline} onNodeToggle={handleNodeToggle} p2pEnabled={p2pEnabled} p2pRunning={p2pRunning} onP2pToggle={handleP2pToggle} bandwidthLimit={bandwidthLimit} onBandwidthChange={handleBandwidthChange} storageLimit={storageLimit} onStorageLimitChange={handleStorageLimitChange} backgroundMode={backgroundMode} onBackgroundModeChange={handleBackgroundModeChange} uploadLimitEnabled={uploadLimitEnabled} onUploadLimitToggle={handleUploadLimitToggle} uploadLimitKbps={uploadLimitKbps} onUploadLimitKbpsChange={handleUploadLimitKbpsChange} seedScheduleEnabled={seedScheduleEnabled} onSeedScheduleToggle={handleSeedScheduleToggle} seedStart={seedStart} onSeedStartChange={handleSeedStartChange} seedEnd={seedEnd} onSeedEndChange={handleSeedEndChange} seedStatus={seedStatus} uploadCapEnabled={uploadCapEnabled} onUploadCapToggle={handleUploadCapToggle} uploadCapGb={uploadCapGb} onUploadCapGbChange={handleUploadCapGbChange} chatNotify={chatNotify} onChatNotifyChange={handleChatNotifyChange} chatShow={chatShow} onChatShowChange={handleChatShowChange} nodeStats={realStats} version={appVersion} onNavigate={navigateTo} onShowConditions={() => setConditionsOpen(true)} />;
       case 'about':
         return <AboutPage version={appVersion} onShowConditions={() => setConditionsOpen(true)} />;
       default:

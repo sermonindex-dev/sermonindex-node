@@ -4,7 +4,11 @@
 //! behind the rqbit client. Why BitTorrent:
 //!   - Battle-tested mainline DHT (millions of nodes, no bootstrap infra of our own)
 //!   - Public trackers as a second discovery mechanism
-//!   - UPnP port forwarding + uTP hole punching that actually work on home routers
+//!   - UPnP port forwarding (plus our own NAT-PMP/PCP fallback in `natpmp.rs`)
+//!     to open an inbound port on home routers. NOTE: there is no hole punching
+//!     here — librqbit implements neither BEP 55 nor uTP-based NAT traversal,
+//!     and we deliberately run TCP-only (uTP is still marked unstable upstream).
+//!     Inbound reachability therefore depends on UPnP / NAT-PMP / manual forward.
 //!   - Volunteers can also seed with ANY standard torrent client (qBittorrent,
 //!     Transmission, ...) using the same .torrent files / magnets
 //!
@@ -24,8 +28,10 @@ use std::time::Instant;
 
 use librqbit::api::TorrentIdOrHash;
 use librqbit::limits::LimitsConfig;
+use librqbit::spawn_utils::BlockingSpawner;
 use librqbit::{
-    create_torrent, AddTorrent, AddTorrentOptions, CreateTorrentOptions, Session, SessionOptions,
+    create_torrent, AddTorrent, AddTorrentOptions, CreateTorrentOptions, ListenerMode,
+    ListenerOptions, Session, SessionOptions,
 };
 use serde::Serialize;
 
@@ -40,13 +46,25 @@ pub const DEFAULT_TRACKERS: &[&str] = &[
 
 /// TCP listen port range. The first free port in this range is used and
 /// forwarded via UPnP when possible.
+///
+/// librqbit 8 took this range directly (`listen_port_range`) and probed it
+/// internally. librqbit 9 accepts only a single `listen_addr`, so `start()`
+/// walks this range itself, retrying on "address already in use".
 const LISTEN_PORT_RANGE: std::ops::Range<u16> = 42800..42840;
+
+/// Blocking threads allowed for piece hashing during .torrent creation.
+/// Matches librqbit's own internal default (DEFAULT_BLOCKING_THREADS_IF_NOT_SET).
+const BLOCKING_THREADS: usize = 8;
 
 pub struct TorrentHandle {
     pub session: Arc<Session>,
     started_at: Instant,
     /// NAT-PMP/PCP mapping status: "trying" | "mapped via <gw>" | "unavailable"
     natpmp_status: Arc<std::sync::Mutex<String>>,
+    /// librqbit 9 requires an explicit blocking-thread spawner for
+    /// `create_torrent` (it hashes pieces on blocking threads). Built once at
+    /// session start so concurrent seeds share one concurrency limit.
+    spawner: BlockingSpawner,
 }
 
 #[derive(Serialize, Clone)]
@@ -110,6 +128,93 @@ pub fn build_magnet(info_hash: &str, name: &str) -> String {
     magnet
 }
 
+/// True when a `Session::new_with_opts` failure is an "address already in use"
+/// bind failure — the only class of error that retrying on another port fixes.
+///
+/// CAVEAT (verified against librqbit 9.0.0-rc.0): librqbit flattens the
+/// underlying `io::Error` into anyhow context *strings*, so the typed
+/// `downcast_ref::<io::Error>()` below never actually matches today. The string
+/// match is what does the work. It covers the wording on all three platforms we
+/// ship:
+///   Linux/macOS -> "Address already in use"
+///   Windows     -> "Only one usage of each socket address ... is normally permitted"
+/// Any error we do NOT recognise is surfaced immediately instead of silently
+/// retried, so an unexpected failure is loud rather than hidden behind 40
+/// retries. If librqbit ever changes this wording the app fails to start with
+/// the full error logged (and the existing self-healing restart retries) —
+/// noisy, but never a silent wedge.
+fn is_port_unavailable(e: &anyhow::Error) -> bool {
+    if e.chain().any(|c| {
+        c.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::AddrInUse)
+    }) {
+        return true;
+    }
+    let text = format!("{e:#}").to_ascii_lowercase();
+    text.contains("address already in use")
+        || text.contains("address in use")
+        || text.contains("eaddrinuse")
+        || text.contains("only one usage of each socket address")
+}
+
+/// Build the session options for one bind attempt on `port`.
+///
+/// Rebuilt per attempt because `SessionOptions` is not `Clone`.
+fn build_session_options(port: u16, upload_bps: Option<NonZeroU32>) -> SessionOptions {
+    SessionOptions {
+        fastresume: true,
+        // Session-wide throttling. Only the UPLOAD side is capped (download_bps
+        // stays None); the user's opt-in "Limit upload speed" setting feeds this.
+        // librqbit applies this via a governor rate limiter before every upload.
+        ratelimits: LimitsConfig {
+            upload_bps,
+            download_bps: None,
+        },
+        // NO torrent-list persistence. librqbit's own persistence would resume
+        // every past torrent on start and RE-DOWNLOAD any file the user deleted
+        // (canonical torrents have CDN webseeds, so deleted files silently came
+        // back). Instead the app re-seeds exactly the files present on disk at
+        // startup (downloadManager.reseedExisting) — the downloads folder is the
+        // single source of truth, so deleting a file truly removes it.
+        persistence: None,
+        // librqbit 9 replaced `listen_port_range` + `enable_upnp_port_forwarding`
+        // with this struct. It MUST be Some(..): `SessionOptions::listen`
+        // defaults to None, which starts NO LISTENER AT ALL — the session would
+        // still download but would never accept incoming peers, silently
+        // killing our seeding usefulness.
+        listen: Some(ListenerOptions {
+            // TCP only. uTP exists in 9 but upstream still defaults to TcpOnly
+            // with a "once uTP is stable" TODO, so we do not opt in.
+            mode: ListenerMode::TcpOnly,
+            // [::] — dual-stack, accepts IPv4-mapped connections too.
+            listen_addr: (std::net::Ipv6Addr::UNSPECIFIED, port).into(),
+            enable_upnp_port_forwarding: true,
+            ipv4_only: false,
+            ..Default::default()
+        }),
+        // Session-wide extra trackers, announced for every torrent.
+        trackers: default_tracker_urls(),
+        // Local Service Discovery is NEW in librqbit 9 and defaults to ON. It
+        // multicasts on the user's LAN advertising which torrents this node
+        // holds, so nearby nodes can peer directly at local speed. Genuinely
+        // useful (e.g. several nodes in one church/office), but it is network
+        // chatter nobody consented to and it reveals which sermons a machine is
+        // sharing to everyone on the same network. Keep the v8 behaviour our
+        // users actually agreed to; revisit later as an explicit opt-in setting.
+        disable_local_service_discovery: true,
+        // IMPORTANT: `..Default::default()` is load-bearing for DHT. In
+        // librqbit 9 DHT is `dht: Option<DhtSessionConfig>` and **None DISABLES
+        // DHT ENTIRELY** (session.rs: `if let Some(dht_config) = opts.dht.take()`).
+        // SessionOptions' explicit Default impl sets
+        // `dht: Some(DhtSessionConfig::default())`, and DhtSessionConfig::default()
+        // sets `persistence: Some(..)`. That reproduces librqbit 8's
+        // `disable_dht: false` + `disable_dht_persistence: false`.
+        // DO NOT set `dht: None` here — it looks inert but turns off peer
+        // discovery for the whole network.
+        ..Default::default()
+    }
+}
+
 /// Start the torrent session.
 ///  - `data_dir`   — ~/.sermonindex (session persistence + DHT cache live under it)
 ///  - `download_dir` — default output folder for fetched torrents (~/.sermonindex/downloads)
@@ -127,45 +232,52 @@ pub async fn start(
     // NOTE: we intentionally do NOT create a torrent-session/ dir — persistence
     // is disabled (see below), so it would just be an empty unused folder.
     let _ = &data_dir;
-    let opts = SessionOptions {
-        disable_dht: false,
-        disable_dht_persistence: false,
-        fastresume: true,
-        // Session-wide throttling. Only the UPLOAD side is capped (download_bps
-        // stays None); the user's opt-in "Limit upload speed" setting feeds this.
-        // librqbit applies this via a governor rate limiter before every upload.
-        ratelimits: LimitsConfig {
-            upload_bps,
-            download_bps: None,
-        },
-        // NO torrent-list persistence. librqbit's own persistence would resume
-        // every past torrent on start and RE-DOWNLOAD any file the user deleted
-        // (canonical torrents have CDN webseeds, so deleted files silently came
-        // back). Instead the app re-seeds exactly the files present on disk at
-        // startup (downloadManager.reseedExisting) — the downloads folder is the
-        // single source of truth, so deleting a file truly removes it.
-        persistence: None,
-        listen_port_range: Some(LISTEN_PORT_RANGE),
-        enable_upnp_port_forwarding: true,
-        // Session-wide extra trackers, announced for every torrent.
-        trackers: default_tracker_urls(),
-        ..Default::default()
-    };
 
-    let session = Session::new_with_opts(download_dir, opts)
-        .await
-        .map_err(|e| format!("Failed to start torrent session: {e:#}"))?;
+    // librqbit 9 binds exactly one port, so we walk LISTEN_PORT_RANGE ourselves
+    // and retry when the port is taken (second instance, lingering TIME_WAIT
+    // socket, unrelated app). librqbit 8 did this internally.
+    let mut last_err: Option<String> = None;
+    let mut session: Option<Arc<Session>> = None;
 
-    log::info!(
-        "[Torrent] Session started, TCP listen port: {:?}",
-        session.tcp_listen_port()
-    );
+    for port in LISTEN_PORT_RANGE {
+        match Session::new_with_opts(download_dir.clone(), build_session_options(port, upload_bps))
+            .await
+        {
+            Ok(s) => {
+                session = Some(s);
+                log::info!("[Torrent] Session started on TCP port {port}");
+                break;
+            }
+            Err(e) => {
+                let detail = format!("{e:#}");
+                if is_port_unavailable(&e) {
+                    log::warn!("[Torrent] Port {port} unavailable ({detail}); trying next port");
+                    last_err = Some(detail);
+                    continue;
+                }
+                // Not a bind failure — changing the port cannot help, so surface
+                // it immediately rather than burning 40 doomed session inits.
+                return Err(format!("Failed to start torrent session: {detail}"));
+            }
+        }
+    }
+
+    let session = session.ok_or_else(|| {
+        format!(
+            "Failed to start torrent session: no free port in {}..{} (last error: {})",
+            LISTEN_PORT_RANGE.start,
+            LISTEN_PORT_RANGE.end,
+            last_err.as_deref().unwrap_or("none")
+        )
+    })?;
+
+    log::info!("[Torrent] Session listening on {:?}", session.listen_addr());
 
     // NAT-PMP/PCP fallback: librqbit already tries UPnP; many routers
     // (especially with UPnP disabled) accept NAT-PMP/PCP instead.
     // Runs in the background and renews the mapping every hour.
     let natpmp_status = Arc::new(std::sync::Mutex::new("trying".to_string()));
-    if let Some(port) = session.tcp_listen_port() {
+    if let Some(port) = session.listen_addr().map(|a| a.port()) {
         let status = natpmp_status.clone();
         tokio::spawn(async move {
             loop {
@@ -195,6 +307,9 @@ pub async fn start(
         session,
         started_at: Instant::now(),
         natpmp_status,
+        // Must be constructed inside the tokio runtime (it inspects the current
+        // runtime flavor to decide whether block_in_place is legal).
+        spawner: BlockingSpawner::new(BLOCKING_THREADS),
     })
 }
 
@@ -207,7 +322,10 @@ impl TorrentHandle {
         let torrent_count = self.session.with_torrents(|iter| iter.count());
         SessionInfo {
             running: true,
-            tcp_listen_port: self.session.tcp_listen_port(),
+            // Field name + u16 shape kept deliberately: the frontend
+            // (heartbeat.js, ConnectionsPanel reachability probe) reads
+            // `status.tcp_listen_port` as a plain port number.
+            tcp_listen_port: self.session.listen_addr().map(|a| a.port()),
             uptime_secs: self.started_at.elapsed().as_secs(),
             torrent_count,
             natpmp: self.natpmp_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -248,12 +366,15 @@ impl TorrentHandle {
         let display_name = name.unwrap_or_else(|| file_name.clone());
 
         // Hash the file into a torrent (2 MiB pieces by default).
+        // librqbit 9 added the third `&BlockingSpawner` argument — hashing runs
+        // on blocking threads and the caller now supplies the concurrency limit.
         let created = create_torrent(
             file_path,
             CreateTorrentOptions {
                 name: Some(&display_name),
                 ..Default::default()
             },
+            &self.spawner,
         )
         .await
         .map_err(|e| format!("create_torrent failed: {e:#}"))?;

@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess } from '../services/network.js';
+import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess, saveReachability } from '../services/network.js';
+import CgnatNotice from '../components/CgnatNotice.jsx';
 import { TORRENT_PORT_RANGE } from '../services/constants.js';
 import { getNodeId } from '../services/heartbeat.js';
 
@@ -288,7 +289,8 @@ export default function SeedNodePage({
 
     const result = await probeReachability(port);
     if (result) {
-      setReach({ open: result.open, port });
+      setReach({ ...result, port });
+      saveReachability(result);
       // Register in the backbone directory so new users can find reachable seeds.
       try {
         const scope = (() => { try { return localStorage.getItem('si-seed-scope') || 'audio'; } catch { return 'audio'; } })();
@@ -668,16 +670,40 @@ export default function SeedNodePage({
             <p style={{ color: 'var(--green)', fontSize: '0.85rem', marginTop: '12px', fontWeight: 600 }}>
               ✓ Reachable — you're strengthening the backbone.
             </p>
+          ) : reach.open_v6 ? (
+            /* IPv4 closed, IPv6 open. A full, reachable seed node — just over the
+               newer kind of address. No port-forward steps: there is nothing to
+               forward, and on Starlink or mobile broadband there never will be. */
+            <div style={{ marginTop: '12px' }}>
+              <p style={{ color: 'var(--green)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
+                ✓ Reachable over IPv6 — you're strengthening the backbone.
+              </p>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+                We connected to your node from outside, so other people can too. They reach you on the newer
+                kind of internet address (IPv6). The older kind (IPv4) is closed, which is completely normal on
+                Starlink, T-Mobile Home Internet and mobile broadband — those providers share one old-style
+                address between many homes but give each home a real modern one. There&rsquo;s nothing here for
+                you to change or forward.
+              </p>
+            </div>
           ) : (
             <div style={{ marginTop: '12px' }}>
-              <p style={{ color: 'var(--orange)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
+              <p style={{ color: reach.noPort ? 'var(--orange)' : 'var(--seed-blue)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
                 {reach.noPort
                   ? 'Not reachable yet — the P2P session isn\'t running, so there\'s no port to test. Start the node, then test again.'
-                  : `Not reachable yet — forward TCP port ${reach.port} (range ${TORRENT_PORT_RANGE}) in your router, or enable UPnP.`}
+                  : `Port ${reach.port} isn't reachable from outside — your node still uploads to every peer it reaches, but others can't connect to you.`}
               </p>
               {!reach.noPort && (
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                  <p style={{ margin: '0 0 6px' }}>Quickest fixes:</p>
+                  {/* Explain the cause nobody can fix BEFORE the router steps —
+                      a seed node on Starlink or mobile broadband will never be
+                      able to follow them, and shouldn't be sent chasing. */}
+                  <CgnatNotice
+                    detected={!!reach.cgnat}
+                    v6Firewalled={!!reach.has_ipv6 && reach.v6_probe === 'ok' && reach.open_v6 === false}
+                    style={{ marginTop: 0, marginBottom: '10px' }}
+                  />
+                  <p style={{ margin: '0 0 6px' }}>If your connection does allow it, the quickest fixes are:</p>
                   <p style={{ margin: '0 0 4px' }}>
                     1. In your router settings, turn on <strong>UPnP</strong>, then restart this app.
                   </p>

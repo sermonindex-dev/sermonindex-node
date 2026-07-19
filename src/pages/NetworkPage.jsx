@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { fetchNodeMap, fetchNetworkStats, getNodeId, getCachedGeo } from '../services/heartbeat.js';
+import { getNodeId } from '../services/heartbeat.js';
+import { subscribe as subscribeNodeMap } from '../services/nodeMapStore.js';
 
 // No fake/demo nodes — the map shows only real nodes reported by the
 // heartbeat server, plus your own node. (Previously this held 5 sample seed
@@ -111,57 +112,32 @@ export default function NetworkPage({ nodeStats }) {
   const [hoveredNode, setHoveredNode] = useState(null);
   const [hoveredCountry, setHoveredCountry] = useState(null); // hovered country name, or null
   const [isLiveData, setIsLiveData] = useState(false);
-  const [netStats, setNetStats] = useState(null);
   const [mapTab, setMapTab] = useState('map');
 
-  // Fetch live node data
-  useEffect(() => {
-    let cancelled = false; // guards in-flight fetches after unmount
-
-    async function loadNodes() {
-      const liveNodes = await fetchNodeMap();
-      if (cancelled) return;
-      const myId = getNodeId();
-      const geo = getCachedGeo();
-
-      if (liveNodes.length > 0) {
-        const fixed = liveNodes.map(n => {
-          if (n.id === myId && geo && (n.city === 'Unknown' || !n.city)) {
-            return { ...n, city: geo.city, region: geo.region || '', country: geo.country, lat: geo.lat, lon: geo.lon };
-          }
-          return n;
-        });
-        // Only swap in a new array when the data actually changed, so an
-        // unchanged poll can't retrigger the canvas rebuild (see nodesSig).
-        setNodes(prev => nodesSig(prev) === nodesSig(fixed) ? prev : fixed);
-        setIsLiveData(true);
-      } else {
-        const myNode = geo ? {
-          id: myId, lat: geo.lat, lon: geo.lon, city: geo.city, region: geo.region || '', country: geo.country,
-          coverage: nodeStats?.filesShared ? Math.min(Math.round((nodeStats.filesShared / 33528) * 100), 100) : 0,
-          type: 'user',
-        } : null;
-        const allNodes = [...SAMPLE_NODES];
-        if (myNode && myNode.lat !== 0) allNodes.push(myNode);
-        setNodes(prev => nodesSig(prev) === nodesSig(allNodes) ? prev : allNodes);
-        setIsLiveData(false);
-      }
-    }
-
-    async function loadStats() {
-      const stats = await fetchNetworkStats();
-      if (stats && !cancelled) setNetStats(stats);
-    }
-
-    loadNodes();
-    loadStats();
-    const refreshId = setInterval(() => { loadNodes(); loadStats(); }, 30000);
-    return () => { cancelled = true; clearInterval(refreshId); };
+  // Live node data comes from the SHARED store (services/nodeMapStore.js) rather
+  // than a fetch of our own. That store also owns the "map server reported
+  // nothing — show the user their own node" fallback, so the count here is
+  // literally the same number the sidebar badge and Dashboard show. When this
+  // page had its own copy of that fallback, the page could say "1 online" while
+  // the badge said "0".
+  const filesShared = nodeStats?.filesShared;
+  useEffect(() => subscribeNodeMap((snap) => {
+    // On the own-node fallback, fill in real library coverage so your dot isn't
+    // drawn at 0%. Cosmetic only — it never changes how many nodes are counted.
+    const list = (!snap.isLive && filesShared)
+      ? snap.nodes.map(n => (n.type === 'user'
+          ? { ...n, coverage: Math.min(Math.round((filesShared / 33528) * 100), 100) }
+          : n))
+      : snap.nodes;
+    // Only swap in a new array when the data actually changed, so an unchanged
+    // poll can't retrigger the canvas rebuild (see nodesSig).
+    setNodes(prev => nodesSig(prev) === nodesSig(list) ? prev : list);
+    setIsLiveData(snap.isLive);
     // Depend on the one primitive we read (filesShared) rather than the whole
     // stats object. The parent rebuilds that object on every render, so keying
-    // off it re-ran this effect (and cleared/recreated the 30s interval before
-    // it could ever fire) constantly. A primitive only changes on real change.
-  }, [nodeStats?.filesShared]);
+    // off it would resubscribe constantly. (The store debounces re-fetches, so
+    // even a resubscribe can't hit the endpoint again.)
+  }), [filesShared]);
 
   const countryBreakdown = useMemo(() => {
     const map = {};

@@ -1,16 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getNodeId } from '../services/heartbeat.js';
-
-// ── Time helpers for the seeding-window dropdowns ──
-// Stored/persisted format stays "HH:MM" (24-hour); the 12-hour text is display only.
-function to12h(hhmm) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
-  if (!m) return String(hhmm || '');
-  const h24 = Number(m[1]) % 24;
-  const suffix = h24 < 12 ? 'AM' : 'PM';
-  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-  return `${h12}:${m[2]} ${suffix}`;
-}
+// Shared with App.jsx's seeding-status derivation so the two never drift.
+import { to12h } from '../utils/time.js';
 
 // 48 half-hour slots: 00:00 → 23:30
 const TIME_SLOTS = Array.from({ length: 48 }, (_, i) => {
@@ -50,6 +41,7 @@ export default function SettingsPage({
   onSeedStartChange,
   seedEnd,
   onSeedEndChange,
+  seedStatus,
   uploadCapEnabled,
   onUploadCapToggle,
   uploadCapGb,
@@ -175,7 +167,12 @@ export default function SettingsPage({
     uploadCapEnabled && uploadCapGb > 0
       ? `monthly cap ${uploadCapGb} GB`
       : 'no monthly cap',
-  ].join(' · ');
+    // Live window state from App.jsx (windowLabel is null when there's no usable
+    // schedule, so this drops out entirely rather than claiming "active").
+    seedStatus?.windowLabel
+      ? (seedStatus.throttled ? 'paused right now' : 'active right now')
+      : null,
+  ].filter(Boolean).join(' · ');
 
   // Live one-liner for "Peer-to-Peer Network" — degrades gracefully when
   // nodeStats hasn't arrived yet or the counts are zero.

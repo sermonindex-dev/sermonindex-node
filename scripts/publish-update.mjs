@@ -20,9 +20,16 @@
  *
  *     aarch64 / arm64  + .app.tar.gz     → darwin-aarch64
  *     x86_64  / x64    + .app.tar.gz     → darwin-x86_64
- *     .nsis.zip / .msi.zip               → windows-x86_64
- *     .AppImage.tar.gz / .AppImage       → linux-x86_64
+ *     .exe / .msi / .nsis.zip / .msi.zip → windows-x86_64   (NSIS preferred)
+ *     .AppImage / .AppImage.tar.gz       → linux-x86_64
  *     (anything else is skipped)
+ *
+ * NOTE on Tauri v2: with `createUpdaterArtifacts: true` only macOS gets a
+ * dedicated updater bundle (.app.tar.gz). Windows and Linux RE-USE the
+ * installers themselves — the signed artifacts are `*-setup.exe` + `.sig`,
+ * `*.msi` + `.sig` and `*.AppImage` + `.sig`. The `.nsis.zip` / `.msi.zip` /
+ * `.AppImage.tar.gz` names only exist under `"v1Compatible"`; both layouts are
+ * accepted here so the config can be switched either way.
  *
  * macOS updater tarballs are named just "<productName>.app.tar.gz" with NO arch
  * in the filename, so the arch is read from the enclosing path — e.g. the CI
@@ -60,6 +67,11 @@
  *   --public-base URL  public pull-zone base
  *                        (default: BUNNY_CDN_BASE or https://sermonindex4.b-cdn.net)
  *   --dry-run          discover + show, upload nothing
+ *   --require-all      ABORT (exit 1, nothing uploaded) unless all four platform
+ *                        keys have a signed artifact. Used by CI so a release
+ *                        that silently lost the Windows/Linux .sig fails the
+ *                        build instead of quietly overwriting latest.json with
+ *                        a mac-only manifest.
  *
  * After it runs, PURGE the printed /app/ URLs in the Bunny dashboard (or CDN
  * Cache tool) or clients keep seeing the cached old version.
@@ -74,6 +86,10 @@ const REPO = join(__dirname, '..');
 const args = process.argv.slice(2);
 const getArg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : d; };
 const DRY = args.includes('--dry-run');
+// --require-all: refuse to publish a PARTIAL latest.json. Without it a release
+// that silently lost (say) the Windows .sig still overwrites latest.json with a
+// mac-only manifest and nobody notices. CI passes this flag.
+const REQUIRE_ALL = args.includes('--require-all');
 
 const ZONE = process.env.BUNNY_STORAGE_ZONE;
 const KEY = process.env.BUNNY_STORAGE_KEY;
@@ -132,9 +148,26 @@ function inferPlatformKey(name, rel) {
     if (/x86_64|x64/.test(r)) return 'darwin-x86_64';
     return HOST_ARCH; // plain local build: no arch in path → use host arch
   }
+  // Windows. v1Compatible → .nsis.zip / .msi.zip; v2 (`createUpdaterArtifacts:
+  // true`) re-uses the installers themselves → *-setup.exe / *.msi with a bare
+  // .sig beside them. Longest suffixes are tested first.
   if (n.endsWith('.nsis.zip') || n.endsWith('.msi.zip')) return 'windows-x86_64';
+  if (n.endsWith('.exe') || n.endsWith('.msi')) return 'windows-x86_64';
+  // Linux. v1Compatible → .AppImage.tar.gz; v2 → the .AppImage itself.
   if (n.endsWith('.appimage.tar.gz') || n.endsWith('.appimage')) return 'linux-x86_64';
   return null;
+}
+
+// When several artifacts map to the same platform key (Windows always yields
+// both an NSIS and an MSI updater bundle), keep the highest-ranked one. NSIS is
+// Tauri's recommended Windows updater target, so it outranks MSI.
+function preference(name) {
+  const n = name.toLowerCase();
+  if (n.endsWith('.nsis.zip')) return 3;
+  if (n.endsWith('.exe')) return 3;      // *-setup.exe (NSIS, v2 layout)
+  if (n.endsWith('.msi.zip')) return 2;
+  if (n.endsWith('.msi')) return 2;
+  return 1;
 }
 
 const KEY_LABEL = {
@@ -160,12 +193,10 @@ for (const sigPath of sigFiles) {
   if (!signature) { skipped.push({ name, reason: 'empty .sig file' }); continue; }
 
   if (chosen.has(key)) {
-    // Two artifacts map to one platform (e.g. Windows .nsis.zip + .msi.zip).
-    // Prefer NSIS for Windows; otherwise keep the first and skip the rest.
+    // Two artifacts map to one platform (e.g. Windows NSIS + MSI). Keep the
+    // higher-ranked one; on a tie keep the first seen.
     const prev = chosen.get(key);
-    const incomingNsis = name.toLowerCase().endsWith('.nsis.zip');
-    const prevNsis = prev.name.toLowerCase().endsWith('.nsis.zip');
-    if (key === 'windows-x86_64' && incomingNsis && !prevNsis) {
+    if (preference(name) > preference(prev.name)) {
       skipped.push({ name: prev.name, reason: `duplicate ${key} (superseded by ${name})` });
     } else {
       skipped.push({ name, reason: `duplicate ${key} (keeping ${prev.name})` });
@@ -231,6 +262,38 @@ async function main() {
   }
   console.log('');
 
+  // ── Completeness gate ──────────────────────────────────────────────────────
+  // Refuse to overwrite a good multi-platform latest.json with a partial one.
+  // Checked BEFORE any upload so a bad run leaves the previous manifest intact.
+  const missingUp = ORDER.filter((k) => !keys.includes(k));
+  if (missingUp.length) {
+    const lines = [
+      '',
+      '════════════════════════════════════════════════════════════════════',
+      `  INCOMPLETE UPDATE: ${missingUp.length} of ${ORDER.length} platforms have NO signed artifact`,
+      '════════════════════════════════════════════════════════════════════',
+      ...missingUp.map((k) => `    MISSING  ${k.padEnd(15)} ${KEY_LABEL[k] || ''}`),
+      '',
+      '  Those users will NEVER be offered this update.',
+      '  Expected updater artifacts (createUpdaterArtifacts: true, Tauri v2):',
+      '    darwin-*         bundle/macos/*.app.tar.gz      + .sig',
+      '    windows-x86_64   bundle/nsis/*-setup.exe        + .sig   (or bundle/msi/*.msi + .sig)',
+      '    linux-x86_64     bundle/appimage/*.AppImage     + .sig',
+      '  Check the "Upload artifacts" step in build.yml actually collects the',
+      '  .sig files (if-no-files-found: ignore hides a wrong glob), and that',
+      '  TAURI_SIGNING_PRIVATE_KEY was set for every matrix job.',
+      '════════════════════════════════════════════════════════════════════',
+      '',
+    ];
+    if (REQUIRE_ALL) {
+      for (const l of lines) console.error(l);
+      console.error('  --require-all was set → ABORTING. Nothing uploaded; latest.json unchanged.');
+      process.exit(1);
+    }
+    for (const l of lines) console.warn(l);
+    console.warn('  Continuing (no --require-all). latest.json will be PARTIAL.\n');
+  }
+
   // Upload each artifact and build the platforms map.
   const platforms = {};
   for (const k of keys) {
@@ -265,10 +328,21 @@ async function main() {
   console.log(`     ${PUBLIC_BASE}/app/latest.json`);
   for (const k of keys) console.log(`     ${platforms[k].url}`);
 
-  const missing = ORDER.filter((k) => !keys.includes(k));
-  if (missing.length) {
-    console.log(`\nNote: no artifact for ${missing.join(', ')} in this run — those platforms`);
-    console.log(`won't auto-update until a signed build for them is included in --dir.`);
+  // ── Final sanity check: what actually landed in latest.json ────────────────
+  console.log(`\n──────────────────────────────────────────────────────────────`);
+  console.log(`  latest.json platform keys written (${keys.length}/${ORDER.length}):`);
+  for (const k of ORDER) {
+    const has = keys.includes(k);
+    console.log(`    ${has ? 'OK     ' : 'MISSING'}  ${k.padEnd(15)} ${KEY_LABEL[k] || ''}`);
+  }
+  console.log(`──────────────────────────────────────────────────────────────`);
+  if (keys.length < ORDER.length) {
+    const missing = ORDER.filter((k) => !keys.includes(k));
+    console.warn(`\n⚠  PARTIAL MANIFEST — ${missing.join(', ')} will NOT auto-update.`);
+    console.warn(`   Re-run with the missing signed artifacts under --dir.`);
+    process.exitCode = 1;
+  } else {
+    console.log(`\nAll ${ORDER.length} platforms covered.`);
   }
 }
 
