@@ -162,7 +162,15 @@ jobs:
           BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
         run: |
           if [ -z "$BUNNY_API_KEY" ]; then echo "BUNNY_API_KEY not set — skipping purge"; exit 0; fi
-          urls="${BUNNY_CDN_BASE}/app/latest.json ${BUNNY_CDN_BASE}/app/releases/releases.json ${BUNNY_CDN_BASE}/app/download/"
+          # The two macOS updater payloads live at VERSION-LESS paths, so every
+          # release overwrites the same URL and the edge keeps serving the old
+          # build under its 30-day max-age. The updater then downloads a stale
+          # tarball whose signature doesn't match the fresh latest.json and
+          # fails with "Update failed" — which is exactly what happened on
+          # 0.0.328. Windows/Linux payloads carry the version in the filename,
+          # so they're always new URLs and don't need this. Purge them anyway
+          # in case that naming ever changes.
+          urls="${BUNNY_CDN_BASE}/app/latest.json ${BUNNY_CDN_BASE}/app/releases/releases.json ${BUNNY_CDN_BASE}/app/download/ ${BUNNY_CDN_BASE}/app/darwin-aarch64/SermonIndex-Node-Software.app.tar.gz ${BUNNY_CDN_BASE}/app/darwin-x86_64/SermonIndex-Node-Software.app.tar.gz"
           for url in $urls; do
             enc=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$url")
             echo "Purging $url"
