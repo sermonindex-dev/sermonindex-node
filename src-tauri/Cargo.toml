@@ -1,6 +1,6 @@
 [package]
 name = "sermonindex-app"
-version = "0.0.329"
+version = "0.0.330"
 description = "SermonIndex Sermon Library — Decentralized P2P sermon sharing"
 authors = ["SermonIndex"]
 license = ""

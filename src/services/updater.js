@@ -62,6 +62,84 @@ async function getUpdateMode() {
   }
 }
 
+/**
+ * Wrap a plugin `update` object in the install routine the "prompt" flow uses:
+ * download + install, then relaunch immediately (seamless — no reinstall, and
+ * ~/.sermonindex is untouched). If relaunch isn't available the update is still
+ * installed and applies next launch, which 'si-update-ready' announces.
+ * Shared so the banner and the Settings button install identically.
+ */
+function makeInstaller(update) {
+  return async () => {
+    await update.downloadAndInstall();
+    try {
+      const { relaunch } = await import('@tauri-apps/plugin-process');
+      await relaunch();
+    } catch (e) {
+      console.warn('[Updater] relaunch failed, will apply next launch:', e?.message || e);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('si-update-ready', {
+          detail: { version: update.version },
+        }));
+      }
+    }
+  };
+}
+
+/**
+ * User-initiated update check that RETURNS its outcome, for the Settings
+ * "Check for update" button. checkForUpdates() below is fire-and-forget (it only
+ * dispatches window events), which a button can't report on — this is the same
+ * `check()` call with an answer handed back instead.
+ *
+ * Never throws. Returns one of:
+ *   { status: 'latest' }                          — already on the newest build
+ *   { status: 'available', version, notes, install } — install() downloads,
+ *       installs and relaunches. The existing 'si-update-available' banner flow
+ *       is ALSO fired, so the update surfaces exactly as it normally would and
+ *       the caller can simply reuse `install`.
+ *   { status: 'dev', message }                    — dev build: unsigned and
+ *       unpublished, so there is nothing to check. Reported honestly rather
+ *       than looking like a broken button.
+ *   { status: 'error', message }                  — offline / manifest missing /
+ *       plugin unavailable. Always a real message, never a silent no-op.
+ *
+ * Deliberately does NOT respect the _handledVersion guard on the way in (the
+ * user explicitly asked, so they get a real answer even if the background timer
+ * already surfaced this version), but it does update it so the periodic check
+ * won't re-nag afterwards.
+ */
+export async function checkForUpdatesNow() {
+  if (import.meta.env.DEV) {
+    return {
+      status: 'dev',
+      message: 'Development build — updates are only checked in a released build.',
+    };
+  }
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater');
+    const update = await check();
+    if (!update) return { status: 'latest' };
+
+    const notes = (update.body || '').trim();
+    const install = makeInstaller(update);
+    _handledVersion = update.version;
+
+    // Reuse the normal prompt flow so the usual banner appears too.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('si-update-available', {
+        detail: { version: update.version, notes, install },
+      }));
+    }
+    return { status: 'available', version: update.version, notes, install };
+  } catch (e) {
+    return {
+      status: 'error',
+      message: e?.message ? String(e.message) : "Couldn't reach the update server.",
+    };
+  }
+}
+
 export async function checkForUpdates() {
   try {
     // Dev builds are unsigned and unpublished — nothing to check
@@ -115,21 +193,9 @@ export async function checkForUpdates() {
         detail: {
           version: update.version,
           notes: (update.body || '').trim(),
-          install: async () => {
-            // Download + install, then relaunch immediately — seamless, no
-            // reinstall, user data in ~/.sermonindex is untouched.
-            await update.downloadAndInstall();
-            try {
-              const { relaunch } = await import('@tauri-apps/plugin-process');
-              await relaunch();
-            } catch (e) {
-              // If relaunch is unavailable, it's still installed for next launch.
-              console.warn('[Updater] relaunch failed, will apply next launch:', e?.message || e);
-              window.dispatchEvent(new CustomEvent('si-update-ready', {
-                detail: { version: update.version },
-              }));
-            }
-          },
+          // Download + install, then relaunch immediately — seamless, no
+          // reinstall, user data in ~/.sermonindex is untouched.
+          install: makeInstaller(update),
         },
       }));
     }

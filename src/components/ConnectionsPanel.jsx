@@ -33,8 +33,13 @@ function buildMagnet(infoHash, name) {
   return m;
 }
 
-import { probeReachability, saveReachability } from '../services/network.js';
+import {
+  probeReachability, saveReachability, readReachability,
+  recordIpv6Observation, readIpv6Observation,
+} from '../services/network.js';
 import { TORRENT_PORT_MIN, TORRENT_PORT_RANGE } from '../services/constants.js';
+import { timeAgo } from '../utils/time.js';
+import { deriveNodeState, isReachable, readSeedGranted } from '../utils/nodeStatus.js';
 import CgnatNotice from './CgnatNotice.jsx';
 
 // Max log entries to keep in memory
@@ -73,13 +78,34 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copiedShow, fireCopied] = useCopiedTooltip();
-  // Reachability test result: null | {checking:true} | {open:boolean}
-  const [reach, setReach] = useState(null);
+  // Reachability: the SAVED result is the source of truth and is loaded
+  // synchronously on mount, so leaving this page and coming back shows the same
+  // answer instead of a blank "unknown" or a fresh probe. It never expires and
+  // is never re-probed on its own — the age line + Re-test button are how it
+  // gets refreshed. Shape: null | { open, open_v6, …, ts }
+  const [reach, setReach] = useState(() => readReachability());
+  // PASSIVE IPv6 observation — deliberately SEPARATE state from `reach`.
+  // `reach` is null until the user has run a probe at least once; the IPv6
+  // observation is independent of that and must survive a null probe result,
+  // so a node that has never been tested can still know it is IPv6-reachable.
+  // Loaded synchronously on mount from the same si-reach blob (sticky keys).
+  const [v6obs, setV6obs] = useState(() => readIpv6Observation());
+  // In-flight flag kept OUT of `reach` on purpose: a test in progress (or a
+  // failed one) must not blank the result already on screen.
+  const [testing, setTesting] = useState(false);
   const pollRef = useRef(null);
   const torrentModRef = useRef(null);
   const logEndRef = useRef(null);
   const logContainerRef = useRef(null);
   const lastLogTimeRef = useRef(0);
+  // Mirror of the sticky IPv6 observation, used ONLY to detect the false→true
+  // transition so the "you are reachable over IPv6" line is logged exactly once.
+  const v6SeenRef = useRef(readIpv6Observation());
+  // Has the admin granted this node seed access? Mirrored into localStorage by
+  // App.jsx / SeedNodePage from the backend allowlist — see utils/nodeStatus.js.
+  // Re-read on the status poll so an approval that lands while this page is open
+  // shows up without a restart.
+  const [seedGranted, setSeedGranted] = useState(() => readSeedGranted());
 
   // Log helper — newest entries appended at END (bottom), capped
   const addLog = useCallback((msg, type = 'info') => {
@@ -139,6 +165,8 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         const list = st?.running ? await torrent.listTorrents().catch(() => []) : [];
         setStatus(st);
         setTorrents(list);
+        // Cheap localStorage read; React bails out when the value is unchanged.
+        setSeedGranted(readSeedGranted());
 
         // Ingest new torrent-service log entries into the Live Log
         if (torrent.getLogs) {
@@ -155,6 +183,30 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
           addLog(`Live peers: ${prevPeerCount} → ${peers}`, peers > prevPeerCount && peers > 0 ? 'success' : 'warn');
           prevPeerCount = peers;
         }
+
+        // PASSIVE IPv6 reachability. Cheap to call — the native side throttles
+        // the real peer-table scan to once every 30s and the verdict is sticky,
+        // so polling it alongside the 4s status poll costs almost nothing.
+        // A missing/older native build returns null, which is treated as "no
+        // information", never as "not reachable".
+        if (st?.running && torrent.getIpv6Observation) {
+          const obs = await torrent.getIpv6Observation().catch(() => null);
+          if (obs) {
+            const before = v6SeenRef.current;
+            const merged = recordIpv6Observation(obs);
+            v6SeenRef.current = merged;
+            setV6obs(merged);
+            // Announce only on the transition, and compare against a REF rather
+            // than doing it inside the setState updater — updaters must stay
+            // pure (StrictMode invokes them twice, which would double-log).
+            // This is once-in-a-node-lifetime good news, not a recurring line.
+            if (merged.v6_inbound_seen && !before.v6_inbound_seen) {
+              addLog('A peer connected to you over IPv6 — you ARE reachable from the internet ✓', 'success');
+            } else if (merged.v6_egress_seen && !before.v6_egress_seen) {
+              addLog('Your node reached a peer over IPv6 (outgoing only — this does not prove anyone can reach you)', 'info');
+            }
+          }
+        }
       } catch (err) {
         console.warn('[Connections] Poll error:', err.message);
       }
@@ -165,24 +217,33 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     return () => clearInterval(pollRef.current);
   }, [p2pRunning, getTorrent, addLog]);
 
-  // Auto-check reachability once when the panel opens (and after a restart, which
-  // resets `reach` to null) so Network Health reflects real internet
-  // reachability without needing a manual "Test" click.
+  // Auto-check reachability ONLY when we have never tested — i.e. there is no
+  // saved result at all. Once a result exists it stays until the user presses
+  // Re-test; we never silently re-probe behind their back, so what they see is
+  // always the reading they last asked for (with its age shown next to it).
   useEffect(() => {
-    if (!p2pRunning || !status?.tcp_listen_port || reach) return;
+    if (!p2pRunning || !status?.tcp_listen_port || reach || testing) return;
     let cancelled = false;
     (async () => {
       const r = await probeReachability(status.tcp_listen_port);
       if (cancelled || !r) return;
-      setReach(r);
+      setReach({ ...r, ts: Date.now() });
       saveReachability(r);
     })();
     return () => { cancelled = true; };
-  }, [p2pRunning, status?.tcp_listen_port, reach]);
+  }, [p2pRunning, status?.tcp_listen_port, reach, testing]);
 
   // ─── Honest status derivation ───────────────────────────────────────────
 
   const natpmp = status?.natpmp || 'inactive';
+
+  // PROVEN inbound IPv6 — either the probe got through (which in practice never
+  // happens, since our probe server has no IPv6 route) or, far more usefully, we
+  // passively observed a real peer connecting IN to us over a public IPv6
+  // address. Both are evidence of the same fact, so everything below treats them
+  // identically. `v6_egress_seen` is deliberately NOT included: dialling out
+  // over IPv6 proves nothing about anyone being able to reach us.
+  const ipv6Reachable = reach?.open_v6 === true || v6obs?.v6_inbound_seen === true;
 
   // Peer discovery: DHT + trackers are automatic once the session runs.
   const discovery = !status?.running
@@ -197,16 +258,16 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   const reachability = (() => {
     if (!status?.running) return { key: 'off', label: 'Offline', color: 'var(--text-muted)', on: false };
     if (uploadedTotal > 0) return { key: 'ok', label: 'Working — peers have downloaded from you', color: 'var(--green)', on: true };
-    if (reach?.checking) return { key: 'checking', label: 'Testing…', color: 'var(--gold-text)', on: true };
+    if (testing) return { key: 'checking', label: 'Testing…', color: 'var(--gold-text)', on: true };
     if (reach?.open === true) return { key: 'ok', label: 'Reachable from the internet ✓', color: 'var(--green)', on: true };
     // IPv4 closed but IPv6 open is a REACHABLE node, not a closed one. This is
     // the standard outcome on Starlink and mobile broadband, and calling it
     // "closed" was the single most misleading thing this panel said.
-    if (reach?.open_v6 === true) return { key: 'ok', label: 'Reachable over IPv6 ✓', color: 'var(--green)', on: true };
+    if (ipv6Reachable) return { key: 'ok', label: 'Reachable over IPv6 ✓', color: 'var(--green)', on: true };
     // Port closed is a DIFFERENT shape of node, not a broken one — say so
     // plainly and in a neutral colour, rather than an orange "not reachable"
     // that reads like a fault the user has failed to fix.
-    if (reach?.open === false) return { key: 'closed', label: 'Closed — you connect out to peers instead', color: 'var(--seed-blue)', on: true };
+    if (reach?.open === false) return { key: 'closed', label: 'Closed — you connect out to peers instead', color: 'var(--gold-text)', on: true };
     if (natpmp.startsWith('mapped')) return { key: 'ok', label: 'Port opened automatically (NAT-PMP)', color: 'var(--green)', on: true };
     if (natpmp === 'trying') return { key: 'unknown', label: 'Trying automatic setup (UPnP / NAT-PMP)…', color: 'var(--gold-text)', on: true };
     return { key: 'unknown', label: 'Unknown — automatic setup not confirmed', color: 'var(--gold-text)', on: true };
@@ -218,51 +279,30 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
       ? { label: `Sharing ${seededCount} sermon${seededCount === 1 ? '' : 's'}`, color: 'var(--green)', on: true }
       : { label: 'Nothing to share yet', color: 'var(--text-muted)', on: true };
 
-  // Overall health score — mirrors the TopBar score in App.jsx
-  const healthScore = (() => {
-    if (!p2pRunning || !status?.running) return 0;
-    // Health = how well your node participates on the internet. The key axis is
-    // REACHABILITY (can other peers connect to you), not whether you've
-    // downloaded anything or your upload speed:
-    //   Offline    — session not running
-    //   Fair       — running, but not reachable from outside (still works as a
-    //                "leaf": you download and upload OUT to reachable peers)
-    //   Good       — reachable from the internet (peers can connect to you)
-    //   Excellent  — reachable AND actively serving (a peer connected / bytes uploaded)
-    // Reachable means "a peer out there can open a connection to us" — over
-    // EITHER address family. An IPv6-only-reachable node is a full node.
-    const reachable = reach?.open === true || reach?.open_v6 === true;
-    const closed = reach?.open === false && reach?.open_v6 !== true;
-    const serving = livePeers >= 1 || uploadedTotal > 0;
-    if (reachable && serving) return 100;   // Excellent
-    if (reachable) return 75;               // Good — backbone-ready
-    if (serving) return 60;                 // Good — serving out even if reachability unconfirmed
-    if (closed) return 35;                  // Fair — works, but not reachable (leaf)
-    return 45;                              // Fair — running, reachability not confirmed yet
-  })();
-
-  // A port-closed node that is demonstrably working — peers connected, or bytes
-  // actually uploaded — is not a degraded node. It's a LEAF: it can't be found,
-  // so it does the finding, and it uploads to every peer it reaches. Users on
-  // Starlink, T-Mobile Home Internet or mobile broadband can never be anything
-  // else, so labelling them an orange "Fair" was both discouraging and wrong.
-  // The score is unchanged (no flattery) — only the framing is honest now.
-  // (An IPv6-reachable node is excluded here — it isn't a leaf at all.)
-  const isLeafContributing =
-    reach?.open === false && reach?.open_v6 !== true && (livePeers >= 1 || uploadedTotal > 0);
+  // ── What kind of node am I? ───────────────────────────────────────────────
+  // FOUR plain states — Offline / Peer / Node / Seed node — derived in ONE
+  // place (utils/nodeStatus.js) and shared with the TopBar mirror in App.jsx,
+  // which used to duplicate this logic and had already drifted out of step.
+  // The old numeric "health score" (Excellent / Good / Fair) is gone: it told a
+  // volunteer nothing they could act on, and it used words the node map has
+  // never used. These four words and colours are the map's own.
+  //
+  // Note the two things that deliberately do NOT feed into this any more:
+  //   • upload/peer activity — busy-ness is not a category, and a quiet
+  //     reachable node is still a Node.
+  //   • being on the seed allowlist ALONE — an approved volunteer whose port is
+  //     shut is a Peer. Approval does not make anyone reachable.
+  const nodeState = deriveNodeState({
+    running: !!(p2pRunning && status?.running),
+    reachable: isReachable({ reach, ipv6: v6obs }),
+    seedGranted,
+  });
 
   // Truly unreachable: neither address family let anyone in. Everything that
   // used to key off `reach?.open === false` alone must use this instead, or an
-  // IPv6-reachable node gets shown leaf copy and port-forward instructions it
+  // IPv6-reachable node gets shown peer copy and port-forward instructions it
   // does not need.
-  const unreachableBoth = reach?.open === false && reach?.open_v6 !== true;
-
-  const healthLabel = isLeafContributing
-    ? 'Leaf node — contributing'
-    : healthScore >= 80 ? 'Excellent' : healthScore >= 50 ? 'Good' : healthScore > 0 ? 'Fair' : 'Offline';
-  const healthColor = isLeafContributing
-    ? 'var(--seed-blue)'
-    : healthScore >= 80 ? 'var(--green)' : healthScore >= 50 ? 'var(--gold-text)' : healthScore > 0 ? 'var(--orange)' : 'var(--text-muted)';
+  const unreachableBoth = reach?.open === false && !ipv6Reachable;
 
   // ─── Reachability test ──────────────────────────────────────────────────
   // Tries the SermonIndex probe endpoint; if it isn't deployed yet, falls
@@ -270,11 +310,12 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   const handleTestReachability = useCallback(async () => {
     const port = status?.tcp_listen_port;
     if (!port) return;
-    setReach({ checking: true });
+    setTesting(true);
     addLog(`Testing whether port ${port} is reachable from the internet...`);
     const result = await probeReachability(port);
+    setTesting(false);
     if (result) {
-      setReach(result);
+      setReach({ ...result, ts: Date.now() });
       saveReachability(result);
       if (result.open) {
         addLog(`Port ${port} is OPEN — you are reachable ✓`, 'success');
@@ -282,18 +323,25 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         // Reachable over IPv6 only. A real, good outcome — log it as success so
         // the activity log doesn't contradict the green banner.
         addLog(`IPv4 port ${port} is closed, but peers CAN reach you over IPv6 (${result.ipv6}) ✓`, 'success');
+      } else if (v6SeenRef.current?.v6_inbound_seen) {
+        // The IPv4 test failed, but we have already WATCHED a peer connect to us
+        // over IPv6. That outranks a failed IPv4 dial, and the banner is showing
+        // green — the log must not contradict it.
+        addLog(`IPv4 port ${port} is closed, but a peer has already reached you over IPv6 — you are reachable ✓`, 'success');
       } else {
         addLog(`Port ${port} is CLOSED — your node still uploads to every peer it reaches`, 'warn');
         if (result.has_ipv6 && result.v6_probe === 'ok') {
           addLog('Your IPv6 address was dialled too and did not answer — your router is likely blocking incoming IPv6', 'warn');
         } else if (result.v6_probe === 'unsupported') {
-          addLog('IPv6 could not be tested (the test server has no IPv6 route) — this says nothing about your connection', 'warn');
+          addLog('IPv6 could not be tested (the test server has no IPv6 route) — this says nothing about your connection. Your node watches for real IPv6 peers instead and will say so here if one connects to you', 'warn');
         }
       }
       return;
     }
     // Probe service not configured/reachable — fall back to canyouseeme.org.
-    setReach(null);
+    // Deliberately do NOT clear `reach`: a failed re-test tells us nothing new,
+    // so the last real answer (and its age) stays on screen rather than the
+    // display collapsing back to "unknown".
     addLog(`Automatic test not available yet — opening canyouseeme.org (check port ${port})`, 'warn');
     try {
       const tauri = await import('@tauri-apps/api/core');
@@ -318,7 +366,9 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
           await dm.default.reseedExisting(cat.getDownloaded());
           addLog('Re-seeded downloads present on disk', 'info');
         } catch (e) { addLog(`Re-seed skipped: ${e?.message || e}`, 'warn'); }
-        setReach(null);
+        // The saved reachability result deliberately SURVIVES a restart — it is
+        // only ever replaced by an explicit Re-test. Nudge instead of re-probing.
+        addLog('Reachability result kept — press Re-test if you want a fresh reading', 'info');
       }
     } catch (err) {
       addLog(`Restart failed: ${err.message}`, 'error');
@@ -383,8 +433,15 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         v6Probe={reach?.v6_probe || 'none'}
         hasIpv6={!!reach?.has_ipv6}
         cgnat={!!reach?.cgnat}
-        testing={!!reach?.checking}
+        testing={testing}
+        testedAt={reach?.ts || null}
         onTest={handleTestReachability}
+        // Passive, sticky observations. These are what actually answer the IPv6
+        // question — the probe server has no IPv6 route, so `reachOpen6` above
+        // is effectively always false for everyone.
+        v6InboundSeen={!!v6obs?.v6_inbound_seen}
+        v6InboundAt={v6obs?.v6_inbound_ts || null}
+        v6EgressSeen={!!v6obs?.v6_egress_seen}
       />
     <div className="connections-layout">
       {/* ── LEFT COLUMN: Health + Status + Active Torrents ── */}
@@ -396,21 +453,30 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{
                 width: 10, height: 10, borderRadius: '50%',
-                background: healthColor,
-                boxShadow: healthScore > 0 ? `0 0 8px ${healthColor}` : 'none',
+                background: nodeState.color,
+                boxShadow: nodeState.key !== 'offline' ? `0 0 8px ${nodeState.color}` : 'none',
               }} />
-              <span style={{ color: healthColor, fontWeight: 600, fontSize: '0.85rem' }}>{healthLabel}</span>
+              <span style={{ color: nodeState.color, fontWeight: 600, fontSize: '0.85rem' }}>{nodeState.label}</span>
             </div>
           </div>
 
-          {/* Health bar */}
-          <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden', marginBottom: '12px' }}>
+          {/* Status band. Deliberately NOT a progress bar any more — there is no
+              score to fill it with, and showing a Peer as a half-empty bar told
+              them they were half a node, which is exactly the discouragement
+              this change is meant to remove. It is now a plain colour band in
+              the state's own colour: full when running, empty when offline. */}
+          <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden', marginBottom: '10px' }}>
             <div style={{
               height: '100%', borderRadius: 3,
-              width: `${healthScore}%`,
-              background: `linear-gradient(90deg, ${healthColor}, ${healthColor}dd)`,
+              width: nodeState.key === 'offline' ? '0%' : '100%',
+              background: `linear-gradient(90deg, ${nodeState.color}, ${nodeState.color}dd)`,
               transition: 'width 0.5s ease',
             }} />
+          </div>
+
+          {/* One plain sentence saying what that word means for them. */}
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '12px' }}>
+            {nodeState.blurb}
           </div>
 
           {/* Quick stats */}
@@ -485,9 +551,9 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                     className="btn btn-outline"
                     style={{ fontSize: '0.72rem', padding: '3px 10px', whiteSpace: 'nowrap' }}
                     onClick={handleTestReachability}
-                    disabled={!!reach?.checking}
+                    disabled={testing}
                   >
-                    {reach?.checking ? 'Testing…' : 'Test'}
+                    {testing ? 'Testing…' : reach ? 'Re-test' : 'Test'}
                   </button>
                 )}
               </div>
@@ -504,7 +570,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               borderRadius: '8px',
               background: 'var(--bg-tertiary)',
               border: '1px solid var(--border)',
-              borderLeft: '3px solid var(--seed-blue)',
+              borderLeft: '3px solid var(--gold-text)',
               fontSize: '0.8rem',
               color: 'var(--text-secondary)',
               lineHeight: 1.6,
@@ -534,7 +600,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               {unreachableBoth && (
                 <CgnatNotice
                   detected={!!reach?.cgnat}
-                  v6Firewalled={!!reach?.has_ipv6 && reach?.v6_probe === 'ok' && reach?.open_v6 === false}
+                  v6Firewalled={!!reach?.has_ipv6 && reach?.v6_probe === 'ok' && reach?.open_v6 === false && !ipv6Reachable}
                   style={{ marginTop: 0, marginBottom: '10px' }}
                 />
               )}
@@ -718,15 +784,18 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               <div style={{ fontWeight: 500, fontSize: '0.85rem' }}>Test Reachability</div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                 Check whether other peers can connect directly to your node
+                {/* The result is kept indefinitely and never refreshed on its
+                    own, so its age is shown wherever the Re-test button is. */}
+                {reach?.ts ? ` · Last tested ${timeAgo(reach.ts)}` : ''}
               </div>
             </div>
             <button
               className="btn btn-outline"
               style={{ fontSize: '0.78rem', padding: '5px 14px', whiteSpace: 'nowrap' }}
               onClick={handleTestReachability}
-              disabled={!p2pRunning || !!reach?.checking}
+              disabled={!p2pRunning || testing}
             >
-              {reach?.checking ? 'Testing…' : 'Test'}
+              {testing ? 'Testing…' : reach ? 'Re-test' : 'Test'}
             </button>
           </div>
 

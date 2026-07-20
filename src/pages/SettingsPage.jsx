@@ -1,7 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getNodeId } from '../services/heartbeat.js';
 // Shared with App.jsx's seeding-status derivation so the two never drift.
 import { to12h } from '../utils/time.js';
+import { checkForUpdatesNow } from '../services/updater.js';
+// The verification sweep lives in catalog.js beside the one and only definition
+// of "is this file complete" — this page just drives it and reports the result.
+import { verifyLibrary } from '../services/catalog.js';
+// Repair goes through the download manager's EXISTING public reseedExisting():
+// it prefers the canonical torrent from the signed master list, which makes the
+// torrent engine check the file already on disk and pull only the broken parts
+// from the CDN webseed instead of downloading the whole sermon again.
+import downloadManager from '../services/downloadManager.js';
 
 // 48 half-hour slots: 00:00 → 23:30
 const TIME_SLOTS = Array.from({ length: 48 }, (_, i) => {
@@ -63,6 +72,115 @@ export default function SettingsPage({
   // Committing reuses onUploadLimitKbpsChange (the same setter that persists + applies).
   const [uploadKbpsDraft, setUploadKbpsDraft] = useState(String(uploadLimitKbps ?? ''));
   const [uploadKbpsSaved, setUploadKbpsSaved] = useState(false);
+
+  // "Check for update" outcome. Component-local ON PURPOSE and never persisted:
+  // navigating away and back must reset it to the plain button, so the result
+  // shown is always one the user just asked for and can never go stale.
+  //   null | { status:'checking' } | { status:'latest' }
+  //   | { status:'available', version, install } | { status:'dev'|'error', message }
+  const [updateCheck, setUpdateCheck] = useState(null);
+  const [installing, setInstalling] = useState(false);
+
+  const handleCheckForUpdate = async () => {
+    setUpdateCheck({ status: 'checking' });
+    const result = await checkForUpdatesNow(); // never throws
+    setUpdateCheck(result);
+  };
+
+  // Reuses the install() handed back by the updater — the same download +
+  // install + relaunch the update banner performs, not a second implementation.
+  const handleInstallUpdate = async () => {
+    if (!updateCheck?.install) return;
+    setInstalling(true);
+    try {
+      await updateCheck.install(); // relaunches on success, so this won't return
+    } catch (e) {
+      setInstalling(false);
+      setUpdateCheck({
+        status: 'error',
+        message: e?.message ? String(e.message) : 'The update could not be installed.',
+      });
+    }
+  };
+
+  // ── Verify & Repair Library ───────────────────────────────────────────────
+  // Component-local and never persisted, exactly like the update check above: a
+  // result the user sees must be one they just asked for, never a stale one.
+  //   null | { status:'running', done, total }
+  //   | { status:'done'|'stopped', ...counts } | { status:'unavailable' }
+  const [verify, setVerify] = useState(null);
+  //   null | { status:'starting'|'started'|'failed', count }
+  const [repair, setRepair] = useState(null);
+  // Sermons the last sweep found damaged or missing, kept out of render state so
+  // a large list never re-renders the page.
+  const damagedRef = useRef([]);
+  const cancelVerifyRef = useRef(false);
+  // Guards a setState after unmount if the user navigates away mid-sweep.
+  const mountedRef = useRef(true);
+  // MUST set mountedRef back to true on mount, not just false on unmount.
+  // React.StrictMode (main.jsx) deliberately mounts → unmounts → remounts every
+  // component in development. A cleanup-only effect therefore leaves this ref
+  // stuck at false forever, which silently disabled the whole verification
+  // sweep: shouldStop() returned true so it aborted on the first batch,
+  // onProgress was ignored, and the result was discarded — the UI just sat on
+  // "Looking through your sermon folder…" doing nothing.
+  useEffect(() => {
+    mountedRef.current = true;
+    cancelVerifyRef.current = false;
+    return () => { mountedRef.current = false; cancelVerifyRef.current = true; };
+  }, []);
+
+  const handleVerifyLibrary = async () => {
+    if (verify?.status === 'running') return;
+    cancelVerifyRef.current = false;
+    damagedRef.current = [];
+    setRepair(null);
+    setVerify({ status: 'running', done: 0, total: 0 });
+    let result;
+    try {
+      result = await verifyLibrary({
+        onProgress: ({ done, total }) => {
+          if (mountedRef.current) setVerify({ status: 'running', done, total });
+        },
+        shouldStop: () => cancelVerifyRef.current,
+      });
+    } catch (e) {
+      // verifyLibrary is written not to throw, but a surprise must still never
+      // reach the user as a raw error string.
+      console.warn('[Settings] Library verification failed:', e?.message || e);
+      if (mountedRef.current) setVerify({ status: 'unavailable' });
+      return;
+    }
+    if (!mountedRef.current) return;
+    if (!result.ok) { setVerify({ status: 'unavailable' }); return; }
+    damagedRef.current = result.repairable || [];
+    setVerify({
+      status: result.stopped ? 'stopped' : 'done',
+      total: result.total,
+      checked: result.checked,
+      complete: result.complete,
+      damaged: result.damaged,
+      missing: result.missing,
+      unchecked: result.unchecked,
+    });
+  };
+
+  const handleRepairLibrary = async () => {
+    const items = damagedRef.current;
+    if (!items.length || repair?.status === 'starting') return;
+    setRepair({ status: 'starting', count: items.length });
+    try {
+      // Fire and forget: reseedExisting walks the list in the background and
+      // yields between files, so a big repair never freezes the window.
+      downloadManager.reseedExisting(items).catch((e) => {
+        console.warn('[Settings] Repair pass reported a problem:', e?.message || e);
+      });
+      if (mountedRef.current) setRepair({ status: 'started', count: items.length });
+    } catch (e) {
+      console.warn('[Settings] Repair could not be started:', e?.message || e);
+      if (mountedRef.current) setRepair({ status: 'failed', count: items.length });
+    }
+  };
 
   // Read-only monthly upload usage for the cap readout. App.jsx owns writing the
   // per-month baseline (`si-upload-month`); here we only READ it + the lifetime
@@ -192,6 +310,16 @@ export default function SettingsPage({
     return parts.join(' · ');
   })();
 
+  // Thousands separators — "2,318" reads far better than "2318" to the audience
+  // running these nodes.
+  const fmtCount = (n) => Number(n || 0).toLocaleString();
+
+  // How many the last sweep found that can be repaired (damaged + missing).
+  const repairableCount = (verify?.damaged || 0) + (verify?.missing || 0);
+  const verifyPct = verify?.status === 'running' && verify.total > 0
+    ? Math.min(100, Math.round((verify.done / verify.total) * 100))
+    : 0;
+
   const modes = [
     {
       key: 'cdn',
@@ -212,7 +340,10 @@ export default function SettingsPage({
 
   return (
     <div className="settings-page-root">
-      <div className="seed-section" style={{ marginBottom: 0 }}>
+      {/* page-header-wide matches .connections-layout's 1100px max-width and
+          centring, so the heading lines up with the columns below it rather
+          than sitting flush to the window edge. */}
+      <div className="page-header-wide">
         <div className="page-header">
           <h2>Settings</h2>
           <p>Configure your node and app preferences</p>
@@ -591,8 +722,172 @@ export default function SettingsPage({
           </div>
         </div>
 
-        {/* ── RIGHT: Node Statistics + About ── */}
+        {/* ── RIGHT: Verify & Repair + Node Statistics + About ── */}
         <div className="connections-right">
+          {/* ── Verify & Repair Library (task 145) ──
+              Same size-against-the-signed-list check that already runs quietly at
+              startup, but on demand, watchable, stoppable, and with a one-press
+              repair for whatever it finds. Wording is deliberately plain: the
+              people running these nodes are volunteers, not engineers. */}
+          <div className="seed-card">
+            <h3>Verify &amp; Repair Library</h3>
+            <p style={{ marginBottom: '8px' }}>
+              This checks that every sermon you are hosting is complete and undamaged.
+              A file can end up part-written after a power cut, a dropped connection or
+              a disk problem, and it then stops being useful to anyone downloading from you.
+            </p>
+            <p style={{ ...summaryLineStyle, marginBottom: '16px' }}>
+              Finding a few damaged sermons is normal and they can be put right. Nothing is
+              ever deleted — repairing only fetches back the parts that are missing. You can
+              stop the check at any time and carry on using the app while it runs.
+            </p>
+
+            <div className="settings-row" style={{ border: 'none' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>Check my sermons</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Looks at every sermon in your download folder. Large libraries can take a
+                  few minutes.
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  onClick={handleVerifyLibrary}
+                  disabled={verify?.status === 'running'}
+                  title="Check that every sermon you are hosting is complete"
+                  style={{
+                    ...setButtonStyle,
+                    cursor: verify?.status === 'running' ? 'default' : 'pointer',
+                    opacity: verify?.status === 'running' ? 0.5 : 1,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {verify?.status === 'running' ? 'Checking…' : 'Check now'}
+                </button>
+                {verify?.status === 'running' && (
+                  <button
+                    onClick={() => { cancelVerifyRef.current = true; }}
+                    title="Stop checking"
+                    style={{
+                      ...setButtonStyle,
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Stop
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {verify?.status === 'running' && (
+              <div style={{ marginTop: '4px' }}>
+                <div style={{
+                  height: '6px', width: '100%', background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border)', borderRadius: '4px', overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%', width: `${verifyPct}%`,
+                    background: 'var(--gold)', transition: 'width 0.2s',
+                  }} />
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {verify.total > 0
+                    ? `Checking ${fmtCount(verify.done)} of ${fmtCount(verify.total)}…`
+                    : 'Looking through your sermon folder…'}
+                </div>
+              </div>
+            )}
+
+            {(verify?.status === 'done' || verify?.status === 'stopped') && (
+              <div style={{ marginTop: '4px', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                {verify.total === 0 ? (
+                  <div>You have not downloaded any sermons yet, so there is nothing to check.</div>
+                ) : (
+                  <>
+                    <div>
+                      {verify.status === 'stopped'
+                        ? `Stopped early. Of ${fmtCount(verify.total)} sermons, ${fmtCount(verify.checked)} were looked at before you stopped.`
+                        : `Checked ${fmtCount(verify.total)} sermon${verify.total === 1 ? '' : 's'}.`}
+                    </div>
+                    <div style={{ marginTop: '4px' }}>
+                      <span style={{ color: 'var(--green)', fontWeight: 600 }}>
+                        {fmtCount(verify.complete)} complete
+                      </span>
+                      {verify.damaged > 0 && (
+                        <>
+                          {' · '}
+                          <span style={{ color: 'var(--orange)', fontWeight: 600 }}>
+                            {fmtCount(verify.damaged)} damaged
+                          </span>
+                        </>
+                      )}
+                      {verify.missing > 0 && (
+                        <>
+                          {' · '}
+                          <span style={{ color: 'var(--orange)', fontWeight: 600 }}>
+                            {fmtCount(verify.missing)} no longer in your folder
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {verify.unchecked > 0 && (
+                      <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
+                        {fmtCount(verify.unchecked)} could not be checked this time and have been
+                        left exactly as they are.
+                      </div>
+                    )}
+                    {repairableCount === 0 && verify.status === 'done' && (
+                      <div style={{ color: 'var(--text-muted)', marginTop: '6px' }}>
+                        Everything is in good order. Nothing needs repairing.
+                      </div>
+                    )}
+                    {repairableCount > 0 && !repair && (
+                      <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={handleRepairLibrary}
+                          title="Fetch back the missing parts of these sermons"
+                          style={{ ...setButtonStyle, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          Repair {fmtCount(repairableCount)} sermon{repairableCount === 1 ? '' : 's'}
+                        </button>
+                        <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                          Only the missing parts are fetched, so this is usually far quicker
+                          than downloading them again.
+                        </span>
+                      </div>
+                    )}
+                    {repair?.status === 'starting' && (
+                      <div style={{ color: 'var(--text-muted)', marginTop: '10px' }}>
+                        Starting the repair…
+                      </div>
+                    )}
+                    {repair?.status === 'started' && (
+                      <div style={{ color: 'var(--green)', marginTop: '10px' }}>
+                        Repair started for {fmtCount(repair.count)} sermon{repair.count === 1 ? '' : 's'}.
+                        It carries on quietly in the background, so you can keep using the app or
+                        close this page. Run the check again later to confirm they are all complete.
+                      </div>
+                    )}
+                    {repair?.status === 'failed' && (
+                      <div style={{ color: 'var(--text-muted)', marginTop: '10px' }}>
+                        The repair could not be started just now. Please try again in a moment.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {verify?.status === 'unavailable' && (
+              <div style={{ marginTop: '4px', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Your sermons could not be checked just now, so nothing has been changed.
+                Please try again in a moment.
+              </div>
+            )}
+          </div>
+
           <div className="seed-card">
             <h3>Node Statistics</h3>
             <div className="settings-row">
@@ -613,7 +908,63 @@ export default function SettingsPage({
             <h3>About</h3>
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Version</span>
-              <span>{version ? `v${version}` : '—'}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <span>{version ? `v${version}` : '—'}</span>
+
+                {/* Idle → plain button. Every other state below is local-only,
+                    so leaving Settings and returning shows this again. */}
+                {(!updateCheck || updateCheck.status === 'checking') && (
+                  <button
+                    onClick={handleCheckForUpdate}
+                    disabled={updateCheck?.status === 'checking'}
+                    style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 12px', cursor: updateCheck?.status === 'checking' ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    {updateCheck?.status === 'checking' ? 'Checking…' : 'Check for update'}
+                  </button>
+                )}
+
+                {updateCheck?.status === 'latest' && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--green)' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    You&rsquo;re on the latest version
+                  </span>
+                )}
+
+                {updateCheck?.status === 'available' && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gold-text)' }}>
+                      Version {updateCheck.version} is available
+                    </span>
+                    <button
+                      onClick={handleInstallUpdate}
+                      disabled={installing}
+                      style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gold-text)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 12px', cursor: installing ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      {installing ? 'Installing…' : 'Install now'}
+                    </button>
+                  </span>
+                )}
+
+                {/* Dev builds are unsigned and unpublished, so there is genuinely
+                    nothing to check — say that rather than sitting silent. */}
+                {(updateCheck?.status === 'dev' || updateCheck?.status === 'error') && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', maxWidth: '260px', textAlign: 'right' }}>
+                      {updateCheck.status === 'dev'
+                        ? updateCheck.message
+                        : `Couldn't check for updates — ${updateCheck.message}`}
+                    </span>
+                    <button
+                      onClick={handleCheckForUpdate}
+                      style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      Try again
+                    </button>
+                  </span>
+                )}
+              </div>
             </div>
             {(onNavigate || onShowConditions) && (
               <div className="settings-row" style={{ gap: '8px', flexWrap: 'wrap' }}>

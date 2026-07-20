@@ -24,8 +24,6 @@ function formatContribution(bytes) {
 
 // ── icons ────────────────────────────────────────────────────────────────────
 const I = {
-  play: <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>,
-  download: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
   arrow: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>,
   globe: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>,
   seed: <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM88,160a8,8,0,1,1-8,8A8,8,0,0,1,88,160ZM48,48H80v97.38a24,24,0,1,0,16,0V115.31l48,48V208H48ZM208,208H160V160a8,8,0,0,0-2.34-5.66L96,92.69V48h32V72a8,8,0,0,0,2.34,5.66l16,16A23.74,23.74,0,0,0,144,104a24,24,0,1,0,24-24,23.74,23.74,0,0,0-10.34,2.35L144,68.69V48h64V208ZM168,96a8,8,0,1,1-8,8A8,8,0,0,1,168,96Z" /></svg>,
@@ -143,12 +141,20 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
 
   // Library coverage — same source + precision as the Your Stats page (1-decimal %).
   const [coverage, setCoverage] = useState({ pct: 0, downloaded: 0, total: 0 });
+  // The whole-archive figure, read alongside it. Deliberately NOT the same number
+  // as `coverage`: that one follows the user's chosen seed scope (audio-only by
+  // default), while the Seed Node highlight below talks about a complete copy.
+  const [fullSeed, setFullSeed] = useState({ total: 0, downloaded: 0, remaining: 0, verified: false });
   useEffect(() => {
     const refresh = () => {
       try {
         const scope = (() => { try { return localStorage.getItem('si-seed-scope') || 'audio'; } catch { return 'audio'; } })();
         const sp = getSeedProgress(scope);
         setCoverage({ pct: sp.pct, downloaded: sp.downloaded, total: sp.total });
+      } catch { /* keep last-known */ }
+      try {
+        const fp = getSeedProgress('full');
+        setFullSeed({ total: fp.total, downloaded: fp.downloaded, remaining: fp.remaining, verified: !!fp.verified });
       } catch { /* keep last-known */ }
     };
     refresh();
@@ -163,6 +169,21 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
     let audio = 0, video = 0;
     for (const s of cat) { if (!s?.downloaded) continue; if (s.type === 'video') video++; else audio++; }
     return { audio, video };
+  }, [cat]);
+
+  // What's actually on this machine, said in human terms rather than in bytes —
+  // hours of preaching and how many different preachers. Neither figure appears
+  // anywhere else on the page, so the Your Stats highlight isn't a restatement.
+  const hosting = useMemo(() => {
+    let secs = 0, count = 0;
+    const speakers = new Set();
+    for (const s of cat) {
+      if (!s?.downloaded) continue;
+      count++;
+      secs += Number(s.duration) || 0;
+      if (s.speaker) speakers.add(s.speaker);
+    }
+    return { hours: Math.floor(secs / 3600), count, speakers: speakers.size };
   }, [cat]);
 
   // Featured sermons — a fresh random handful each time the Dashboard is opened.
@@ -182,11 +203,15 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
   // Network-wide reach, from the SHARED node-map store — so this stays live
   // (it used to be fetched once on mount and could sit hours out of date) and
   // always agrees with the sidebar badge and the Node Map page.
-  const [net, setNet] = useState({ nodes: null, countries: null });
+  // `countryNames` is for the Node Map highlight below: naming the places is a
+  // different (and warmer) thing to say than the counts shown in this panel.
+  const [net, setNet] = useState({ nodes: null, countries: null, countryNames: [] });
   useEffect(() => subscribeNodeMap((snap) => {
     if (!snap.ts) return; // nothing fetched yet — keep showing nulls
-    const countries = new Set(snap.nodes.map((n) => n && n.country).filter(Boolean));
-    setNet({ nodes: snap.count, countries: countries.size });
+    const countries = new Set(
+      snap.nodes.map((n) => n && n.country).filter((c) => c && c !== 'Unknown')
+    );
+    setNet({ nodes: snap.count, countries: countries.size, countryNames: [...countries].sort() });
   }), []);
 
   const tiles = [
@@ -197,14 +222,61 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
     { value: storageUsed, label: 'Storage used', color: 'var(--text-primary)' },
   ];
 
-  const links = [
-    { key: 'network', icon: I.globe, title: 'Node Map', desc: 'See the live global network light up' },
-    { key: 'seed', icon: I.seed, title: 'Seed Node', desc: 'Hold a complete backup of the archive' },
-    { key: 'stats', icon: I.stats, title: 'Your Stats', desc: 'Your impact, in detail' },
-    { key: 'community', icon: I.chat, title: 'Community', desc: 'Encourage other node runners' },
-  ];
-
   const go = (k) => onNavigate && onNavigate(k);
+
+  // ── highlight cards ────────────────────────────────────────────────────────
+  // Four other parts of the app, each introduced by something true about the
+  // user or the network right now rather than by a description of the page.
+  // Every branch below has a sensible line for a brand-new install, so nothing
+  // ever renders "undefined", "NaN", or a bare discouraging zero.
+  const nf = (n) => Number(n || 0).toLocaleString();
+  const hasSeedData = fullSeed.total > 0;
+  const cn = net.countryNames;
+  const countryList =
+    cn.length === 1 ? cn[0]
+      : cn.length <= 3 ? `${cn.slice(0, -1).join(', ')} and ${cn[cn.length - 1]}`
+        : `${cn.slice(0, 3).join(', ')} and ${cn.length - 3} more ${cn.length - 3 === 1 ? 'country' : 'countries'}`;
+
+  const highlights = [
+    {
+      key: 'seed', route: 'seed', icon: I.seed, kicker: 'Seed Node', cta: 'About seed nodes',
+      lead: fullSeed.verified
+        ? 'You hold a complete copy.'
+        : hasSeedData && fullSeed.downloaded > 0
+          ? <><b>{nf(fullSeed.remaining)}</b> more and you&rsquo;d hold a complete copy.</>
+          : 'Hold a complete copy of the archive.',
+      sub: fullSeed.verified
+        ? `All ${nf(fullSeed.downloaded)} sermons are safe on this machine. While your node is running, none of them can be lost.`
+        : hasSeedData && fullSeed.downloaded > 0
+          ? `You're already keeping ${nf(fullSeed.downloaded)} of ${nf(fullSeed.total)}. A seed node holds the lot — the whole archive, on one machine you own.`
+          : 'A seed node keeps every sermon on one machine you own, so the archive survives whatever happens anywhere else.',
+    },
+    {
+      key: 'stats', route: 'stats', icon: I.stats, kicker: 'Your Stats', cta: 'See your stats',
+      lead: hosting.count > 0
+        ? (hosting.hours >= 1
+          ? <><b>{nf(hosting.hours)}</b> hours of preaching from {nf(hosting.speakers)} {hosting.speakers === 1 ? 'preacher' : 'preachers'}.</>
+          : <><b>{nf(hosting.count)}</b> {hosting.count === 1 ? 'sermon' : 'sermons'} from {nf(hosting.speakers)} {hosting.speakers === 1 ? 'preacher' : 'preachers'}.</>)
+        : 'Your first sermon starts the count.',
+      sub: hosting.count > 0
+        ? "That's what's on your machine right now, ready for anyone who asks for it. Your Stats shows how much you've passed on, week by week."
+        : "Download anything from the library and it's yours to keep — and yours to pass on to whoever needs it next.",
+    },
+    {
+      key: 'network', route: 'network', icon: I.globe, kicker: 'Node Map', cta: 'Open the Node Map',
+      lead: cn.length > 0
+        ? <>Nodes are running in {countryList}.</>
+        : 'See where in the world the archive lives.',
+      sub: 'Every dot is a real machine in somebody’s home or office, quietly keeping these sermons within reach.',
+    },
+    {
+      key: 'community', route: 'community', icon: I.chat, kicker: 'Community', cta: 'Say hello',
+      // No live signal reaches this page, so this card makes no claim it can't
+      // back up — an invitation instead of an invented number.
+      lead: 'You are not doing this on your own.',
+      sub: 'A quiet room for the people running nodes. Ask a question, or just tell everyone where you’re listening from.',
+    },
+  ];
 
   return (
     <div className="dash">
@@ -334,14 +406,20 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
         )}
       </div>
 
-      {/* ── quick links to full sections ── */}
-      <div className="dash-links">
-        {links.map((l) => (
-          <button key={l.key} className="dash-link" onClick={() => go(l.key)}>
-            <span className="dash-link-icon">{l.icon}</span>
-            <span className="dash-link-body">
-              <span className="dash-link-title">{l.title} {I.arrow}</span>
-              <span className="dash-link-desc">{l.desc}</span>
+      {/* ── highlights: two columns of live, clickable cards ──
+          Replaced the mission banner, which in turn replaced four plain quick
+          links. Each card is a whole button so the entire card is the target,
+          and each one leads with real data (see `highlights` above) rather than
+          with a description of the page it opens. */}
+      <div className="dash-hl">
+        {highlights.map((h) => (
+          <button key={h.key} type="button" className="dash-hl-card" onClick={() => go(h.route)}>
+            <span className="dash-hl-icon" aria-hidden="true">{h.icon}</span>
+            <span className="dash-hl-body">
+              <span className="dash-hl-kicker">{h.kicker}</span>
+              <span className="dash-hl-lead">{h.lead}</span>
+              <span className="dash-hl-sub">{h.sub}</span>
+              <span className="dash-hl-go">{h.cta} {I.arrow}</span>
             </span>
           </button>
         ))}

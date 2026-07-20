@@ -179,6 +179,52 @@ export async function getSessionStats() {
   return invoke('torrent_session_stats');
 }
 
+/**
+ * What the node can PASSIVELY prove about its own IPv6 connectivity, worked out
+ * from the peers it is actually talking to. See `Ipv6Observation` in
+ * src-tauri/src/torrent_node.rs for the full reasoning.
+ *
+ * Returns:
+ *   {
+ *     inbound_ipv6:        boolean  // PROOF: a peer on a public IPv6 address
+ *                                   // connected TO US. Inbound IPv6 works.
+ *     outbound_ipv6:       boolean  // we dialled out to an IPv6 peer. Proves
+ *                                   // IPv6 EGRESS only — says nothing at all
+ *                                   // about whether anyone can reach us.
+ *     inbound_ipv6_peers:  number
+ *     outbound_ipv6_peers: number
+ *     known_ipv6_peers:    number   // context only, no reachability meaning
+ *     torrents_checked:    number
+ *     observed:            boolean  // false = we haven't been able to look yet
+ *   }
+ * or `null` when the session isn't running / this build predates the feature.
+ *
+ * WHY THIS MATTERS: our reachability probe runs on a Bunny edge script and
+ * Bunny's edge has no outbound IPv6 (it reports `v6_probe: 'unsupported'`), so
+ * we can never actively test inbound IPv6. A real inbound connection from a real
+ * peer is better evidence anyway. For someone on Starlink or another CGNAT
+ * provider, where IPv4 inbound is impossible forever, this is the only way they
+ * will ever find out they are genuinely reachable.
+ *
+ * IMPLEMENTATION NOTE: this rides along inside `torrent_session_stats` rather
+ * than having its own Tauri command, because registering a new command means
+ * editing `invoke_handler` in src-tauri/src/lib.rs. If a dedicated
+ * `torrent_ipv6_observation` command is added later, point this at it — nothing
+ * else needs to change. Native side is throttled to one real peer-table scan
+ * every 30s, so polling this is cheap.
+ */
+export async function getIpv6Observation() {
+  try {
+    const stats = await invoke('torrent_session_stats');
+    const obs = stats && stats.ipv6_observation;
+    return obs && typeof obs === 'object' ? obs : null;
+  } catch {
+    // Session not running, or an older native build. Absence of an answer is
+    // never reported as a negative answer.
+    return null;
+  }
+}
+
 // ─── PoC devtools console helpers ───────────────────────────────────────────
 
 function formatTorrent(t) {
@@ -216,6 +262,7 @@ const torrentPoc = {
   },
   remove: removeTorrent,
   sessionStats: getSessionStats,
+  ipv6: getIpv6Observation,
   logs: getLogs,
   watch: async (intervalMs = 2000) => {
     if (_watchInterval) clearInterval(_watchInterval);

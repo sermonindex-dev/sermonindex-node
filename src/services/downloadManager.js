@@ -28,6 +28,32 @@ async function loadTauri() {
   return tauriInvoke;
 }
 
+// Tauri event listener — used for native streaming download progress.
+let tauriListen = null;
+let tauriListenLoaded = false;
+async function loadTauriListen() {
+  if (tauriListenLoaded) return tauriListen;
+  tauriListenLoaded = true;
+  try {
+    const mod = await import('@tauri-apps/api/event');
+    tauriListen = mod.listen;
+  } catch {
+    tauriListen = null;
+  }
+  return tauriListen;
+}
+
+/**
+ * Whether the native streaming download command is usable.
+ *
+ * Flipped to false the first time `stream_sermon_file` comes back "not found",
+ * i.e. a frontend running against an older native binary. Everything then falls
+ * back to the buffered fetch + chunked-save path below, which is left fully
+ * intact for exactly that reason.
+ */
+let streamingSupported = true;
+const STREAM_PROGRESS_EVENT = 'sermon-download-progress';
+
 // Convert ArrayBuffer to base64 string in chunks to avoid stack overflow
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -54,23 +80,44 @@ function chunkToBase64(uint8arr) {
 const CHUNK_THRESHOLD = 10 * 1024 * 1024; // 10 MB — use chunked write above this
 const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB per IPC call
 
+/**
+ * Write the downloaded bytes to disk.
+ *
+ * Returns `{ path, size }` where `size` is the REAL on-disk byte length reported
+ * by the Rust side — NOT the number of bytes we counted off the network. Those
+ * two never disagreeing is precisely why a failed write used to be invisible.
+ *
+ * THROWS on any failure. A file we could not write is not a download: the caller
+ * must fail the whole thing rather than report a "complete" sermon that isn't
+ * there. Returns null ONLY when there is no native backend at all (dev in a
+ * plain browser), where there is no disk to write to in the first place.
+ *
+ * Both paths stage into `<final>.part` on the Rust side and the real filename
+ * only appears when the write is finalized, so an interrupted download can never
+ * be mistaken for a complete sermon or seeded to the swarm.
+ */
 async function saveFileToDisk(filename, bytes) {
   const invoke = await loadTauri();
-  if (!invoke) return null;
+  if (!invoke) return null; // no native side — nothing to write to
 
   const totalSize = bytes.byteLength;
 
-  try {
-    if (totalSize <= CHUNK_THRESHOLD) {
-      // Small file — single base64 transfer (fast path)
-      const dataB64 = arrayBufferToBase64(bytes);
-      const path = await invoke('save_sermon_file', { filename, dataB64 });
-      return path;
-    }
+  if (totalSize <= CHUNK_THRESHOLD) {
+    // Small file — single base64 transfer (fast path). save_sermon_file stages
+    // and renames atomically inside Rust, so there is nothing here to finalize
+    // or abort: it either produced the whole file or it threw.
+    const dataB64 = arrayBufferToBase64(bytes);
+    const saved = await invoke('save_sermon_file', { filename, dataB64 });
+    return { path: saved?.path || '', size: Number(saved?.size ?? 0) };
+  }
 
-    // Large file — chunked write to avoid memory explosion
-    console.log(`[DL] Large file (${(totalSize / 1024 / 1024).toFixed(1)} MB), using chunked save...`);
-    const filePath = await invoke('create_sermon_file', { filename });
+  // Large file — chunked write to avoid memory explosion. The bytes accumulate
+  // in <file>.part and the sermon DOES NOT EXIST under its real name until
+  // finalize_sermon_file renames it. Every exit path below therefore either
+  // finalizes or aborts — there is no third way out.
+  console.log(`[DL] Large file (${(totalSize / 1024 / 1024).toFixed(1)} MB), using chunked save...`);
+  await invoke('create_sermon_file', { filename });
+  try {
     const uint8 = new Uint8Array(bytes);
     let offset = 0;
     let chunkNum = 0;
@@ -80,19 +127,30 @@ async function saveFileToDisk(filename, bytes) {
       const end = Math.min(offset + CHUNK_SIZE, totalSize);
       const chunk = uint8.subarray(offset, end);
       const chunkB64 = chunkToBase64(chunk);
-      await invoke('append_sermon_chunk', { filename, chunkB64 });
+      const staged = await invoke('append_sermon_chunk', { filename, chunkB64 });
       offset = end;
       chunkNum++;
+      // append_sermon_chunk reports the total bytes staged so far — cross-check
+      // it instead of assuming the write landed where we think it did.
+      if (Number(staged) !== offset) {
+        throw new Error(`Staged size mismatch after chunk ${chunkNum}/${totalChunks}: disk has ${staged} bytes, expected ${offset}`);
+      }
       if (chunkNum % 10 === 0 || chunkNum === totalChunks) {
         console.log(`[DL] Chunk ${chunkNum}/${totalChunks} written`);
       }
     }
 
-    console.log(`[DL] Chunked save complete: ${filePath}`);
-    return filePath;
+    // REQUIRED. Without this the .part is never renamed and the sermon never
+    // appears under its real name — i.e. every large download silently vanishes.
+    const saved = await invoke('finalize_sermon_file', { filename });
+    const size = Number(saved?.size ?? 0);
+    console.log(`[DL] Chunked save complete: ${saved?.path} (${size} bytes)`);
+    return { path: saved?.path || '', size };
   } catch (e) {
-    console.warn('[DL] Failed to save file to disk:', e.message);
-    return null;
+    // Never leave a .part behind: it wastes the space and would confuse a later
+    // finalize. Best-effort — the original error is what the caller needs.
+    try { await invoke('abort_sermon_file', { filename }); } catch { /* best effort */ }
+    throw e;
   }
 }
 
@@ -186,6 +244,15 @@ const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 410, 451]);
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// A cancellation is not a transient failure — it must never be retried or
+// backed off, only propagated straight out of the download.
+function cancelledError() {
+  const err = new Error('Cancelled');
+  err.cancelled = true;
+  err.fatalSource = true; // stops the per-source retry/fallback machinery dead
+  return err;
+}
+
 function hostOf(url) {
   try { return new URL(url).hostname; } catch { return 'source'; }
 }
@@ -198,15 +265,108 @@ function backoffDelay(attempt) {
 }
 
 // Honor Retry-After on 429/503 — seconds or HTTP-date form.
-function parseRetryAfter(response) {
-  let raw = null;
-  try { raw = response.headers.get('retry-after'); } catch { return 0; }
+// Takes the RAW header value so it can be used both for a fetch Response and
+// for the raw string the native streaming command hands back.
+function parseRetryAfterValue(raw) {
   if (!raw) return 0;
   const secs = Number(raw);
   if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, MAX_RETRY_AFTER_MS);
   const when = Date.parse(raw);
   if (!Number.isNaN(when)) return Math.max(0, Math.min(when - Date.now(), MAX_RETRY_AFTER_MS));
   return 0;
+}
+
+function parseRetryAfter(response) {
+  try { return parseRetryAfterValue(response.headers.get('retry-after')); } catch { return 0; }
+}
+
+// ── Batch persistence ──────────────────────────────────────────────────────
+//
+// A volunteer pulling the whole archive queues ~33,500 files / ~437 GB. That run
+// WILL be interrupted — a lid closes, the app quits, the machine reboots. Until
+// now the pending queue and the accumulated failure list lived only in memory,
+// so a restart meant working out by hand where you had got to. This keeps both.
+//
+// WHERE IT LIVES — settings.json (Rust save_settings/load_settings), NOT
+// localStorage. Measured: the full 33,528-id queue serialises to 637,033 bytes
+// as a JSON array of ids. WebView2/WebKitGTK enforce roughly a 5 MB per-origin
+// quota for the WHOLE origin, and localStorage here already carries
+// `si_download_state` (one record per downloaded sermon — megabytes on a seed
+// node). Adding another ~0.6 MB on top is exactly the kind of near-the-line
+// write that failed silently for the 22.7 MB master list (see catalog.js). The
+// Rust settings file is atomic, quota-free, and already the pattern the app uses
+// for anything that must not be lost — so it is what we use here. Reads and
+// writes go through a read-modify-write on the whole settings object (the same
+// shape heartbeat.js uses for node_id) and are serialised through a promise
+// chain so two checkpoints can never interleave and drop each other's keys.
+//
+// WHAT IT STORES — sermon IDS ONLY, never sermon objects. Sermon objects are
+// large and go stale (the master list merges torrent fields into them minutes
+// after launch). Everything is re-resolved against the live catalog on load.
+const BATCH_STATE_KEY = 'bulk_batch';
+const BATCH_STATE_VERSION = 1;
+// CADENCE — a write after every file would mean 33,500 rewrites of a 637 KB
+// file, and a write only at the end would lose everything to the crash we are
+// trying to survive. So: whichever of these comes first, plus a forced write on
+// start, on pause, on stop and at the end. Worst case a crash costs the user
+// 25 files (~20 minutes of re-checking, and re-checking is cheap because
+// already-downloaded files are skipped on resume, not re-fetched).
+const CHECKPOINT_EVERY_FILES = 25;
+const CHECKPOINT_EVERY_MS = 60_000;
+// Failure records are id + a trimmed message. Capped so a catastrophic run
+// (every source down) can't grow the settings file without bound.
+const MAX_PERSISTED_FAILURES = 2000;
+const MAX_PERSISTED_ERROR_CHARS = 200;
+
+let storeModule = null;
+let storeLoadAttempted = false;
+async function loadStore() {
+  if (storeLoadAttempted) return storeModule;
+  storeLoadAttempted = true;
+  try {
+    storeModule = await import('./tauriStore.js');
+  } catch (e) {
+    console.warn('[DL] Persistent store unavailable — the bulk queue will not survive a restart:', e?.message || e);
+    storeModule = null;
+  }
+  return storeModule;
+}
+
+// Serialises every read-modify-write of settings.json. Without this, two
+// checkpoints in flight at once would both read the old object and the second
+// save would erase whatever the first added (including node_id).
+let _settingsChain = Promise.resolve();
+let _settingsWriteWarned = false;
+
+/**
+ * Read settings.json, hand the parsed object to `mutate`, and write it back.
+ * Return `false` from `mutate` to read without writing.
+ * Never throws — a storage failure must not take a download run down with it,
+ * but it IS logged loudly once (silent write failures are how the master-list
+ * cache appeared to work for months).
+ */
+function _withSettings(mutate) {
+  const run = async () => {
+    const store = await loadStore();
+    if (!store) return null;
+    let settings = null;
+    try { settings = await store.loadSettings(); } catch { settings = null; }
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) settings = {};
+    const wants = mutate(settings);
+    if (wants === false) return settings;
+    try {
+      await store.saveSettings(settings);
+    } catch (e) {
+      if (!_settingsWriteWarned) {
+        _settingsWriteWarned = true;
+        console.warn(`[DL] Saving the bulk-download queue FAILED — it will not survive a restart: ${e?.message || e}`);
+      }
+    }
+    return settings;
+  };
+  const result = _settingsChain.then(run, run);
+  _settingsChain = result.then(() => {}, () => {});
+  return result;
 }
 
 export const DL_STATE = {
@@ -241,35 +401,170 @@ class DownloadManager {
     this.paused = false;
     this.totalDownloaded = 0;
     this.totalFiles = 0;
+    // Waiters parked on a concurrency slot (event-driven — no busy-polling).
+    this._slotWaiters = [];
+    // Storage-cap admission control: a serialising chain plus the bytes already
+    // admitted but not yet on disk. See _reserveStorage().
+    this._capChain = Promise.resolve();
+    this._reservedBytes = 0;
+    // Native streaming downloads: filename → queue entry, so the single
+    // `sermon-download-progress` listener can route each event to its bar.
+    this._streamEntries = new Map();
+    this._streamListenerPromise = null;
+    // Set while a batch is running: forces an immediate checkpoint of the saved
+    // queue (used when the user pauses or stops). Null when no batch is running.
+    this._checkpointNow = null;
   }
 
   setMode(mode) {
     this.mode = mode;
   }
 
+  // ── Concurrency slots ──────────────────────────────────────────────────
+  // Event-driven rather than a 500 ms busy-poll: every release/resume/cancel
+  // wakes the parked waiters, which re-check the condition and either take a
+  // slot or park again.
+
+  _wakeSlotWaiters() {
+    const waiters = this._slotWaiters;
+    this._slotWaiters = [];
+    for (const wake of waiters) wake();
+  }
+
+  async _acquireSlot(entry) {
+    while (this.activeDownloads >= this.maxConcurrent || this.paused) {
+      if (entry?.cancelled) throw cancelledError();
+      await new Promise((resolve) => this._slotWaiters.push(resolve));
+    }
+    if (entry?.cancelled) throw cancelledError();
+    this.activeDownloads++;
+  }
+
+  _releaseSlot() {
+    if (this.activeDownloads > 0) this.activeDownloads--;
+    this._wakeSlotWaiters();
+  }
+
+  /**
+   * Storage-cap admission control (opt-in; 0 = unlimited).
+   *
+   * Serialised through a promise chain AND holding a reservation for bytes that
+   * are in flight. Plain read-then-act let two concurrent downloads observe the
+   * same `used` figure and both pass the same check, so the cap could be blown
+   * by up to maxConcurrent files. Reservations are released once the bytes are
+   * on disk (where get_storage_usage can see them) or the download fails.
+   *
+   * Fails OPEN when usage can't be measured (e.g. running in a plain browser) —
+   * same as before.
+   */
+  async _reserveStorage(incoming) {
+    const admit = async () => {
+      if (this.storageLimitBytes <= 0) return 0;
+      let usedBytes = 0;
+      try {
+        const invoke = await loadTauri();
+        if (invoke) {
+          const usage = await invoke('get_storage_usage');
+          usedBytes = usage?.bytes || 0;
+        }
+      } catch { usedBytes = 0; }
+      const committed = usedBytes + this._reservedBytes;
+      if (committed + incoming > this.storageLimitBytes) {
+        const capGb = (this.storageLimitBytes / (1024 ** 3)).toFixed(0);
+        const usedGb = (committed / (1024 ** 3)).toFixed(1);
+        throw new Error(`Storage limit reached — ${usedGb} GB of ${capGb} GB used. Raise the limit in Settings or free up space, then try again.`);
+      }
+      this._reservedBytes += incoming;
+      return incoming;
+    };
+    // Run after whatever is already queued, whether it succeeded or not, and
+    // keep the chain alive either way.
+    const result = this._capChain.then(admit, admit);
+    this._capChain = result.then(() => {}, () => {});
+    return result;
+  }
+
+  _releaseReservation(bytes) {
+    if (bytes > 0) this._reservedBytes = Math.max(0, this._reservedBytes - bytes);
+  }
+
   /**
    * Re-seed the sermons the user actually has on disk. Called once at startup
-   * (the torrent session no longer persists its own list — see torrent_node.rs).
-   * Uses seedDownloaded, which builds the torrent from the EXISTING file
-   * (deterministic infohash = same canonical swarm) and never re-downloads.
-   * `sermons` should be the downloaded sermons (getDownloaded()).
+   * (the torrent session no longer persists its own list — see torrent_node.rs),
+   * so this runs on EVERY launch. `sermons` should be getDownloaded().
+   *
+   * TRUST RULE — the same one trySeedTorrent uses for a fresh download: prefer
+   * the CANONICAL torrent from the signed master list. seedDownloaded() hashes
+   * the local bytes and derives an infohash FROM THEM, so one wrong byte gives a
+   * different infohash: the node joins a swarm of one, silently stops
+   * contributing to the real swarm, and reports that wrong infohash to the
+   * dashboard. addTorrent(torrentUrl || magnet, filename) instead hands librqbit
+   * the official fingerprint and points it at this file's own shard folder
+   * (overwrite:true) so it hash-checks and resumes the existing bytes rather
+   * than re-downloading them — and because the canonical magnets carry `&ws=`
+   * CDN webseeds, a damaged file gets REPAIRED instead of merely rejected.
+   * It also does the hashing once instead of twice (self-seeding hashes to build
+   * the .torrent, then hashes again to verify on add).
+   *
+   * seedDownloaded() remains the fallback for sermons with no canonical entry.
+   *
+   * Non-blocking by design: callers fire and forget, and we yield between files
+   * so a full seed node's library never stalls app launch.
    */
   async reseedExisting(sermons) {
     if (!Array.isArray(sermons) || sermons.length === 0) return;
     const mod = await loadTorrent();
     if (!mod) return;
     try { await mod.startSession(); } catch { return; }
+
+    // The master list lands a few seconds after launch. Wait briefly for it —
+    // self-seeding the entire library because we were three seconds early is
+    // exactly the failure this is meant to prevent. Bounded at ~20s.
+    let byId = null;
+    try {
+      const cat = await import('./catalog.js');
+      for (let i = 0; i < 10 && !cat.hasMasterList(); i++) await sleep(2000);
+      // Snapshot ONCE into a lookup map: getCatalog() rebuilds the whole 33k
+      // array on every call, and calling it per sermon would be quadratic.
+      byId = new Map(cat.getCatalog().map((c) => [c.id, c]));
+    } catch { /* catalog unavailable — fall back to what we were handed */ }
+
+    let canonical = 0, local = 0, failed = 0;
     for (const s of sermons) {
-      const ext = s.type === 'video' ? 'mp4' : 'mp3';
-      const filename = `${s.id}.${ext}`;
+      // Re-resolve against the LIVE catalog: the objects we were handed were
+      // snapshotted before the master list merged its torrent fields in.
+      const fresh = (byId && byId.get(s?.id)) || s;
+      const ext = fresh.type === 'video' ? 'mp4' : 'mp3';
+      const filename = `${fresh.id}.${ext}`;
+      const source = fresh.torrentUrl || (fresh.magnet?.startsWith('magnet:') ? fresh.magnet : null);
       try {
-        await mod.seedDownloaded(filename);
+        if (source) {
+          await mod.addTorrent(source, filename);
+          canonical++;
+        } else {
+          await mod.seedDownloaded(filename);
+          local++;
+        }
       } catch (e) {
-        // File may have just been removed, or hashing failed — skip quietly.
-        console.warn('[DL] reseed skipped', filename, e?.message || e);
+        if (source) {
+          // Canonical .torrent unreachable (CDN hiccup, or never published for
+          // this sermon) — fall back so the file is at least shareable.
+          try {
+            await mod.seedDownloaded(filename);
+            local++;
+          } catch (e2) {
+            failed++;
+            console.warn('[DL] reseed skipped', filename, e2?.message || e2);
+          }
+        } else {
+          // File may have just been removed, or hashing failed — skip quietly.
+          failed++;
+          console.warn('[DL] reseed skipped', filename, e?.message || e);
+        }
       }
+      await sleep(0); // yield — this loop can be tens of thousands long
     }
-    console.log(`[DL] Re-seeded ${sermons.length} existing download(s)`);
+    console.log(`[DL] Re-seeded ${canonical + local} existing download(s) — ${canonical} canonical, ${local} self-hashed, ${failed} failed`);
   }
 
   setBandwidthLimit(mbps) {
@@ -292,6 +587,215 @@ class DownloadManager {
     }
   }
 
+  // ── Native streaming download ──────────────────────────────────────────
+  // The bytes go socket → `<file>.part` → fsync → rename entirely inside Rust
+  // (see stream_sermon_file in lib.rs), so the webview never holds the file.
+  // Everything the old JS path provided is preserved, just split differently:
+  // progress arrives as events, throttling and Range/resume happen in Rust,
+  // and retry/backoff/source-alternation stay HERE — that logic understands
+  // Retry-After, jitter and dead sources and is not worth re-deriving in Rust,
+  // so the command reports what happened and these loops decide what to do.
+
+  /**
+   * Register the one-and-only progress listener (idempotent).
+   * Returns false when there is no native event API, which is the signal to
+   * use the buffered path instead of showing a frozen progress bar.
+   */
+  async _ensureProgressListener() {
+    if (this._streamListenerPromise) return this._streamListenerPromise;
+    this._streamListenerPromise = (async () => {
+      const listen = await loadTauriListen();
+      if (!listen) return false;
+      try {
+        await listen(STREAM_PROGRESS_EVENT, (ev) => {
+          const p = ev?.payload || {};
+          const entry = this._streamEntries.get(p.filename);
+          if (!entry) return;
+          const received = Number(p.received || 0);
+          const total = Number(p.total || 0);
+          if (total > 0) entry.totalBytes = total;
+          entry.bytesDownloaded = received;
+          const estimatedTotal = total || entry.totalBytes || entry.sermon?.sizeBytes || 0;
+          entry.progress = estimatedTotal > 0
+            ? Math.min((received / estimatedTotal) * 100, 99)
+            : -1; // unknown total — same "indeterminate" signal as before
+          // Rust already emits ~10/sec; this is a second guard so a future
+          // change there can't flood React state updates.
+          const now = Date.now();
+          if (now - (entry._lastStreamNotify || 0) >= 100) {
+            entry._lastStreamNotify = now;
+            this._notify(entry.sermon.id, entry);
+          }
+        });
+        return true;
+      } catch (e) {
+        console.warn('[DL] Progress listener unavailable:', e?.message || e);
+        return false;
+      }
+    })();
+    return this._streamListenerPromise;
+  }
+
+  /**
+   * One streaming attempt. Resolves with `{ path, size, received }` where
+   * `size` is the REAL on-disk length from fs::metadata after the rename.
+   * Rejects with the same error shape the fetch path produces
+   * (`status` / `retryAfterMs` / `fatalSource` / `resumable`) so the retry and
+   * source-fallback loops below are identical in behaviour.
+   */
+  async _streamOnce(url, entry, filename, resume) {
+    const invoke = await loadTauri();
+    if (!invoke) throw new Error('Native backend unavailable');
+    if (entry.cancelled) throw cancelledError();
+
+    this._streamEntries.set(filename, entry);
+    let outcome;
+    try {
+      outcome = await invoke('stream_sermon_file', {
+        url,
+        filename,
+        resume,
+        limitBps: Math.max(0, Math.round(this.bandwidthLimit || 0)),
+      });
+    } catch (e) {
+      const msg = e?.message || String(e);
+      // A frontend running against an older native binary: the command simply
+      // isn't there. Remember it and let download() use the buffered path.
+      // Matches Tauri's "Command stream_sermon_file not found". Deliberately
+      // narrow: "URL not allowed" (the host allowlist) must NOT disable
+      // streaming — it is a security rejection, not a missing feature.
+      if (/(not\s+found|unknown)/i.test(msg) && /command|stream_sermon_file/i.test(msg)) {
+        streamingSupported = false;
+        const unsupported = new Error(`Native streaming unavailable: ${msg}`);
+        unsupported.streamUnsupported = true;
+        unsupported.fatalSource = true;
+        throw unsupported;
+      }
+      // The command only returns Err for caller error (disallowed URL,
+      // registry failure) — retrying cannot help.
+      const err = new Error(msg);
+      err.fatalSource = true;
+      throw err;
+    } finally {
+      this._streamEntries.delete(filename);
+    }
+
+    const received = Number(outcome?.received ?? 0);
+    if (Number(outcome?.total) > 0) entry.totalBytes = Number(outcome.total);
+    entry.bytesDownloaded = received;
+
+    if (outcome?.ok) {
+      entry.progress = 99; // hits 100 when COMPLETE is set, as before
+      this._notify(entry.sermon.id, entry);
+      return { path: outcome.path || '', size: Number(outcome.size ?? 0), received };
+    }
+
+    if (outcome?.cancelled || entry.cancelled) throw cancelledError();
+
+    const err = new Error(`${outcome?.error || 'Download failed'} from ${hostOf(url)}`);
+    err.status = Number(outcome?.status ?? 0);
+    err.retryAfterMs = parseRetryAfterValue(outcome?.retryAfter);
+    err.fatalSource = !!outcome?.fatalSource;
+    // Only claim resumability when there are actually staged bytes to resume.
+    err.resumable = !!outcome?.resumable && received > 0;
+    err.received = received;
+    err.retryable = !err.fatalSource;
+    throw err;
+  }
+
+  /**
+   * Streaming equivalent of _fetchWithRetry: same attempt count, same jittered
+   * backoff, same Retry-After handling, same non-retryable statuses. Resume is
+   * expressed as a flag to the native side — the partially received bytes live
+   * in `<file>.part` on disk instead of in a JS array.
+   */
+  async _streamWithRetry(url, entry, filename, maxAttempts = MAX_ATTEMPTS_PER_SOURCE) {
+    let lastError;
+    let resume = false; // first attempt for this source always starts clean
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (entry.cancelled) throw cancelledError();
+      try {
+        return await this._streamOnce(url, entry, filename, resume);
+      } catch (e) {
+        lastError = e;
+        if (entry.cancelled) throw cancelledError();
+        if (e?.streamUnsupported) throw e;   // fall back to the buffered path
+        if (e?.fatalSource) throw e;         // 404 etc — don't hammer it
+        if (attempt >= maxAttempts - 1) throw e;
+
+        const wait = e?.retryAfterMs > 0
+          ? Math.min(e.retryAfterMs, MAX_BACKOFF_MS)
+          : backoffDelay(attempt);
+        resume = !!e?.resumable;
+        console.warn(
+          `[DL] ${hostOf(url)} attempt ${attempt + 1}/${maxAttempts} failed (${e.message})` +
+          ` — retrying in ${Math.round(wait / 100) / 10}s${resume ? ` (resume @ ${e.received} bytes)` : ''}`
+        );
+        await sleep(wait);
+        if (!resume) {
+          entry.bytesDownloaded = 0;
+          entry.progress = 0;
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Streaming equivalent of _fetchWithArchiveFallback — same two passes over
+   * Archive.org → CDN, same dropping of sources that answer 404/410.
+   * Each source starts its own `.part` from scratch: bytes from one source are
+   * never appended to bytes from another (the fetch path had the same property,
+   * since `partial` was created per source per pass).
+   */
+  async _streamWithArchiveFallback(sermon, entry, filename) {
+    const sources = [];
+    if (sermon.archiveUrl) sources.push({ name: 'archive.org', url: sermon.archiveUrl });
+    if (sermon.cdnUrl) sources.push({ name: 'cdn', url: sermon.cdnUrl });
+    if (sources.length === 0) throw new Error('No available source for download');
+
+    const dead = new Set();
+    let lastError = null;
+
+    for (let pass = 0; pass < SOURCE_PASSES; pass++) {
+      const live = sources.filter(s => !dead.has(s.name));
+      if (live.length === 0) break;
+
+      if (pass > 0) {
+        const wait = backoffDelay(pass);
+        console.warn(`[DL] All sources failed for "${sermon.title}" — pass ${pass + 1}/${SOURCE_PASSES} in ${Math.round(wait / 100) / 10}s`);
+        await sleep(wait);
+        entry.bytesDownloaded = 0;
+        entry.progress = 0;
+      }
+
+      for (const src of live) {
+        if (entry.cancelled) throw cancelledError();
+        try {
+          const saved = await this._streamWithRetry(src.url, entry, filename);
+          entry.source = src.name;
+          entry.sourceUrl = src.url;
+          if (pass > 0 || src !== live[0]) {
+            console.log(`[DL] Recovered "${sermon.title}" via ${src.name} (pass ${pass + 1})`);
+          }
+          return saved;
+        } catch (e) {
+          lastError = e;
+          if (e?.streamUnsupported) throw e;
+          if (e?.cancelled || entry.cancelled) throw cancelledError();
+          if (e?.fatalSource) {
+            dead.add(src.name);
+            console.warn(`[DL] ${src.name} has no file for "${sermon.title}" (${e.message}) — dropping source`);
+          } else {
+            console.warn(`[DL] ${src.name} failed for "${sermon.title}": ${e.message}`);
+          }
+        }
+      }
+    }
+
+    throw new Error(lastError ? `All sources failed — ${lastError.message}` : 'No available source for download');
+  }
+
   /**
    * Download a sermon using the priority chain
    */
@@ -303,21 +807,14 @@ class DownloadManager {
     // ── Storage cap enforcement (opt-in; 0 = unlimited) ──────────────────
     // Refuse a NEW download when the cache is already at/over the user's cap,
     // or when this file would push it over. Files already on disk are never
-    // touched. `used` is the real on-disk size measured by the Rust side; if we
-    // can't measure it (e.g. running in a plain browser) we fail open.
+    // touched. The check is atomic (see _reserveStorage) so two concurrent
+    // downloads can't both squeeze past the same reading.
+    const incoming = sermon.sizeBytes || sermon.totalBytes || 0;
+    let reserved = 0;
     if (this.storageLimitBytes > 0) {
-      const incoming = sermon.sizeBytes || sermon.totalBytes || 0;
-      let usedBytes = 0;
       try {
-        const invoke = await loadTauri();
-        if (invoke) {
-          const usage = await invoke('get_storage_usage');
-          usedBytes = usage?.bytes || 0;
-        }
-      } catch { usedBytes = 0; }
-      if (usedBytes + incoming > this.storageLimitBytes) {
-        const capGb = (this.storageLimitBytes / (1024 ** 3)).toFixed(0);
-        const usedGb = (usedBytes / (1024 ** 3)).toFixed(1);
+        reserved = (await this._reserveStorage(incoming)) || 0;
+      } catch (capErr) {
         const blocked = {
           sermon,
           state: DL_STATE.ERROR,
@@ -326,14 +823,15 @@ class DownloadManager {
           totalBytes: incoming,
           magnet: null,
           infoHash: null,
-          error: `Storage limit reached — ${usedGb} GB of ${capGb} GB used. Raise the limit in Settings or free up space, then try again.`,
+          diskSize: 0,
+          error: capErr.message,
           startTime: null,
           source: null,
           sourceUrl: null,
         };
         this.queue.set(sermon.id, blocked);
         this._notify(sermon.id, blocked);
-        throw new Error(blocked.error);
+        throw capErr;
       }
     }
 
@@ -345,70 +843,141 @@ class DownloadManager {
       totalBytes: sermon.sizeBytes || 0,
       magnet: null,
       infoHash: null,
+      diskSize: 0, // real on-disk size, filled in once the file is written
       error: null,
       startTime: null,
       source: null,
       sourceUrl: null, // Track the actual URL used for bridge registration
+      cancelled: false,
+      // Aborting this aborts the in-flight fetch — see cancel().
+      controller: typeof AbortController !== 'undefined' ? new AbortController() : null,
     };
     this.queue.set(sermon.id, entry);
     this._notify(sermon.id, entry);
 
-    // Wait for slot
-    while (this.activeDownloads >= this.maxConcurrent || this.paused) {
-      await new Promise(r => setTimeout(r, 500));
-      if (this.paused) continue;
+    // Wait for a concurrency slot (event-driven; also the point at which a
+    // still-queued download notices it has been cancelled).
+    try {
+      await this._acquireSlot(entry);
+    } catch (slotErr) {
+      entry.state = DL_STATE.ERROR;
+      entry.error = slotErr.message;
+      this._notify(sermon.id, entry);
+      this._releaseReservation(reserved);
+      throw slotErr;
     }
 
-    this.activeDownloads++;
     entry.state = DL_STATE.DOWNLOADING;
     entry.startTime = Date.now();
     this._notify(sermon.id, entry);
 
-    let bytes;
+    let receivedBytes = 0;
+    let diskSize = 0;
+    // Set only if we renamed something onto the real filename and THEN found it
+    // untrustworthy — that file has to go, unlike an untouched earlier copy.
+    let wroteBadFile = false;
     const ext = sermon.format || (sermon.type === 'video' ? 'mp4' : 'mp3');
     const filename = `${sermon.id}.${ext}`;
+    entry.filename = filename; // cancel() needs it to stop the native stream
 
     try {
       // ── PHASE 1: Download (holds concurrency slot) ──────────────────
       // All modes currently download over HTTP (Archive.org → CDN). The peer
       // swarm is fed by seeding completed files; swarm-first fetching will
       // become possible once catalog entries carry magnet links.
-      bytes = await this._fetchWithArchiveFallback(sermon, entry);
+      //
+      // Preferred path: Rust streams the body straight into `<file>.part` and
+      // renames it, so the webview never holds the file (a 2 GB video used to
+      // mean ~4 GB of JS heap plus a base64 copy over IPC). The buffered path
+      // below is kept as the fallback for a plain browser and for a frontend
+      // running against a native binary without the streaming command.
+      const invoke = await loadTauri();
+      const canStream = !!invoke && streamingSupported && (await this._ensureProgressListener());
 
-      // Save file to disk IMMEDIATELY (so it appears in My Downloads right away)
-      const fileSizeMB = (bytes.byteLength / (1024 * 1024)).toFixed(1);
-      console.log(`[DL] Saving ${filename} (${fileSizeMB} MB) to disk...`);
-
-      try {
-        const savedPath = await saveFileToDisk(filename, bytes);
-        if (savedPath) {
-          console.log(`[DL] Saved to disk: ${savedPath}`);
-        } else {
-          console.warn(`[DL] saveFileToDisk returned null for ${filename}`);
+      let streamed = null;
+      if (canStream) {
+        try {
+          streamed = await this._streamWithArchiveFallback(sermon, entry, filename);
+        } catch (streamErr) {
+          if (!streamErr?.streamUnsupported) throw streamErr;
+          console.warn('[DL] Native streaming unavailable — falling back to buffered download');
+          streamed = null;
         }
-      } catch (saveErr) {
-        console.error(`[DL] Failed to save ${filename} to disk:`, saveErr.message);
       }
+
+      if (streamed) {
+        receivedBytes = streamed.received;
+        diskSize = streamed.size;
+        console.log(`[DL] Streamed to disk: ${streamed.path} (${diskSize} bytes)`);
+        // The only size worth recording is the one the filesystem reports. If it
+        // disagrees with what we received, the write is not trustworthy — and
+        // the file HAS been renamed into place, so it must be deleted.
+        if (diskSize !== receivedBytes) {
+          wroteBadFile = true;
+          throw new Error(`Disk write incomplete for ${filename}: ${diskSize} of ${receivedBytes} bytes on disk`);
+        }
+      } else {
+        const bytes = await this._fetchWithArchiveFallback(sermon, entry);
+        receivedBytes = bytes.byteLength;
+
+        // Save file to disk IMMEDIATELY (so it appears in My Downloads right away)
+        const fileSizeMB = (receivedBytes / (1024 * 1024)).toFixed(1);
+        console.log(`[DL] Saving ${filename} (${fileSizeMB} MB) to disk...`);
+
+        // A FAILED WRITE IS A FAILED DOWNLOAD. This used to be caught and logged
+        // while the flow carried on to COMPLETE, so a full disk, an unplugged
+        // external drive or a permissions error produced a "successful" download
+        // of nothing — and with it a false library, a false coverage %, false
+        // Seed Node progress and a heartbeat reporting files that don't exist.
+        const saved = await saveFileToDisk(filename, bytes);
+        if (saved) {
+          diskSize = saved.size;
+          console.log(`[DL] Saved to disk: ${saved.path} (${diskSize} bytes)`);
+          if (diskSize !== receivedBytes) {
+            wroteBadFile = true;
+            throw new Error(`Disk write incomplete for ${filename}: ${diskSize} of ${receivedBytes} bytes on disk`);
+          }
+        } else {
+          // No native backend (dev in a browser) — nothing was written and nothing
+          // claims to have been. Fall back to the received count for display only.
+          diskSize = receivedBytes;
+        }
+      }
+      entry.diskSize = diskSize;
 
     } catch (err) {
       entry.state = DL_STATE.ERROR;
-      entry.error = err.message;
+      entry.error = entry.cancelled ? 'Cancelled' : err.message;
       this._notify(sermon.id, entry);
-      this.activeDownloads--;
-      console.error(`[DL] Failed: "${sermon.title}":`, err);
-      // Best-effort: remove any partial file left on disk so a broken download
-      // can't linger, be mistaken for complete, or get seeded to the swarm
+      this._releaseSlot();
+      this._releaseReservation(reserved);
+      if (entry.cancelled) {
+        console.warn(`[DL] Cancelled: "${sermon.title}"`);
+      } else {
+        console.error(`[DL] Failed: "${sermon.title}":`, err);
+      }
+      // Best-effort cleanup. abort_sermon_file removes ONLY the `.part` staging
+      // file, so a download that fails while an earlier, complete copy of the
+      // same sermon sits on disk never destroys that copy (writes are atomic —
+      // the real filename is only ever touched by a successful finalize).
+      // The one case that does need a delete is a file we renamed into place and
+      // then found untrustworthy.
       try {
         const invoke = await loadTauri();
         if (invoke) {
-          await invoke('delete_sermon_file', { filename }).catch(() => {});
+          await invoke('abort_sermon_file', { filename }).catch(() => {});
+          if (wroteBadFile) await invoke('delete_sermon_file', { filename }).catch(() => {});
         }
       } catch { /* best effort — never mask the original error */ }
       throw err;
     }
 
     // ── Release download slot — other queued downloads can proceed now ──
-    this.activeDownloads--;
+    this._releaseSlot();
+    // The bytes are on disk now, so they show up in get_storage_usage; the
+    // in-flight reservation that stood in for them can go.
+    this._releaseReservation(reserved);
+    reserved = 0;
 
     // NOTE: We intentionally do NOT auto-create a human-readable Library copy
     // here anymore. Hardlinks only stay "free" on the SAME filesystem; once the
@@ -439,12 +1008,13 @@ class DownloadManager {
     entry.state = DL_STATE.COMPLETE;
     if (!entry.magnet) entry.magnet = `local-${sermon.id}`;
     entry.progress = 100;
-    entry.bytesDownloaded = bytes.byteLength;
-    this.totalDownloaded += bytes.byteLength;
+    entry.bytesDownloaded = receivedBytes;
+    entry.diskSize = diskSize; // what's actually on disk — the number to record
+    this.totalDownloaded += receivedBytes;
     this.totalFiles++;
     this._notify(sermon.id, entry);
 
-    const doneSizeMB = (bytes.byteLength / (1024 * 1024)).toFixed(1);
+    const doneSizeMB = (receivedBytes / (1024 * 1024)).toFixed(1);
     console.log(`[DL] Complete: "${sermon.title}" via ${entry.source} (${doneSizeMB} MB)`);
     return entry.magnet;
   }
@@ -464,10 +1034,12 @@ class DownloadManager {
     let lastError;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (entry.cancelled) throw cancelledError();
       try {
         return await this._fetchFromUrl(url, entry, partial);
       } catch (e) {
         lastError = e;
+        if (entry.cancelled) throw cancelledError();     // user pulled the plug
         if (e && e.fatalSource) throw e;                 // 404 etc — don't hammer it
         if (attempt >= maxAttempts - 1) throw e;         // out of attempts here
 
@@ -521,6 +1093,7 @@ class DownloadManager {
       }
 
       for (const src of live) {
+        if (entry.cancelled) throw cancelledError();
         try {
           const bytes = await this._fetchWithRetry(src.url, entry);
           entry.source = src.name;
@@ -531,6 +1104,7 @@ class DownloadManager {
           return bytes;
         } catch (e) {
           lastError = e;
+          if (e?.cancelled || entry.cancelled) throw cancelledError();
           if (e?.fatalSource) {
             dead.add(src.name);
             console.warn(`[DL] ${src.name} has no file for "${sermon.title}" (${e.message}) — dropping source`);
@@ -554,7 +1128,20 @@ class DownloadManager {
     // 5 minute timeout for the initial connection (the streaming read has its own implicit timeout)
     const controller = new AbortController();
     const connectionTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+    // Link the entry-level cancel controller so cancel() actually tears down the
+    // socket, instead of leaving the transfer running in the background.
+    const onEntryAbort = () => controller.abort();
+    entry.controller?.signal.addEventListener('abort', onEntryAbort);
+    const unlinkAbort = () => entry.controller?.signal.removeEventListener('abort', onEntryAbort);
+    try {
+      return await this._fetchFromUrlInner(url, entry, partial, host, controller, connectionTimeout);
+    } finally {
+      clearTimeout(connectionTimeout);
+      unlinkAbort();
+    }
+  }
 
+  async _fetchFromUrlInner(url, entry, partial, host, controller, connectionTimeout) {
     const resumeFrom = partial && partial.acceptRanges && partial.received > 0 ? partial.received : 0;
     const headers = resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : undefined;
 
@@ -562,6 +1149,7 @@ class DownloadManager {
     try {
       response = await fetch(url, { signal: controller.signal, headers });
     } catch (netErr) {
+      if (entry.cancelled) throw cancelledError();
       // Connection reset / DNS / abort — always worth another try.
       const err = new Error(`Network error from ${host}: ${netErr?.message || netErr}`);
       err.retryable = true;
@@ -611,8 +1199,16 @@ class DownloadManager {
     let received = baseReceived;
     let lastNotify = 0;
 
+    // Bandwidth-throttle baseline. It has to be per-ATTEMPT: measuring against
+    // entry.startTime (set once when the download began, never reset across
+    // retries) meant that after any backoff `elapsed` was already far larger
+    // than the target time, so the limiter waved through an unthrottled burst.
+    const throttleStart = Date.now();
+    const throttleBase = received;
+
     try {
       while (true) {
+        if (entry.cancelled) throw cancelledError();
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -634,16 +1230,17 @@ class DownloadManager {
           this._notify(entry.sermon.id, entry);
         }
 
-        // Bandwidth throttling
+        // Bandwidth throttling (measured from this attempt's own baseline)
         if (this.bandwidthLimit > 0) {
-          const elapsed = (Date.now() - entry.startTime) / 1000;
-          const targetTime = received / this.bandwidthLimit;
+          const elapsed = (Date.now() - throttleStart) / 1000;
+          const targetTime = (received - throttleBase) / this.bandwidthLimit;
           if (elapsed < targetTime) {
             await new Promise(r => setTimeout(r, (targetTime - elapsed) * 1000));
           }
         }
       }
     } catch (streamErr) {
+      if (streamErr?.cancelled || entry.cancelled) throw cancelledError();
       // Mid-stream drop. Whatever we already buffered stays in `partial`, so
       // the next attempt resumes from here if the server supports Range.
       const err = new Error(`Connection dropped at ${received} bytes from ${host}: ${streamErr?.message || streamErr}`);
@@ -692,6 +1289,46 @@ class DownloadManager {
     const failures = new Map(); // sermonId → { sermon, error }
     let pending = [...sermons];
 
+    // ── Crash-safe queue (see the BATCH_STATE_KEY notes above) ────────────
+    // On by default: a queue that only persists when the caller remembers to
+    // ask for it is a queue that is lost the first time someone adds a caller.
+    const persist = options.persist !== false;
+    const label = typeof options.label === 'string' ? options.label : '';
+    // IDS ONLY — re-resolved against the live catalog on resume.
+    const ids = sermons.map((s) => s?.id).filter((id) => typeof id === 'string' && id);
+    // How far into `ids` the FIRST pass has got. Later passes only ever re-run
+    // the failed set, which is persisted separately, so the cursor stays put.
+    let cursor = 0;
+    let lastCheckpoint = 0;
+    let sinceCheckpoint = 0;
+
+    const snapshot = () => ({
+      v: BATCH_STATE_VERSION,
+      label,
+      savedAt: Date.now(),
+      ids,
+      cursor,
+      failures: [...failures.values()]
+        .slice(0, MAX_PERSISTED_FAILURES)
+        .map((f) => ({ id: f.sermon?.id, error: String(f.error || '').slice(0, MAX_PERSISTED_ERROR_CHARS) }))
+        .filter((f) => f.id),
+    });
+
+    // Fire-and-forget: _writeBatchState never throws and the writes are
+    // serialised, so a slow disk delays the save, never the download.
+    const checkpoint = (force = false) => {
+      if (!persist) return Promise.resolve();
+      const now = Date.now();
+      if (!force && sinceCheckpoint < CHECKPOINT_EVERY_FILES && now - lastCheckpoint < CHECKPOINT_EVERY_MS) {
+        return Promise.resolve();
+      }
+      sinceCheckpoint = 0;
+      lastCheckpoint = now;
+      return this._writeBatchState(snapshot());
+    };
+    this._checkpointNow = () => checkpoint(true);
+    if (persist) await checkpoint(true);
+
     const emit = (pass, retrying) => {
       if (!onBatchProgress) return;
       onBatchProgress({
@@ -721,6 +1358,9 @@ class DownloadManager {
       for (const sermon of pending) {
         if (shouldStop()) break;
         if (this.paused) {
+          // Pausing is the most likely moment for the app to be quit, so make
+          // sure the saved queue is current before we sit here waiting.
+          await checkpoint(true);
           await new Promise(r => {
             const check = setInterval(() => {
               if (!this.paused || shouldStop()) { clearInterval(check); r(); }
@@ -737,12 +1377,33 @@ class DownloadManager {
           failures.set(sermon.id, { sermon, error: e?.message || String(e) });
         }
 
+        // Attempted, for better or worse — a failure is remembered in
+        // `failures`, so the cursor may move past it either way.
+        if (pass === 0) cursor++;
+        sinceCheckpoint++;
+        checkpoint();
+
         emit(pass, pass > 0);
       }
       pending = roundFailures;
     }
 
     this.lastBatchFailures = [...failures.values()];
+
+    // ── Final save ────────────────────────────────────────────────────────
+    // Clear the saved queue ONLY when there is genuinely nothing left: the run
+    // wasn't stopped, every id was attempted, and nothing is still failing.
+    // Anything else is kept so the user can resume or retry after a restart.
+    this._checkpointNow = null;
+    if (persist) {
+      const stopped = shouldStop();
+      if (!stopped && cursor >= ids.length && failures.size === 0) {
+        await this.clearSavedBatch();
+      } else {
+        await this._writeBatchState(snapshot());
+      }
+    }
+
     if (failures.size > 0) {
       console.warn(`[DL] Batch finished: ${completed}/${total} complete, ${failures.size} failed after ${retryPasses + 1} pass(es)`);
     } else {
@@ -765,18 +1426,178 @@ class DownloadManager {
     return this.downloadBatch(sermons, onBatchProgress, options);
   }
 
-  pause() { this.paused = true; }
-  resume() { this.paused = false; }
+  // ── Saved batch queue ──────────────────────────────────────────────────
 
-  cancel(sermonId) {
-    if (this.queue.has(sermonId)) {
-      const entry = this.queue.get(sermonId);
-      if (entry.state === DL_STATE.QUEUED || entry.state === DL_STATE.DOWNLOADING) {
-        entry.state = DL_STATE.ERROR;
-        entry.error = 'Cancelled';
-        this._notify(sermonId, entry);
+  /** Write the batch record to settings.json. Never throws. */
+  async _writeBatchState(record) {
+    try {
+      await _withSettings((s) => { s[BATCH_STATE_KEY] = record; });
+    } catch (e) {
+      console.warn('[DL] Could not save the bulk-download queue:', e?.message || e);
+    }
+  }
+
+  /** Read the raw batch record back, or null if there isn't a usable one. */
+  async _readBatchState() {
+    let rec = null;
+    try {
+      await _withSettings((s) => { rec = s[BATCH_STATE_KEY]; return false; });
+    } catch (e) {
+      console.warn('[DL] Could not read the saved bulk-download queue:', e?.message || e);
+      return null;
+    }
+    if (!rec || typeof rec !== 'object' || !Array.isArray(rec.ids)) return null;
+    return {
+      label: typeof rec.label === 'string' ? rec.label : '',
+      savedAt: Number(rec.savedAt) || 0,
+      ids: rec.ids.filter((id) => typeof id === 'string' && id),
+      cursor: Math.max(0, Number(rec.cursor) || 0),
+      failures: Array.isArray(rec.failures)
+        ? rec.failures.filter((f) => f && typeof f.id === 'string' && f.id)
+        : [],
+    };
+  }
+
+  /** Forget the saved queue entirely (the user chose to start fresh). */
+  async clearSavedBatch() {
+    try {
+      await _withSettings((s) => {
+        if (!(BATCH_STATE_KEY in s)) return false;
+        delete s[BATCH_STATE_KEY];
+      });
+    } catch (e) {
+      console.warn('[DL] Could not clear the saved bulk-download queue:', e?.message || e);
+    }
+  }
+
+  /** Force the running batch to save its place right now (pause/stop buttons). */
+  async saveBatchProgressNow() {
+    const fn = this._checkpointNow;
+    if (typeof fn !== 'function') return;
+    try { await fn(); } catch { /* never blocks the UI */ }
+  }
+
+  /**
+   * Resolve the saved queue against the CURRENT catalog and report what is
+   * actually left to do. Nothing starts here — this only describes the work, so
+   * the page can offer it rather than silently resuming 437 GB.
+   *
+   * Between quitting and resuming, the world moves: the catalog can gain or lose
+   * sermons, and files can appear or disappear by other means. So:
+   *   · ids that are no longer in the catalog are DROPPED (counted as `gone`)
+   *   · sermons already complete on disk are SKIPPED, not re-fetched
+   *     (counted as `alreadyHave`) — an incomplete file is NOT skipped, since
+   *     that is precisely a download worth finishing
+   *   · everything else is returned in its original queue order, with the files
+   *     that failed last time appended at the end
+   *
+   * `catalogList` should be the merged catalog (getCatalog()); when omitted it
+   * is loaded lazily. Returns null when there is nothing saved.
+   */
+  async getResumableBatch(catalogList = null) {
+    const rec = await this._readBatchState();
+    if (!rec) return null;
+
+    let list = Array.isArray(catalogList) ? catalogList : null;
+    if (!list || list.length === 0) {
+      try {
+        const cat = await import('./catalog.js');
+        list = cat.getCatalog();
+      } catch {
+        list = [];
       }
     }
+    if (!list.length) return null; // catalog not ready — ask again later
+
+    const byId = new Map(list.map((s) => [s.id, s]));
+    const errorById = new Map(rec.failures.map((f) => [f.id, f.error || '']));
+    const cursor = Math.min(rec.cursor, rec.ids.length);
+    const unattempted = rec.ids.slice(cursor);
+    const failedIds = rec.failures.map((f) => f.id);
+
+    const seen = new Set();
+    const sermons = [];
+    const failures = [];
+    let pendingCount = 0;
+    let alreadyHave = 0;
+    let gone = 0;
+
+    for (const id of [...unattempted, ...failedIds]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const sermon = byId.get(id);
+      if (!sermon) { gone++; continue; }
+      if (sermon.downloaded && !sermon.incomplete) { alreadyHave++; continue; }
+      sermons.push(sermon);
+      if (errorById.has(id)) failures.push({ sermon, error: errorById.get(id) });
+      else pendingCount++;
+    }
+
+    const bytes = sermons.reduce((acc, s) => acc + (s.sizeBytes || 0), 0);
+    console.log(
+      `[DL] Saved bulk queue found: ${sermons.length} to do ` +
+      `(${pendingCount} not yet tried, ${failures.length} failed last time), ` +
+      `${alreadyHave} already on disk, ${gone} no longer in the catalog`
+    );
+
+    return {
+      label: rec.label,
+      savedAt: rec.savedAt,
+      sermons,
+      remaining: sermons.length,
+      pendingCount,
+      failures,
+      alreadyHave,
+      gone,
+      bytes,
+    };
+  }
+
+  pause() { this.paused = true; }
+  resume() {
+    this.paused = false;
+    this._wakeSlotWaiters(); // let anything parked on the pause flag proceed
+  }
+
+  /**
+   * Cancel a queued or in-flight download. Returns true if something was cancelled.
+   *
+   * Wired up rather than left as a trap for the next caller: it aborts the
+   * in-flight fetch through the entry's AbortController and wakes the download
+   * if it is parked waiting for a concurrency slot. The download's own error
+   * path then does the state transition and releases the slot and the storage
+   * reservation — so a cancelled download can no longer keep running in the
+   * background and later overwrite its state with COMPLETE.
+   */
+  cancel(sermonId) {
+    const entry = this.queue.get(sermonId);
+    if (!entry) return false;
+    if (entry.state !== DL_STATE.QUEUED && entry.state !== DL_STATE.DOWNLOADING) return false;
+    entry.cancelled = true;
+    try { entry.controller?.abort(); } catch { /* already aborted */ }
+    // The streaming path's bytes are moving inside Rust, where an
+    // AbortController can't reach them — tell the native side to stop too, or a
+    // cancelled download would keep writing to `<file>.part` in the background.
+    if (entry.filename) {
+      loadTauri()
+        .then((invoke) => invoke && invoke('cancel_sermon_download', { filename: entry.filename }))
+        .catch(() => { /* best effort — the entry is already marked cancelled */ });
+    }
+    this._wakeSlotWaiters();
+    return true;
+  }
+
+  /**
+   * Drop a finished/failed queue entry so the sermon can be downloaded again.
+   * download() short-circuits on a COMPLETE entry, so a re-download needs this
+   * first (see App's Re-download button).
+   */
+  forget(sermonId) {
+    const entry = this.queue.get(sermonId);
+    if (!entry) return false;
+    if (entry.state === DL_STATE.QUEUED || entry.state === DL_STATE.DOWNLOADING) return false;
+    this.queue.delete(sermonId);
+    return true;
   }
 
   getState(sermonId) { return this.queue.get(sermonId) || null; }

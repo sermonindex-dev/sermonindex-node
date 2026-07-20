@@ -151,6 +151,14 @@ jobs:
           BUNNY_STORAGE_KEY: ${{ secrets.BUNNY_STORAGE_KEY }}
           BUNNY_STORAGE_HOST: ${{ secrets.BUNNY_STORAGE_HOST }}
           BUNNY_CDN_BASE: ${{ secrets.BUNNY_CDN_BASE }}
+          # REQUIRED, not optional. publish-update.mjs purges every URL it just
+          # wrote; without this key it skips that silently and the edge keeps
+          # serving the PREVIOUS build from the version-less macOS paths
+          # (app/darwin-*/…app.tar.gz) under a 30-day max-age. The updater then
+          # downloads a stale tarball, the signature check fails, and users see
+          # "Update failed" — which is exactly what happened on 0.0.328/0.0.329
+          # and needed a manual purge both times.
+          BUNNY_API_KEY: ${{ secrets.BUNNY_API_KEY }}
         run: node scripts/publish-update.mjs --version "${{ github.ref_name }}" --dir dist-artifacts --mode prompt --require-all
 
       # Purge the Bunny edge so users immediately see the new version instead of a

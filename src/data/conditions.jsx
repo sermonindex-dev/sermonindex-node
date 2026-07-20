@@ -3,7 +3,7 @@ import React from 'react';
 // Bump this string whenever the conditions text changes materially. The app
 // stores the agreed version in localStorage ('si-conditions-agreed'); if it no
 // longer matches CONDITIONS_VERSION, the agreement modal is shown again.
-export const CONDITIONS_VERSION = '2026-07-14';
+export const CONDITIONS_VERSION = '2026-07-19';
 
 // Short, plain-language summary shown on the About page (with a link to open the
 // full conditions modal). Keep each line to one idea.
@@ -11,6 +11,7 @@ export const CONDITIONS_SUMMARY = [
   'These sermons are given freely for the glory of God — they may be shared, played, and used in ministry, but never sold or used commercially.',
   'Running a node volunteers a portion of your bandwidth and storage to preserve and re-share the archive with others over a peer-to-peer network.',
   'Content is distributed unmodified, in its original form; the software is provided as-is, and no personal account or sign-in is required.',
+  'While sharing is on, your internet (IP) address is visible to the peers you share with — that is how peer-to-peer works everywhere; turning sharing off in Settings stops it.',
 ];
 
 const h = {
@@ -138,9 +139,50 @@ export function ConditionsBody() {
       </p>
       <p style={p}>
         This information describes your <em>node</em> and its part in preserving the
-        archive — it is not tied to your identity. It does not include your name, your
-        email, your browsing, or any personal account. If you would prefer not to share,
-        you can pause or turn off P2P at any time in Settings.
+        archive. It does not include your name, your email, your browsing, or any
+        personal account.
+      </p>
+
+      <div style={h}>What Peer-to-Peer Sharing Reveals</div>
+      <p style={p}>
+        Sharing files computer-to-computer only works if those computers can find and
+        reach one another. So while sharing is switched on, your internet (IP) address
+        is visible to the other people your node trades sermon files with, and to the
+        public "meeting point" servers and the worldwide peer directory that
+        peer-to-peer software uses to introduce computers to each other. This is simply
+        how BitTorrent — and every peer-to-peer network — has always worked. It is not
+        something this app adds, and it cannot be turned off while sharing is on. In
+        practice it means that someone who went looking could see that a computer at
+        your IP address is helping host particular sermons. In the UK, the EU, and some
+        other places, an IP address is treated in law as personal data.
+      </p>
+      <p style={p}>
+        Your IP address is also how your node's approximate location is worked out for
+        the map. That lookup is made by an outside company — <strong style={{ color: 'var(--text-primary)' }}>
+        ipapi.co</strong> first, and <strong style={{ color: 'var(--text-primary)' }}>
+        ipwho.is</strong> if the first does not answer — falling back to SermonIndex's
+        own lookup if neither responds. Those companies see your IP address at the
+        moment of the lookup; they are not told your node ID or which sermons you host.
+      </p>
+      <p style={p}>
+        When your node checks whether other people can actually reach it, it also sends
+        SermonIndex's reachability checker the modern-style internet address (IPv6) of
+        your machine, if it has one, so the check can genuinely try both kinds of
+        connection. That address is often stable for a given device, so we mention it
+        rather than leave it unsaid.
+      </p>
+      <p style={p}>
+        None of this is tied to a name, an email address, or an account — your node ID
+        is random and we never ask who you are. But we would rather be plain than
+        merely reassuring: because your IP address is visible to the peers you connect
+        to, taking part in the sharing network is not the same as being anonymous.
+      </p>
+      <p style={p}>
+        You can pause or turn off P2P at any time in Settings. Turning it off stops the
+        peer-to-peer side completely — your node closes its sharing connections and no
+        longer announces itself to other computers, so it is no longer visible to them.
+        You can still download and listen; the node status reports described above
+        continue so the archive can keep track of what is preserved where.
       </p>
 
       <div style={h}>Our Prayer</div>

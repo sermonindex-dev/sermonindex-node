@@ -11,9 +11,13 @@ export default function ConnectionsPage({ p2pRunning, p2pEnabled, onP2pToggle })
     }}>
       {/* Fixed header — never scrolls */}
       <div style={{ padding: '24px 24px 0 24px', flexShrink: 0 }}>
-        <div className="page-header">
-          <h2>Connections</h2>
-          <p>Monitor your node's BitTorrent connectivity and active swarms</p>
+        {/* page-header-wide matches .connections-layout's 1100px max-width and
+            centring, so the heading lines up with the columns below it. */}
+        <div className="page-header-wide">
+          <div className="page-header">
+            <h2>Connections</h2>
+            <p>Monitor your node's BitTorrent connectivity and active swarms</p>
+          </div>
         </div>
       </div>
       {/* Scrollable body — only this region scrolls if content overflows */}

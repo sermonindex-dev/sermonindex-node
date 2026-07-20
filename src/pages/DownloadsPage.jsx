@@ -1,5 +1,12 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
+import DownloadFailureBanner, {
+  DownloadFailureNote,
+  collectFailedDownloads,
+  describeDownloadError,
+  isCancellation,
+  iconRetry,
+} from '../components/DownloadFailures.jsx';
 
 const PAGE_SIZE = 50;
 const VIEW_KEY = 'si-downloads-view'; // 'cards' | 'speaker' (default)
@@ -129,6 +136,43 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     }
   }, []);
 
+  // ── Failed downloads ───────────────────────────────────────────────────────
+  // Read from the download manager, not from the `sermons` prop: this page only
+  // ever receives sermons that ARE downloaded, so a download that never landed
+  // would otherwise be invisible here entirely. Declared above the empty-state
+  // early return so the summary shows even before the first sermon arrives —
+  // "my first download failed" is exactly when a user needs to be told why.
+  const [retrySnapshots, setRetrySnapshots] = useState({});
+  const [dismissedFailures, setDismissedFailures] = useState([]);
+
+  const allFailures = collectFailedDownloads();
+  const visibleFailures = allFailures.filter(f => !dismissedFailures.includes(f.id));
+
+  // Retry goes through onRedownload: it clears the finished/failed queue entry
+  // first, which is what lets a download be re-run without restarting the app.
+  // Any existing copy on disk is left alone until a new one completes.
+  const retryDownload = useCallback((sermonId, snapshot) => {
+    if (!onRedownload) return;
+    if (snapshot) setRetrySnapshots(prev => ({ ...prev, [sermonId]: snapshot }));
+    setDismissedFailures(prev => prev.filter(id => id !== sermonId));
+    onRedownload(sermonId);
+  }, [onRedownload]);
+
+  const retryAllFailures = useCallback((items) => {
+    if (!onRedownload) return;
+    const ids = (items || []).map(f => f.id);
+    setDismissedFailures(prev => prev.filter(id => !ids.includes(id)));
+    for (const id of ids) onRedownload(id);
+  }, [onRedownload]);
+
+  const failureBanner = (
+    <DownloadFailureBanner
+      failures={visibleFailures}
+      onRetryAll={onRedownload ? retryAllFailures : null}
+      onDismiss={(items) => setDismissedFailures(prev => [...new Set([...prev, ...items.map(f => f.id)])])}
+    />
+  );
+
   // Download-location bar (Tauri only). Defined here — before the empty-state
   // early return — so it renders whether or not any sermons are downloaded yet.
   const locationBar = tauriReady ? (
@@ -163,6 +207,7 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           <h2>My Downloads</h2>
           <p>Sermons you've downloaded are stored locally and shared with the peer network</p>
         </div>
+        {failureBanner}
         {locationBar}
         <div className="seed-card" style={{ textAlign: 'center', padding: '48px 24px' }}>
           <div style={{ fontSize: '2.5rem', marginBottom: '16px', opacity: 0.4 }}>
@@ -184,6 +229,12 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     const isExpanded = expandedId === sermon.id;
     const dlState = downloadStates?.[sermon.id];
     const isActivelyDownloading = dlState && ['downloading', 'seeding', 'queued'].includes(dlState.state);
+    // A user-cancelled download is not a failure and must not be reported as one.
+    const hasFailed = !!dlState && dlState.state === 'error' && !isCancellation(dlState);
+    const failureReason = hasFailed ? describeDownloadError(dlState.error) : null;
+    // True only in the short window between pressing the retry and the manager
+    // broadcasting the download's new state (it replaces the entry each time).
+    const isRetrying = hasFailed && retrySnapshots[sermon.id] === dlState;
 
     return (
       <div
@@ -225,6 +276,13 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                 {dlState.state === 'seeding' ? 'Seeding to P2P network' : dlState.state === 'queued' ? 'Queued' : dlState.progress < 0 ? (dlState.bytesDownloaded > 0 ? formatStorage(dlState.bytesDownloaded) : 'Downloading...') : `${Math.min(Math.round(dlState.progress), 99)}%`}
               </span>
             </div>
+          ) : isRetrying ? (
+            <span className="dl-status queued">Trying again…</span>
+          ) : hasFailed ? (
+            // The failure carries a reason and a fix, so it says more than the
+            // Incomplete badge would — show it in preference to that badge. The
+            // Re-download action stays available either way.
+            <DownloadFailureNote reason={failureReason} compact />
           ) : sermon.incomplete ? (
             <span className="seed-badge incomplete" style={{ color: 'var(--orange)', borderColor: 'rgba(230,126,34,0.3)', background: 'rgba(230,126,34,0.1)' }}>
               {iconWarning} <span style={{ marginLeft: '3px' }}>Incomplete — {sermon.diskSize ? formatStorage(sermon.diskSize) : '?'} / {sermon.sizeFormatted}</span>
@@ -314,7 +372,16 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
               {isCurrentPlaying ? iconPause : iconPlay}
             </button>
           )}
-          {sermon.incomplete && onRedownload ? (
+          {hasFailed && onRedownload ? (
+            <button
+              onClick={() => !isRetrying && retryDownload(sermon.id, dlState)}
+              disabled={isRetrying}
+              data-tooltip="Try this download again"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--orange)', borderRadius: '6px', cursor: isRetrying ? 'default' : 'pointer', fontSize: '0.72rem', fontWeight: 600, opacity: isRetrying ? 0.6 : 1 }}
+            >
+              {iconRetry} {isRetrying ? 'Trying…' : 'Try again'}
+            </button>
+          ) : sermon.incomplete && onRedownload ? (
             <button
               className="btn-icon"
               onClick={() => onRedownload(sermon.id)}
@@ -416,6 +483,8 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         <h2>My Downloads</h2>
         <p>{sermons.length} sermons ({audioCount} audio, {videoCount} video) · {formatStorage(totalBytes)} stored</p>
       </div>
+
+      {failureBanner}
 
       {locationBar}
 

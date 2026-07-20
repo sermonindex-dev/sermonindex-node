@@ -292,37 +292,21 @@ body {
   to { transform: scale(1); }
 }
 
-/* Sidebar footer — node status */
+/* Sidebar footer — what this node is holding (files, storage, coverage).
+   The old "Local Node Online" line + green dot lived here; they were removed
+   because the badge at the top right is the single source of truth for the
+   node's state, so .node-status / .node-dot are gone with them. */
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--sidebar-border);
 }
 
-.node-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.75rem;
-  color: var(--sidebar-text-dim);
-}
-
-.node-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 6px rgba(76, 175, 80, 0.5);
-}
-
-.node-dot.offline {
-  background: var(--text-muted);
-  box-shadow: none;
-}
-
 .node-stats {
   font-size: 0.68rem;
   color: var(--sidebar-muted);
-  margin-top: 4px;
+  /* No top margin any more: this is now the first line in the footer, so the
+     footer's own padding provides the spacing. */
+  margin-top: 0;
 }
 
 /* Main content area */
@@ -380,6 +364,30 @@ body {
   opacity: 0.5;
   pointer-events: none;
 }
+
+/* Clear ("x") button. Occupies the same slot as the magnifier and the two are
+   never shown together — once there is text to clear, the clear action is the
+   more useful control in that corner. */
+.search-box:has(.search-clear) .search-icon { display: none; }
+.search-box .search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.search-box .search-clear:hover { background: var(--bg-secondary); color: var(--text-primary); }
 
 .topbar-right {
   display: flex;
@@ -1763,7 +1771,20 @@ input[type="password"]:focus, input[type="text"]:focus {
   width: 100%;
 }
 
-/* ── Connections two-column layout ── */
+/* ── Shared two-column page layout ──
+   Named for the Connections panel, where it started, but it is the app's ONE
+   full-width two-column layout and is now shared by Connections, Settings,
+   About, Your Stats and Seed Node. Kept under the original class names on
+   purpose so nothing has to be renamed or duplicated. */
+
+/* Anything that should span the FULL width above the two columns — a page
+   heading, or a hero card. Matches the grid's width and centring exactly so
+   the heading lines up with the columns beneath it. */
+.page-header-wide {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
 .connections-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1797,6 +1818,245 @@ input[type="password"]:focus, input[type="text"]:focus {
 @media (max-width: 900px) {
   .connections-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ── Seed Node hero band ──────────────────────────────────────────────────────
+   Ported from the website's node-software landing page (`.nlp-seed`), renamed
+   under an `si-seedhero-*` prefix so it can't collide with the site's classes.
+   Sits inside `.page-header-wide` above `.connections-layout`, so it spans both
+   columns and lines up with them exactly.
+
+   THEMING: this is a brand surface, not a normal card — it keeps a DARK olive
+   background in BOTH themes, exactly like `--sidebar-bg` (olive #707035 light /
+   deep olive #2c2c14 dark). That is deliberate: the SVG inside uses the site's
+   literal cream (#f3efe0) and gold (#d4af37), which would be invisible against
+   the light theme's #F8F8F2 page background. Keeping the band dark also matches
+   how the section looks on sermonindex.net. All text inside is therefore set to
+   fixed light colours rather than the theme's --text-* tokens, which flip. */
+.si-seedhero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+  padding: 44px 0;
+  background: linear-gradient(180deg, #5f5f2e, #565633);
+  color: #f3efe0;
+}
+html[data-theme='dark'] .si-seedhero {
+  /* Deepened to sit correctly against the dark page, mirroring how
+     --sidebar-bg darkens from #707035 to #2c2c14 in dark mode. */
+  background: linear-gradient(180deg, #3a3a20, #2c2c14);
+}
+
+/* Network-growth graphic — bleeds in from the left edge, fades toward the copy */
+.si-seedhero-viz {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 62%;
+  max-width: 760px;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to right, #000 52%, transparent 92%);
+  mask-image: linear-gradient(to right, #000 52%, transparent 92%);
+}
+.si-seedhero-viz svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.si-seedhero-wrap {
+  position: relative;
+  z-index: 1;
+  padding: 0 32px;
+}
+.si-seedhero-copy {
+  max-width: 520px;
+  margin-left: auto;
+}
+
+.si-seedhero-kick {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #d4af37;
+  margin-bottom: 12px;
+}
+.si-seedhero-copy h2 {
+  color: #fff;
+  font-size: 1.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0 0 16px;
+}
+.si-seedhero-copy p {
+  color: #e7e2cf;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+
+.si-seedhero-stats {
+  display: flex;
+  gap: 30px;
+  margin: 22px 0 0;
+  flex-wrap: wrap;
+}
+.si-seedhero-stats .s b {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  color: #d4af37;
+}
+.si-seedhero-stats .s small {
+  display: block;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #d9d3bd;
+  font-weight: 700;
+  max-width: 150px;
+}
+
+/* Matches the breakpoint `.connections-layout` collapses at. The site drops the
+   graphic entirely here and unpins the copy; do the same. */
+@media (max-width: 900px) {
+  .si-seedhero-viz { display: none; }
+  .si-seedhero-copy { max-width: none; margin-left: 0; }
+  .si-seedhero-wrap { padding: 0 20px; }
+}
+
+/* The two hub rings pulse forever via SMIL <animate>. Remove them outright for
+   anyone who has asked for reduced motion (same treatment as .si-update-alert
+   further down this file). The rings are the ONLY animated parts and are pure
+   decoration on top of the static gold hub dots, so hiding them leaves the
+   graphic intact and completely still. Note this hides the rings rather than
+   the <animate> elements: `display` is not defined to apply to SVG animation
+   elements, so hiding the animated shape is the reliable way to stop SMIL. */
+@media (prefers-reduced-motion: reduce) {
+  .si-seedhero-pulse { display: none; }
+}
+
+/* ── About hero band ──────────────────────────────────────────────────────────
+   Sibling of the Seed Node band above: same construction, same visual language,
+   namespaced `si-abouthero-*` so the two can never collide. Sits inside
+   `.page-header-wide` above `.connections-layout`, spanning both columns.
+
+   THEMING: identical reasoning to `.si-seedhero` — this is a brand surface, so
+   it keeps a DARK olive background in BOTH themes and sets fixed light text
+   colours rather than the --text-* tokens, which flip. The white wordmark and
+   the feathered sepia portrait both assume a dark surface underneath. */
+.si-abouthero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+  padding: 44px 0;
+  background: linear-gradient(180deg, #5f5f2e, #565633);
+  color: #f3efe0;
+}
+html[data-theme='dark'] .si-abouthero {
+  background: linear-gradient(180deg, #3a3a20, #2c2c14);
+}
+
+/* Spurgeon portrait — bleeds off the left edge and feathers into the olive.
+   Two masks, applied on two elements rather than composited on one: the
+   WRAPPER fades horizontally toward the copy (same curve as .si-seedhero-viz),
+   the IMG softens its top and bottom edges so it doesn't read as a rectangle.
+   Splitting them avoids `mask-composite`, whose keywords still differ between
+   the standard and -webkit- syntaxes. */
+.si-abouthero-portrait {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 46%;
+  max-width: 560px;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to right, #000 46%, transparent 92%);
+  mask-image: linear-gradient(to right, #000 46%, transparent 92%);
+}
+.si-abouthero-portrait img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Tall (≈717×951) studio portrait in a wide band: cover and bias the crop
+     upward so his face stays in frame rather than being cut off. */
+  object-fit: cover;
+  object-position: 32% 18%;
+  /* Sits BEHIND the copy, never competes with it. */
+  opacity: 0.34;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 20%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 20%, #000 78%, transparent 100%);
+}
+
+/* Wordmark, top-left over the portrait area */
+.si-abouthero-logo {
+  position: absolute;
+  top: 24px;
+  left: 32px;
+  z-index: 2;
+  height: 42px;
+  width: auto;
+  display: block;
+}
+
+.si-abouthero-wrap {
+  position: relative;
+  z-index: 1;
+  padding: 0 32px;
+}
+.si-abouthero-copy {
+  max-width: 520px;
+  margin-left: auto;
+}
+.si-abouthero-copy h2 {
+  color: #fff;
+  font-size: 1.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0 0 16px;
+}
+.si-abouthero-copy p {
+  color: #e7e2cf;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+.si-abouthero-copy p:last-child {
+  margin-bottom: 0;
+}
+/* The mission statement itself, quoted — carried over from the card it used to
+   live in, which set it italic and brighter than the body copy. */
+.si-abouthero-lede {
+  color: #fff;
+  font-style: italic;
+}
+/* The inline SiteLink sets --gold-text on itself and on its icon's stroke.
+   That token is a dark gold in the light theme and would go muddy on this dark
+   band, so pin both to the band's own gold — the same #d4af37 .si-seedhero
+   already uses. No new colour is introduced. */
+.si-abouthero-copy [role='link'] {
+  color: #d4af37;
+}
+.si-abouthero-copy [role='link'] svg {
+  stroke: #d4af37;
+}
+
+/* Same breakpoint `.connections-layout` collapses at, matching .si-seedhero:
+   drop the portrait entirely and unpin the copy. The logo then has nothing to
+   sit over, so it returns to the normal flow above the heading. */
+@media (max-width: 900px) {
+  .si-abouthero-portrait { display: none; }
+  .si-abouthero-copy { max-width: none; margin-left: 0; }
+  .si-abouthero-wrap { padding: 0 20px; }
+  .si-abouthero-logo {
+    position: static;
+    height: 34px;
+    margin: 0 20px 18px;
   }
 }
 
@@ -2040,12 +2300,20 @@ input[type="password"]:focus, input[type="text"]:focus {
 .dash-play { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer; background: var(--gold); color: var(--text-on-gold); display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
 .dash-play:hover { background: var(--gold-hover); }
 
-/* quick links */
-.dash-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
-.dash-link { display: flex; align-items: center; gap: 13px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 16px; cursor: pointer; text-align: left; font-family: var(--font); transition: border-color 0.15s, transform 0.06s, box-shadow 0.15s; }
-.dash-link:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 8px 22px -14px var(--gold-glow); }
-.dash-link-icon { flex-shrink: 0; width: 42px; height: 42px; border-radius: 10px; background: var(--gold-dim); color: var(--olive); display: flex; align-items: center; justify-content: center; }
-.dash-link-body { display: flex; flex-direction: column; min-width: 0; }
-.dash-link-title { font-size: 0.92rem; font-weight: 700; color: var(--text-primary); display: inline-flex; align-items: center; gap: 6px; }
-.dash-link-title svg { color: var(--text-muted); }
-.dash-link-desc { font-size: 0.74rem; color: var(--text-muted); margin-top: 2px; }
+/* ── highlight cards (bottom of the Dashboard) ──
+   Replaced the mission banner, which replaced the four quick-link buttons.
+   Same surface / border / gold-hover language as .dash-tile and .dash-sermon —
+   no new colours, all existing tokens — so the page reads as one family. Two
+   columns on desktop, one on narrow windows. */
+.dash-hl { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
+.dash-hl-card { display: flex; align-items: flex-start; gap: 14px; width: 100%; text-align: left; font-family: var(--font); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 17px 18px; cursor: pointer; transition: border-color 0.15s, transform 0.06s, box-shadow 0.15s; }
+.dash-hl-card:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 8px 22px -14px var(--gold-glow); }
+.dash-hl-icon { flex-shrink: 0; width: 42px; height: 42px; border-radius: 10px; background: var(--gold-dim); color: var(--olive); display: flex; align-items: center; justify-content: center; }
+.dash-hl-body { display: block; flex: 1; min-width: 0; }
+.dash-hl-kicker { display: block; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+.dash-hl-lead { display: block; font-size: 0.97rem; font-weight: 700; line-height: 1.35; color: var(--text-primary); margin-top: 5px; }
+.dash-hl-lead b { color: var(--gold-text); }
+.dash-hl-sub { display: block; font-size: 0.78rem; line-height: 1.5; color: var(--text-muted); margin-top: 6px; }
+.dash-hl-go { display: inline-flex; align-items: center; gap: 6px; margin-top: 11px; font-size: 0.78rem; font-weight: 700; color: var(--gold-text); }
+.dash-hl-card:hover .dash-hl-go { text-decoration: underline; }
+@media (max-width: 720px) { .dash-hl { grid-template-columns: 1fr; } }

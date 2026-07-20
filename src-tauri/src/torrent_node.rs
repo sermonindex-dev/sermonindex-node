@@ -65,7 +65,27 @@ pub struct TorrentHandle {
     /// `create_torrent` (it hashes pieces on blocking threads). Built once at
     /// session start so concurrent seeds share one concurrency limit.
     spawner: BlockingSpawner,
+    /// Throttled + sticky cache for the passive IPv6 observation (see
+    /// `ipv6_observation`). Scanning every torrent's peer table allocates a
+    /// `HashMap<String, PeerStats>` per torrent, and a full node can hold tens of
+    /// thousands of torrents — far too expensive to redo on every stats poll.
+    ipv6_obs: Arc<std::sync::Mutex<Ipv6ObsCache>>,
 }
+
+/// Cached IPv6 observation. `value.inbound_ipv6` / `value.outbound_ipv6` are
+/// STICKY for the life of the session: a peer that reached us over IPv6 five
+/// minutes ago proved reachability just as firmly as one connected right now,
+/// and the flag must not flicker off when they disconnect. The frontend then
+/// persists it across restarts (see network.js).
+#[derive(Default)]
+struct Ipv6ObsCache {
+    last_scan: Option<Instant>,
+    value: Ipv6Observation,
+}
+
+/// How often the peer tables are actually walked. Everything in between is
+/// served from the cache.
+const IPV6_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Serialize, Clone)]
 pub struct SessionInfo {
@@ -93,6 +113,71 @@ pub struct AddResult {
     pub name: Option<String>,
 }
 
+/// What we can honestly say about this node's IPv6 connectivity, derived
+/// PASSIVELY from the peers librqbit is actually talking to.
+///
+/// WHY THIS EXISTS: our reachability probe runs on a Bunny edge script, and
+/// Bunny's edge has no outbound IPv6 at all (it returns `v6_probe:
+/// "unsupported"`). So we cannot actively dial ourselves over IPv6 and there is
+/// no external infrastructure we can borrow to do it. But we do not need one:
+/// if a peer out on the internet opened a TCP connection TO US over a global
+/// IPv6 address, then inbound IPv6 demonstrably works. That is stronger evidence
+/// than any synthetic probe, because it is a real connection from a real peer.
+///
+/// THE DIRECTION QUESTION (the crux). librqbit 9 DOES expose direction, though
+/// not as an explicit field. `PeerStats.counters` carries two separate,
+/// independently-incremented counters:
+///   * `incoming_connections`  — incremented ONLY in
+///     `TorrentStateLive::add_incoming_peer` (live/mod.rs:373 and :415), which is
+///     reached only from `Session::task_listener` → `check_incoming_connection`.
+///     In other words: only ever from our LISTENING socket. A non-zero value is
+///     proof that this peer dialled us.
+///   * `connections` (serialised from `outgoing_connection_attempts`'s sibling
+///     `outgoing_connections`) — our own dials OUT.
+/// `PeerStats.conn_kind` is NOT direction — it is Tcp / Utp / Socks.
+///
+/// ADDRESS FAMILY. The map key is `PeerHandle`, which is `std::net::SocketAddr`
+/// (type_aliases.rs:13), rendered with `to_string()`. Crucially,
+/// librqbit-dualstack-sockets' `accept()` returns `addr.try_to_ipv4()`
+/// (socket.rs:268), so an IPv4 peer arriving on our dual-stack `[::]` listener is
+/// normalised back to a plain `SocketAddr::V4` and can never masquerade as IPv6.
+/// We still re-check for v4-mapped addresses ourselves rather than trust that.
+///
+/// SCOPE. Only 2000::/3 (global unicast) counts. A connection from `fe80::…`
+/// (link-local), `fc00::/7` (unique-local) or `::1` proves nothing about the
+/// internet — it is a machine on the same LAN. Counting those would produce a
+/// green "you're reachable" badge for someone who is not.
+#[derive(Serialize, Clone, Default)]
+pub struct Ipv6Observation {
+    /// PROOF of inbound IPv6 reachability: a peer at a global-unicast IPv6
+    /// address opened a connection to our listening socket. This is the only
+    /// field that may be shown as "you are reachable over IPv6".
+    pub inbound_ipv6: bool,
+    /// We successfully dialled OUT to a global-unicast IPv6 peer. Proves we have
+    /// IPv6 egress and nothing more — it says nothing about whether anyone can
+    /// reach us. Never present this as reachability.
+    pub outbound_ipv6: bool,
+    /// How many distinct global-unicast IPv6 peers have connected IN to us
+    /// (cumulative for the lifetime of the current session).
+    pub inbound_ipv6_peers: usize,
+    /// How many distinct global-unicast IPv6 peers we have dialled out to.
+    pub outbound_ipv6_peers: usize,
+    /// Global-unicast IPv6 peer addresses we know of at all, including ones we
+    /// learned from the DHT/trackers and never actually connected to. Context
+    /// only — carries no reachability meaning whatsoever.
+    pub known_ipv6_peers: usize,
+    /// Live torrents whose peer table we were able to inspect. Zero means the
+    /// answer below is "we have not looked yet", not "no IPv6".
+    pub torrents_checked: usize,
+    /// True when a peer table was inspected. Lets the UI distinguish
+    /// "observed nothing yet" from "could not observe".
+    pub observed: bool,
+    // NOTE: we deliberately do NOT return any peer IP address. The booleans are
+    // everything the UI needs, and shipping a stranger's IP into the frontend
+    // (and from there into logs the user may paste publicly) is not something
+    // anyone consented to.
+}
+
 #[derive(Serialize)]
 pub struct TorrentInfo {
     pub id: usize,
@@ -101,6 +186,37 @@ pub struct TorrentInfo {
     /// Full librqbit stats: state, progress_bytes, total_bytes, finished,
     /// uploaded_bytes, live.{download_speed, upload_speed, snapshot.peer_stats}
     pub stats: serde_json::Value,
+}
+
+/// Is this a GLOBAL UNICAST IPv6 address — i.e. one that only exists because
+/// the address is routable on the public internet?
+///
+/// 2000::/3 is the block IANA has allocated for global unicast, so the test is
+/// "top three bits are 001". Written by hand rather than with
+/// `Ipv6Addr::is_unicast_global`, which is still unstable in Rust.
+///
+/// This deliberately EXCLUDES, and it matters that it does:
+///   ::1            loopback — ourselves
+///   fe80::/10      link-local — same physical network segment
+///   fc00::/7       unique-local — private, like 192.168.x.x
+///   ff00::/8       multicast
+///   ::ffff:a.b.c.d IPv4-mapped — an IPv4 peer wearing an IPv6 costume
+/// A connection from any of those is not evidence that the internet can reach
+/// us, so treating them as such would put a green badge on a false claim.
+fn is_global_unicast_ipv6(addr: &std::net::SocketAddr) -> bool {
+    match addr {
+        std::net::SocketAddr::V4(_) => false,
+        std::net::SocketAddr::V6(v6) => {
+            let ip = v6.ip();
+            // Belt and braces: dualstack `accept()` already unwraps v4-mapped
+            // addresses to SocketAddr::V4, but if that ever changes, 2000::/3
+            // excludes ::ffff:0:0/96 anyway — this is just explicit about it.
+            if ip.to_ipv4_mapped().is_some() {
+                return false;
+            }
+            (ip.octets()[0] & 0xe0) == 0x20
+        }
+    }
 }
 
 fn default_tracker_urls() -> HashSet<url::Url> {
@@ -310,6 +426,7 @@ pub async fn start(
         // Must be constructed inside the tokio runtime (it inspects the current
         // runtime flavor to decide whether block_in_place is legal).
         spawner: BlockingSpawner::new(BLOCKING_THREADS),
+        ipv6_obs: Arc::new(std::sync::Mutex::new(Ipv6ObsCache::default())),
     })
 }
 
@@ -535,8 +652,121 @@ impl TorrentHandle {
         Ok(removed)
     }
 
+    /// Passive IPv6 reachability observation — see [`Ipv6Observation`].
+    ///
+    /// Walks every LIVE torrent's peer table and classifies each global-unicast
+    /// IPv6 peer by whether it dialled us (`counters.incoming_connections > 0`,
+    /// which librqbit only ever increments from its listening socket) or we
+    /// dialled it (`counters.connections > 0`).
+    ///
+    /// Throttled to one real scan per `IPV6_SCAN_INTERVAL`; the boolean verdicts
+    /// are sticky for the session. Callers can poll this as often as they like.
+    pub fn ipv6_observation(&self) -> Ipv6Observation {
+        let mut cache = self.ipv6_obs.lock().unwrap_or_else(|e| e.into_inner());
+
+        let due = cache
+            .last_scan
+            .is_none_or(|t| t.elapsed() >= IPV6_SCAN_INTERVAL);
+        if !due {
+            return cache.value.clone();
+        }
+
+        // `Session::with_torrents` takes an `Fn` closure (NOT `FnMut`), so the
+        // accumulator cannot be captured mutably — it is built inside and
+        // returned. (Verified by compiling against librqbit 9.0.0-rc.0.)
+        let obs = self.session.with_torrents(|iter| {
+            let mut obs = Ipv6Observation::default();
+            for (_id, t) in iter {
+                // Only a LIVE torrent has a peer table. Paused/initializing ones
+                // are simply skipped — absence of data is not evidence.
+                let Some(live) = t.live() else { continue };
+                obs.torrents_checked += 1;
+                obs.observed = true;
+
+                // We want peers that connected to us EARLIER in this session as
+                // well as ones connected right now, because the counters survive
+                // the peer going quiet — so ask for state:"all", not the default
+                // "live".
+                //
+                // `PeerStatsFilterState` cannot be named: it lives in the private
+                // `torrent_state` module and, unlike `PeerStatsFilter`, is not
+                // re-exported. `PeerStatsFilter` itself is only public behind the
+                // `http-api`/`http-api-client` feature gate, so we deliberately
+                // do NOT name it either — the type is inferred from this
+                // parameter, which keeps the call working whatever features
+                // librqbit is built with. It derives `Deserialize` with
+                // `#[serde(rename = "all")]`, which is exactly how librqbit's own
+                // HTTP API selects this filter. Verified: `{"state":"all"}`
+                // parses, and a bogus value errors — so the `unwrap_or_default()`
+                // fallback is the "live" filter (a smaller observation window),
+                // never a wrong answer. Rebuilt per torrent: not `Clone`.
+                let snapshot = live.per_peer_stats_snapshot(
+                    serde_json::from_value(serde_json::json!({ "state": "all" }))
+                        .unwrap_or_default(),
+                );
+                for (addr_str, peer) in snapshot.peers.iter() {
+                    let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() else {
+                        continue;
+                    };
+                    if !is_global_unicast_ipv6(&addr) {
+                        continue;
+                    }
+                    obs.known_ipv6_peers += 1;
+                    if peer.counters.incoming_connections > 0 {
+                        // GROUND TRUTH: this peer opened a connection to our
+                        // listening socket over a public IPv6 address.
+                        obs.inbound_ipv6 = true;
+                        obs.inbound_ipv6_peers += 1;
+                    } else if peer.counters.connections > 0 {
+                        // We dialled them. Proves IPv6 egress only.
+                        obs.outbound_ipv6 = true;
+                        obs.outbound_ipv6_peers += 1;
+                    }
+                }
+            }
+            obs
+        });
+
+        // Sticky merge: a past proof is still a proof.
+        cache.value = Ipv6Observation {
+            inbound_ipv6: cache.value.inbound_ipv6 || obs.inbound_ipv6,
+            outbound_ipv6: cache.value.outbound_ipv6 || obs.outbound_ipv6,
+            observed: cache.value.observed || obs.observed,
+            // Counts are a snapshot of NOW, so they are replaced, not merged.
+            inbound_ipv6_peers: obs.inbound_ipv6_peers,
+            outbound_ipv6_peers: obs.outbound_ipv6_peers,
+            known_ipv6_peers: obs.known_ipv6_peers,
+            torrents_checked: obs.torrents_checked,
+        };
+        cache.last_scan = Some(Instant::now());
+
+        if cache.value.inbound_ipv6 && !obs.inbound_ipv6 {
+            log::debug!("[Torrent] IPv6 inbound proof retained from earlier in this session");
+        } else if obs.inbound_ipv6 {
+            log::info!(
+                "[Torrent] Inbound IPv6 confirmed — {} peer(s) connected to us over global IPv6",
+                obs.inbound_ipv6_peers
+            );
+        }
+
+        cache.value.clone()
+    }
+
     /// Session-wide stats (download/upload speeds, peers, uptime).
+    ///
+    /// The passive IPv6 observation is folded in under `ipv6_observation`. It
+    /// rides along here rather than on its own Tauri command because
+    /// `torrent_session_stats` is already polled by the frontend, and adding a
+    /// command would mean editing `lib.rs`'s `invoke_handler` — see the note in
+    /// `services/torrent.js`.
     pub fn session_stats(&self) -> serde_json::Value {
-        serde_json::to_value(self.session.stats_snapshot()).unwrap_or(serde_json::Value::Null)
+        let mut v =
+            serde_json::to_value(self.session.stats_snapshot()).unwrap_or(serde_json::Value::Null);
+        if let Some(map) = v.as_object_mut() {
+            if let Ok(obs) = serde_json::to_value(self.ipv6_observation()) {
+                map.insert("ipv6_observation".to_string(), obs);
+            }
+        }
+        v
     }
 }

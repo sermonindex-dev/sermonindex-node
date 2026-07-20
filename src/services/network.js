@@ -132,12 +132,57 @@ export async function probeReachability(port) {
 // unaffected; readers that predate IPv6 simply ignore the extra keys.
 const REACH_KEY = 'si-reach';
 
+// ── Sticky passive-observation fields ───────────────────────────────────────
+// These live in the SAME si-reach blob but have completely different semantics
+// from the probe fields above, and the difference matters:
+//
+//   probe fields (open / open_v6 / …) are a MEASUREMENT AT A MOMENT. They are
+//   replaced wholesale every time the user presses Re-test.
+//
+//   observation fields (v6_inbound_seen / v6_egress_seen) are a HISTORICAL FACT:
+//   "at some point, a peer out on the internet opened a connection to us over a
+//   public IPv6 address." Reachability is a has-this-ever-happened question, so
+//   once true they are NEVER set back to false — not when that peer disconnects,
+//   not when the app restarts, not when a later probe comes back negative. A
+//   probe can fail for reasons that have nothing to do with the user (our edge
+//   has no IPv6 at all); a real inbound connection cannot.
+//
+// They are therefore carried forward untouched by `saveReachability`, which
+// would otherwise wipe them on the next Re-test.
+const STICKY_KEYS = ['v6_inbound_seen', 'v6_inbound_ts', 'v6_egress_seen', 'v6_egress_ts'];
+
+const STICKY_DEFAULTS = {
+  /** A global-IPv6 peer connected IN to us. PROOF of inbound IPv6 reachability. */
+  v6_inbound_seen: false,
+  /** When we first saw that (epoch ms), so the UI can say how long we've known. */
+  v6_inbound_ts: null,
+  /** We dialled OUT to a global-IPv6 peer. Proves IPv6 works outbound, nothing more. */
+  v6_egress_seen: false,
+  v6_egress_ts: null,
+};
+
+/** The raw stored blob, or `{}`. Never throws. */
+function rawReach() {
+  try {
+    const r = JSON.parse(localStorage.getItem(REACH_KEY) || 'null');
+    return r && typeof r === 'object' ? r : {};
+  } catch { return {}; }
+}
+
 /** Remember the latest probe result. Never throws. */
 export function saveReachability({
   open, open_v6 = false, ip = null, ipv6 = null,
   v6_probe = 'none', has_ipv6 = false, cgnat = false,
 } = {}) {
   try {
+    // Carry the sticky observation forward — a fresh probe replaces the probe
+    // fields only. Losing v6_inbound_seen here would make a proven-reachable
+    // Starlink node look unreachable again after any Re-test.
+    const prev = rawReach();
+    const carried = {};
+    for (const k of STICKY_KEYS) {
+      if (prev[k] !== undefined) carried[k] = prev[k];
+    }
     localStorage.setItem(REACH_KEY, JSON.stringify({
       open: !!open,
       open_v6: !!open_v6,
@@ -146,12 +191,64 @@ export function saveReachability({
       v6_probe: String(v6_probe || 'none'),
       has_ipv6: !!has_ipv6,
       cgnat: !!cgnat,
+      ...carried,
       ts: Date.now(),
     }));
   } catch { /* private mode / quota — the UI still works, it just re-probes */ }
 }
 
-/** The latest probe result, or null if there isn't one. Never throws. */
+/**
+ * Record what the node PASSIVELY observed about IPv6 from its real peer
+ * connections (see `Ipv6Observation` in src-tauri/src/torrent_node.rs).
+ *
+ * Monotonic by design: this can only ever turn a flag ON. Pass
+ * `{ inbound_ipv6: false }` a thousand times and a previously-proven inbound
+ * connection stays proven — "we didn't see one in the last 30 seconds" is not
+ * evidence that it never happened.
+ *
+ * Writes even when there is no probe result yet, so a node that has never run
+ * the reachability test can still learn it is IPv6-reachable. Returns the merged
+ * sticky record (so callers can update state without a second read).
+ */
+export function recordIpv6Observation(obs) {
+  const prev = { ...STICKY_DEFAULTS, ...rawReach() };
+  const next = { ...prev };
+  const now = Date.now();
+
+  if (obs && obs.inbound_ipv6 === true && !prev.v6_inbound_seen) {
+    next.v6_inbound_seen = true;
+    next.v6_inbound_ts = now;
+  }
+  if (obs && obs.outbound_ipv6 === true && !prev.v6_egress_seen) {
+    next.v6_egress_seen = true;
+    next.v6_egress_ts = now;
+  }
+
+  // Nothing new — don't touch storage (keeps `ts` meaning "last probed").
+  if (next.v6_inbound_seen === prev.v6_inbound_seen
+      && next.v6_egress_seen === prev.v6_egress_seen) {
+    return pickSticky(prev);
+  }
+
+  try {
+    localStorage.setItem(REACH_KEY, JSON.stringify({ ...rawReach(), ...pickSticky(next) }));
+  } catch { /* private mode / quota — the observation just won't survive a restart */ }
+  return pickSticky(next);
+}
+
+function pickSticky(o) {
+  const out = {};
+  for (const k of STICKY_KEYS) out[k] = o[k] ?? STICKY_DEFAULTS[k];
+  return out;
+}
+
+/**
+ * The latest probe result, or null if there isn't one. Never throws.
+ *
+ * NOTE the asymmetry: this returns null when no PROBE has ever run, even if a
+ * passive IPv6 observation exists. Use `readIpv6Observation()` for that — it is
+ * independent of whether the user ever pressed "Test".
+ */
 export function readReachability() {
   try {
     const r = JSON.parse(localStorage.getItem(REACH_KEY) || 'null');
@@ -160,9 +257,19 @@ export function readReachability() {
     // with "we don't know", never with "failed".
     return {
       open_v6: false, ipv6: null, v6_probe: 'none', has_ipv6: false, cgnat: false,
+      ...STICKY_DEFAULTS,
       ...r,
     };
   } catch { return null; }
+}
+
+/**
+ * The sticky passive IPv6 observation, independent of any probe result.
+ * Always returns an object; all-false means "nothing observed yet", which is
+ * NOT the same as "no IPv6".
+ */
+export function readIpv6Observation() {
+  return pickSticky({ ...STICKY_DEFAULTS, ...rawReach() });
 }
 
 /** Register/refresh this node in the seed-backbone directory. Fire-and-forget. */

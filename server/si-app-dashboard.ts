@@ -369,13 +369,28 @@ function cleanNode(s: any): string {
 
 /**
  * Classify a node row into exactly one of three categories (priority order):
- *   "seed" → approved seed node (node_type === 'seed')
- *   "node" → not a seed AND its BitTorrent port is open (reachable === 1)
- *   "peer" → not a seed AND its port is closed/unknown (reachable !== 1)
+ *   "seed" → GRANTED seed access (node_type === 'seed') AND reachable (reachable === 1)
+ *   "node" → not a reachable seed AND its BitTorrent port is open (reachable === 1)
+ *   "peer" → its port is closed/unknown (reachable !== 1) — INCLUDING granted seeds
+ *
+ * A seed node is defined as granted AND reachable, matching the app. Being
+ * approved is not enough: a seed exists to be a backbone meeting point that
+ * other peers can dial into, and an unreachable node cannot do that job no
+ * matter who approved it. So a granted volunteer whose port is closed is a
+ * Peer here — exactly as hard to reach as any other port-closed peer.
+ *
+ * `nodes.reachable` already accounts for IPv6: the app's heartbeat reports
+ * `r.open || r.open_v6`, so an IPv6-only-reachable node counts as reachable.
+ *
+ * NOTE: this is the PUBLIC/network-topology view. It deliberately does NOT
+ * erase the approval signal — `node_type` stays the pure "has been granted"
+ * marker, so the admin can still separate "granted but not reachable" (a
+ * router/ISP problem worth chasing) from "never granted". See pageSeedNodes.
  */
 function nodeCategory(n: any): "seed" | "node" | "peer" {
-  if (n.node_type === "seed") return "seed";
-  if (Number(n.reachable) === 1) return "node";
+  const reachable = Number(n.reachable) === 1;
+  if (n.node_type === "seed" && reachable) return "seed";
+  if (reachable) return "node";
   return "peer";
 }
 
@@ -860,7 +875,18 @@ async function maybeWriteSnapshot(): Promise<void> {
     const online = isoMinutesAgo(15);
     const [onlineRow, seedRow, filesRow, sermonsRow, countryRow, uploadedRow, peakRow] = await Promise.all([
       dbQuery(`SELECT COUNT(*) c FROM nodes WHERE is_online=1 AND last_seen >= ?`, [online]),
-      dbQuery(`SELECT COUNT(*) c FROM nodes WHERE is_online=1 AND last_seen >= ? AND node_type='seed'`, [online]),
+      // stats_snapshots.seed_nodes follows the SAME definition as nodeCategory()
+      // and the Overview card: granted AND reachable. Deliberate choice — the
+      // chart sits directly beside the "Seed Nodes · granted & reachable" card,
+      // and a series that quietly meant something different from the card next
+      // to it is the worse failure. There is a one-time step DOWN on the deploy
+      // day (granted-but-unreachable seeds leave the series); that discontinuity
+      // is visible and explainable, whereas a permanent silent mismatch is not.
+      dbQuery(
+        `SELECT COUNT(*) c FROM nodes
+          WHERE is_online=1 AND last_seen >= ? AND node_type='seed' AND reachable=1`,
+        [online],
+      ),
       dbQuery(
         `SELECT COALESCE(SUM(files_stored),0) f, COALESCE(SUM(storage_used_bytes),0) s
            FROM nodes WHERE is_online=1 AND last_seen >= ?`,
@@ -954,11 +980,15 @@ async function handleStats(): Promise<Response> {
   const online = isoMinutesAgo(15);
   const [live, all, since] = await Promise.all([
     dbQuery(
+      // Category counts mirror nodeCategory() exactly: a seed must be BOTH
+      // granted and reachable; a granted-but-unreachable node falls to peers.
+      // COALESCE keeps a NULL node_type out of the != comparison so the three
+      // buckets always sum to totalNodes.
       `SELECT COUNT(*) totalNodes,
-              SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seedNodes,
-              SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
-              SUM(CASE WHEN node_type!='seed' AND reachable=1 THEN 1 ELSE 0 END) openNodes,
-              SUM(CASE WHEN node_type!='seed' AND (reachable IS NULL OR reachable=0) THEN 1 ELSE 0 END) peers,
+              SUM(CASE WHEN node_type='seed' AND reachable=1 THEN 1 ELSE 0 END) seedNodes,
+              SUM(CASE WHEN node_type='seed' AND reachable=1 THEN 1 ELSE 0 END) seeds,
+              SUM(CASE WHEN COALESCE(node_type,'user')!='seed' AND reachable=1 THEN 1 ELSE 0 END) openNodes,
+              SUM(CASE WHEN reachable IS NULL OR reachable=0 THEN 1 ELSE 0 END) peers,
               COALESCE(SUM(files_stored),0) totalFiles,
               COALESCE(SUM(storage_used_bytes),0) totalStorage,
               COALESCE(AVG(library_coverage),0) avgCoverage,
@@ -1263,10 +1293,14 @@ async function pageOverview(): Promise<Response> {
   const online = isoMinutesAgo(15);
   const [stat, ever, sermons, snaps, replication, closedOnly, mediaSplit] = await Promise.all([
     dbQuery(
+      // Mirrors nodeCategory(): seed = granted AND reachable. A granted node
+      // whose port is closed counts as a peer, not a seed. `grantedSeeds` is
+      // kept alongside purely so the card label can stay honest about the gap.
       `SELECT COUNT(*) online,
-              SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
-              SUM(CASE WHEN node_type!='seed' AND reachable=1 THEN 1 ELSE 0 END) openNodes,
-              SUM(CASE WHEN node_type!='seed' AND (reachable IS NULL OR reachable=0) THEN 1 ELSE 0 END) peers,
+              SUM(CASE WHEN node_type='seed' AND reachable=1 THEN 1 ELSE 0 END) seeds,
+              SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) grantedSeeds,
+              SUM(CASE WHEN COALESCE(node_type,'user')!='seed' AND reachable=1 THEN 1 ELSE 0 END) openNodes,
+              SUM(CASE WHEN reachable IS NULL OR reachable=0 THEN 1 ELSE 0 END) peers,
               COUNT(DISTINCT country) countries
          FROM nodes WHERE is_online=1 AND last_seen >= ?`,
       [online],
@@ -1294,13 +1328,17 @@ async function pageOverview(): Promise<Response> {
     ),
     // Sermons whose only online holders are port-closed peers — nothing serving
     // them can accept an inbound connection, so they are much harder to obtain.
+    // "Obtainable" means SOME online holder is reachable=1 — nothing else. The
+    // old test also counted node_type='seed' as obtainable, which is false: a
+    // granted-but-unreachable seed is exactly as hard to dial as an unreachable
+    // peer, so that OR under-reported at-risk content.
     dbQuery(
       `SELECT COUNT(*) c FROM (
          SELECT s.sermon_id
            FROM shared_sermons s JOIN nodes n ON n.node_id=s.node_id
           WHERE n.is_online=1 AND n.last_seen >= ?
           GROUP BY s.sermon_id
-         HAVING SUM(CASE WHEN n.reachable=1 OR n.node_type='seed' THEN 1 ELSE 0 END)=0)`,
+         HAVING SUM(CASE WHEN n.reachable=1 THEN 1 ELSE 0 END)=0)`,
       [online],
     ),
     // Audio vs video split of what is actually available on online nodes.
@@ -1314,13 +1352,23 @@ async function pageOverview(): Promise<Response> {
   ]);
 
   const s = stat.rows[0] || {};
-  // Three node categories among online nodes: Seed (gold), Node = port open
-  // (green), Peer = port closed/unknown (orange).
+  // Three node categories among online nodes: Seed = granted AND reachable
+  // (gold), Node = port open (green), Peer = port closed/unknown (orange),
+  // which now includes granted seeds that are unreachable. The labels say
+  // which definition each number uses — a count that silently changes meaning
+  // is worse than either definition.
+  const grantedUnreachable = Math.max(0, toInt(s.grantedSeeds, 0) - toInt(s.seeds, 0));
   const cards =
     statCard(toInt(s.online, 0), "Online Now") +
-    statCardColor(toInt(s.seeds, 0), "Seed Nodes", "var(--gold-text)") +
+    statCardColor(toInt(s.seeds, 0), "Seed Nodes · granted & reachable", "var(--gold-text)") +
     statCardColor(toInt(s.openNodes, 0), "Nodes · port open", "var(--green)") +
-    statCardColor(toInt(s.peers, 0), "Peers · port closed", "var(--orange)") +
+    statCardColor(
+      toInt(s.peers, 0),
+      grantedUnreachable
+        ? `Peers · port closed (incl. ${grantedUnreachable} granted seed${grantedUnreachable === 1 ? "" : "s"} unreachable)`
+        : "Peers · port closed",
+      "var(--orange)",
+    ) +
     statCard(toInt(s.countries, 0), "Countries") +
     statCard(toInt(ever.rows[0]?.ever, 0), "All-Time Nodes") +
     statCard(toInt(sermons.rows[0]?.c, 0), "Sermons Shared");
@@ -1580,12 +1628,14 @@ async function pageNodes(): Promise<Response> {
 
   // Network Health (additive): a right-now snapshot of how resilient the network
   // is — how many online nodes can actually serve peers (reachable=1), how many
-  // seeds are up, average library coverage, and country spread. A network of mostly
+  // seeds are up (granted AND reachable — a granted seed with a closed port is
+  // broken out separately), average library coverage, and country spread. A network of mostly
   // closed peers is fragile, so reachable% is the headline metric. Same 15-min cutoff.
   const health = await dbQuery(
     `SELECT COUNT(*) online,
             SUM(CASE WHEN reachable=1 THEN 1 ELSE 0 END) reachable,
-            SUM(CASE WHEN node_type='seed' THEN 1 ELSE 0 END) seeds,
+            SUM(CASE WHEN node_type='seed' AND reachable=1 THEN 1 ELSE 0 END) seeds,
+            SUM(CASE WHEN node_type='seed' AND (reachable IS NULL OR reachable=0) THEN 1 ELSE 0 END) seedsUnreachable,
             COALESCE(AVG(library_coverage),0) avgCoverage,
             COUNT(DISTINCT country) countries
        FROM nodes WHERE is_online=1 AND last_seen >= ?`,
@@ -1595,6 +1645,7 @@ async function pageNodes(): Promise<Response> {
   const hOnline = toInt(h.online, 0);
   const hReachable = toInt(h.reachable, 0);
   const hSeeds = toInt(h.seeds, 0);
+  const hSeedsUnreachable = toInt(h.seedsUnreachable, 0);
   const hCoverage = Math.round(toNum(h.avgCoverage, 0));
   const hCountries = toInt(h.countries, 0);
   const reachablePct = hOnline > 0 ? Math.round((hReachable / hOnline) * 100) : 0;
@@ -1613,7 +1664,8 @@ async function pageNodes(): Promise<Response> {
         hOnline > 0
           ? `<div class="stats">
               ${statCardColor(reachablePct + "%", `Reachable · ${hReachable} of ${hOnline} online`, reachablePct < 30 ? "var(--orange)" : "var(--green)")}
-              ${statCardColor(hSeeds, "Seeds online", "var(--gold-text)")}
+              ${statCardColor(hSeeds, "Seeds online · granted & reachable", "var(--gold-text)")}
+              ${hSeedsUnreachable ? statCardColor(hSeedsUnreachable, "Granted seeds online but NOT reachable", "var(--orange)") : ""}
               ${statCard(hCoverage + "%", "Avg coverage")}
               ${statCard(hCountries, "Countries")}
             </div>${riskChip}`
@@ -1739,15 +1791,37 @@ async function pageSeedNodes(): Promise<Response> {
   const grantedStorage = granted.reduce((s: number, r: any) => s + toInt(r.storage_used_bytes, 0), 0);
   const grantedUploaded = granted.reduce((s: number, r: any) => s + toInt(r.uploaded_bytes, 0), 0);
 
-  // Two problems that are otherwise invisible:
-  //   neverSeen  — granted, but the node has never sent a single heartbeat.
-  //   notSeeding — granted, but still reporting as a plain user node, i.e. the
-  //                user hasn't unlocked/restarted the app into seed mode yet.
+  // This page is the APPROVAL view: it lists everyone who has been granted,
+  // reachable or not. That is deliberate — the public map now hides an
+  // unreachable seed among the peers, so this is the only place the admin can
+  // still see who was approved and chase the ones that never came good.
+  //
+  // Three distinct failure states, each needing DIFFERENT follow-up:
+  //   neverSeen     — granted, but the node has never sent a single heartbeat.
+  //                   → they never installed/ran the app at all.
+  //   notSeeding    — granted, but still reporting as a plain user node, i.e.
+  //                   the user hasn't unlocked/restarted the app into seed mode.
+  //                   → tell them to restart the app.
+  //   notReachable  — granted AND running as a seed, but its port is closed, so
+  //                   nothing can dial in. Under the new definition this node is
+  //                   NOT a seed on the map — it counts as a peer.
+  //                   → router/ISP problem: port forwarding, CGNAT, firewall.
+  const isSeedRunning = (r: any) => r.node_type === "seed";
+  const isReachable = (r: any) => toInt(r.reachable, 0) === 1;
   const neverSeen = granted.filter((r: any) => !r.last_seen && r.node_type === null).length;
   const notSeeding = granted.filter((r: any) => r.node_type !== null && r.node_type !== "seed").length;
+  const notReachable = granted.filter((r: any) => isSeedRunning(r) && !isReachable(r)).length;
+  // The only figure that matches what the map/Overview now call a "Seed Node".
+  const trueSeeds = granted.filter((r: any) => isSeedRunning(r) && isReachable(r)).length;
 
   const cards =
-    statCard(granted.length, "Granted seed nodes") +
+    statCard(granted.length, "Granted seed access (approved, any state)") +
+    statCardColor(trueSeeds, "Seeding & reachable · counts as Seed on the map", "var(--gold-text)") +
+    statCardColor(
+      notReachable,
+      "Granted & seeding but UNREACHABLE · shown as Peer",
+      notReachable ? "var(--orange)" : "var(--muted)",
+    ) +
     statCardColor(grantedOnline, "Granted & online now", "var(--green)") +
     statCardColor(pending.length, "Pending requests", pending.length ? "var(--orange)" : "var(--muted)") +
     statCard(fmtBytes(grantedStorage), "Storage across granted seeds") +
@@ -1758,7 +1832,10 @@ async function pageSeedNodes(): Promise<Response> {
       ? `<span class="badge b-peer" title="Seed access was granted but this node has never sent a heartbeat.">⚠ Granted, never seen · ${neverSeen}</span>`
       : "") +
     (notSeeding
-      ? `<span class="badge b-peer" title="Approved for seeding but still reporting as a regular user node — the app has not been unlocked/restarted into seed mode.">⚠ Granted, not running as seed · ${notSeeding}</span>`
+      ? `<span class="badge b-peer" title="Approved for seeding but still reporting as a regular user node — the app has not been unlocked/restarted into seed mode. Follow-up: ask them to restart the app.">⚠ Granted, app not in seed mode (needs restart) · ${notSeeding}</span>`
+      : "") +
+    (notReachable
+      ? `<span class="badge b-peer" title="Approved AND running as a seed, but its BitTorrent port is closed, so no peer can dial in. It is counted as a Peer on the map, not a Seed. Follow-up: port forwarding / CGNAT / firewall on their router or ISP.">⚠ Granted &amp; seeding, but port closed (needs port forwarding) · ${notReachable}</span>`
       : "");
   const warningsRow = warnings ? `<div class="row" style="margin-top:14px;">${warnings}</div>` : "";
 
@@ -1857,11 +1934,15 @@ async function pageSeedNodes(): Promise<Response> {
   const grantedRows = granted
     .map((r: any) => {
       const notSeed = r.node_type !== null && r.node_type !== "seed";
+      // Ordered most- to least-fundamental: never ran → ran but not in seed
+      // mode → seeding but nobody can dial in.
       const flag = !r.last_seen
         ? ' <span class="badge b-peer" title="Granted but never seen — this node has never sent a heartbeat.">never seen</span>'
         : notSeed
-          ? ' <span class="badge b-peer" title="Granted but still reporting as a regular user node — not running as a seed yet.">not seeding</span>'
-          : "";
+          ? ' <span class="badge b-peer" title="Granted but still reporting as a regular user node — not running as a seed yet. Follow-up: restart the app.">not in seed mode</span>'
+          : !isReachable(r)
+            ? ' <span class="badge b-peer" title="Granted and running as a seed, but its port is closed so no peer can connect in. Counted as a Peer on the map, not a Seed. Follow-up: port forwarding / CGNAT / firewall.">port closed — not a seed</span>'
+            : "";
       return `<tr>
         <td><code>#${escapeHtml(String(r.node_id).slice(0, 8))}</code>${flag}</td>
         ${emailCell(r)}${locCell(r)}${statusCell(r)}${scopeCell(r)}${progressCell(r)}${verifiedCell(r)}
@@ -1891,7 +1972,7 @@ async function pageSeedNodes(): Promise<Response> {
 
   const body = `
     <h1>Seed Nodes</h1>
-    <p class="sub">Approve seed access and watch every granted seed. “Seed progress” is scope-relative and reported by the node itself; “catalog coverage” is measured against the entire catalog, so the two do not match.</p>
+    <p class="sub">Approve seed access and watch every granted seed. This page lists everyone <strong>granted</strong>, reachable or not. Elsewhere (map, Overview, API) a “Seed Node” means <strong>granted AND reachable</strong> — a granted node with a closed port is shown as a Peer there, because nothing can dial into it. The two counts below are labelled so it is always clear which definition a number uses. “Seed progress” is scope-relative and reported by the node itself; “catalog coverage” is measured against the entire catalog, so the two do not match.</p>
     <div class="stats">${cards}</div>
     ${warningsRow}
     ${pendingSection}

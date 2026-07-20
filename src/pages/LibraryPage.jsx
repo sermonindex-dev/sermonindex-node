@@ -1,5 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
+import DownloadFailureBanner, {
+  DownloadFailureNote,
+  collectFailedDownloads,
+  describeDownloadError,
+  isCancellation,
+  iconRetry,
+} from '../components/DownloadFailures.jsx';
 
 const PAGE_SIZE = 50;
 
@@ -78,6 +85,36 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
   const [expandedId, setExpandedId] = useState(null);
   const [randomSeed, setRandomSeed] = useState(() => Math.random());
 
+  // ── Failed downloads ───────────────────────────────────────────────────────
+  // Read straight off the download manager rather than off `sermons`: the list
+  // this page receives is already search-filtered, so deriving failures from it
+  // would hide a failure the moment the user typed in the search box.
+  //
+  // `retrySnapshots` holds the dlState object a card had at the moment Retry was
+  // pressed. The manager replaces (and re-broadcasts) the entry on every update,
+  // so "this card's dlState is still the exact object I saw when I clicked" is a
+  // reliable, no-timers way to show "Trying again…" over the brief gap before
+  // the download re-enters the queue.
+  const [retrySnapshots, setRetrySnapshots] = useState({});
+  const [dismissedFailures, setDismissedFailures] = useState([]);
+
+  const allFailures = collectFailedDownloads();
+  const visibleFailures = allFailures.filter(f => !dismissedFailures.includes(f.id));
+
+  const retryDownload = useCallback((sermonId, snapshot) => {
+    if (!onDownload) return;
+    if (snapshot) setRetrySnapshots(prev => ({ ...prev, [sermonId]: snapshot }));
+    setDismissedFailures(prev => prev.filter(id => id !== sermonId));
+    onDownload(sermonId);
+  }, [onDownload]);
+
+  const retryAllFailures = useCallback((items) => {
+    if (!onDownload) return;
+    const ids = (items || []).map(f => f.id);
+    setDismissedFailures(prev => prev.filter(id => !ids.includes(id)));
+    for (const id of ids) onDownload(id);
+  }, [onDownload]);
+
   // Get unique speakers and topics — filtered by type selection so dropdowns only show relevant options
   const typeFiltered = filterType ? sermons.filter(s => s.type === filterType) : sermons;
   const speakers = [...new Set(typeFiltered.map(s => s.speaker))].sort();
@@ -138,7 +175,22 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
       <div className="page-header">
         <h2>Sermon Library</h2>
         <p>{sermons.length} sermons available ({audioCount} audio, {videoCount} video) · Download to listen and share</p>
+        {/* Honest disclosure, in the one place every visitor to this page reads.
+            Pressing play puts the sermon through the same download queue and the
+            same progress bar as the download button, so browsing quietly uses
+            disk space. Nobody was told that anywhere in the app until now. This
+            changes no behaviour — it only says plainly what already happens. */}
+        <p style={{ marginTop: '6px' }}>
+          Playing a sermon saves it to your computer first, so it uses disk space just like
+          using the download button. You can remove sermons at any time in My Downloads.
+        </p>
       </div>
+
+      <DownloadFailureBanner
+        failures={visibleFailures}
+        onRetryAll={retryAllFailures}
+        onDismiss={(items) => setDismissedFailures(prev => [...new Set([...prev, ...items.map(f => f.id)])])}
+      />
 
       <div className="library-filters">
         <select
@@ -207,6 +259,22 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
+          {/* Clear button — only present once there is something to clear, so it
+              never sits there as a dead control on an empty field. */}
+          {search ? (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear search"
+              title="Clear search"
+              onClick={() => { if (onSearch) onSearch(''); setVisibleCount(PAGE_SIZE); }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -217,6 +285,13 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
           const dlState = sermon.dlState;
           const isDownloading = dlState && ['downloading', 'seeding', 'queued'].includes(dlState.state);
           const isExpanded = expandedId === sermon.id;
+          // A user-cancelled download is not a failure and must not be reported
+          // as one.
+          const hasFailed = !!dlState && dlState.state === 'error' && !isCancellation(dlState) && !sermon.downloaded;
+          const failureReason = hasFailed ? describeDownloadError(dlState.error) : null;
+          // True only in the short window between pressing Retry and the manager
+          // broadcasting the download's new state.
+          const isRetrying = hasFailed && retrySnapshots[sermon.id] === dlState;
 
           return (
             <div
@@ -262,6 +337,11 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
 
               {isDownloading && <DownloadProgress dlState={dlState} />}
 
+              {hasFailed && !isRetrying && <DownloadFailureNote reason={failureReason} />}
+              {isRetrying && (
+                <span className="dl-status queued" style={{ marginTop: '8px' }}>Trying again…</span>
+              )}
+
               <div className="sermon-actions">
                 {/* Video can't decode inline in the WebView → open in the native
                     player. Like audio, only available once downloaded. */}
@@ -283,7 +363,20 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
                     {isCurrentPlaying ? iconPause : iconPlay}
                   </button>
                 )}
-                {!sermon.downloaded && (
+                {/* A failed download gets a plainly LABELLED retry, not a bare
+                    icon — this is the moment a non-technical user most needs to
+                    be told what to do next. */}
+                {!sermon.downloaded && hasFailed && (
+                  <button
+                    onClick={() => !isRetrying && retryDownload(sermon.id, dlState)}
+                    disabled={isRetrying}
+                    data-tooltip="Try this download again"
+                    style={{ ...externalBtnStyle, color: 'var(--orange)', opacity: isRetrying ? 0.6 : 1, cursor: isRetrying ? 'default' : 'pointer' }}
+                  >
+                    {iconRetry} {isRetrying ? 'Trying…' : 'Try again'}
+                  </button>
+                )}
+                {!sermon.downloaded && !hasFailed && (
                   <button
                     className={`btn-icon ${isDownloading ? 'downloading' : ''}`}
                     onClick={() => !isDownloading && onDownload(sermon.id)}

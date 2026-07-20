@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess, saveReachability } from '../services/network.js';
+import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess, saveReachability, readReachability, readIpv6Observation } from '../services/network.js';
+import { timeAgo } from '../utils/time.js';
+import { isReachable, writeSeedGranted } from '../utils/nodeStatus.js';
 import CgnatNotice from '../components/CgnatNotice.jsx';
 import { TORRENT_PORT_RANGE } from '../services/constants.js';
 import { getNodeId } from '../services/heartbeat.js';
@@ -45,6 +47,115 @@ const iconCircuitry = (
     <path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM88,160a8,8,0,1,1-8,8A8,8,0,0,1,88,160ZM48,48H80v97.38a24,24,0,1,0,16,0V115.31l48,48V208H48ZM208,208H160V160a8,8,0,0,0-2.34-5.66L96,92.69V48h32V72a8,8,0,0,0,2.34,5.66l16,16A23.74,23.74,0,0,0,144,104a24,24,0,1,0,24-24,23.74,23.74,0,0,0-10.34,2.35L144,68.69V48h64V208ZM168,96a8,8,0,1,1-8,8A8,8,0,0,1,168,96Z" />
   </svg>
 );
+
+// ── Seed-node hero band ───────────────────────────────────────────────────
+// Ported from the website's node-software landing page (the `.nlp-seed`
+// section). Full-width band that sits above the two-column layout in BOTH the
+// locked and unlocked states, since it is the page's introduction either way.
+//
+// The SVG bleeds in from the left and is masked out toward the copy on the
+// right. Its colours are the site's literal gold/cream, so the band carries its
+// own dark olive surface in both app themes (see `.si-seedhero` in styles.css)
+// — cream dots would be invisible on the light theme's #F8F8F2.
+//
+// The gradient/pattern ids are document-global, so they are namespaced
+// (`siSeedHero*`) to avoid the kind of id collision already fixed on StatsPage.
+function SeedNodeHero() {
+  return (
+    <div className="si-seedhero">
+      <div className="si-seedhero-viz" aria-hidden="true">
+        <svg viewBox="0 0 620 560" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <pattern id="siSeedHeroDots" width="42" height="42" patternUnits="userSpaceOnUse">
+              <circle cx="3" cy="3" r="1.5" fill="#f3efe0" opacity="0.09" />
+            </pattern>
+            <linearGradient id="siSeedHeroArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#d4af37" stopOpacity="0.32" />
+              <stop offset="1" stopColor="#d4af37" stopOpacity="0.02" />
+            </linearGradient>
+            <radialGradient id="siSeedHeroGlow" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stopColor="#f3efe0" stopOpacity="0.45" />
+              <stop offset="1" stopColor="#f3efe0" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <rect x="0" y="0" width="620" height="560" fill="url(#siSeedHeroDots)" />
+          {/* rising library-growth area chart */}
+          <path
+            d="M0,474 C70,464 120,452 180,432 C240,412 300,372 360,344 C420,316 470,268 520,232 C560,203 590,190 620,176 L620,560 L0,560 Z"
+            fill="url(#siSeedHeroArea)"
+          />
+          <path
+            d="M0,474 C70,464 120,452 180,432 C240,412 300,372 360,344 C420,316 470,268 520,232 C560,203 590,190 620,176"
+            fill="none"
+            stroke="#d4af37"
+            strokeWidth="2.6"
+            strokeOpacity="0.6"
+            strokeLinecap="round"
+          />
+          {/* peer links */}
+          <g stroke="#d4af37" strokeOpacity="0.32" strokeWidth="1.4">
+            <line x1="80" y1="130" x2="150" y2="210" />
+            <line x1="80" y1="130" x2="175" y2="80" />
+            <line x1="150" y1="210" x2="270" y2="140" />
+            <line x1="150" y1="210" x2="240" y2="255" />
+            <line x1="270" y1="140" x2="360" y2="95" />
+            <line x1="240" y1="255" x2="390" y2="205" />
+            <line x1="270" y1="140" x2="390" y2="205" />
+            <line x1="175" y1="80" x2="360" y2="95" />
+            <line x1="390" y1="205" x2="460" y2="150" />
+            <line x1="120" y1="320" x2="150" y2="210" />
+            <line x1="120" y1="320" x2="240" y2="255" />
+            <line x1="240" y1="255" x2="270" y2="140" />
+          </g>
+          {/* signal pulses on two hub nodes */}
+          <circle className="si-seedhero-pulse" cx="80" cy="130" r="9" fill="none" stroke="#d4af37" strokeWidth="2" opacity="0.5">
+            <animate attributeName="r" values="9;30" dur="3.2s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0.5;0" dur="3.2s" repeatCount="indefinite" />
+          </circle>
+          <circle className="si-seedhero-pulse" cx="240" cy="255" r="9" fill="none" stroke="#f3efe0" strokeWidth="2" opacity="0.4">
+            <animate attributeName="r" values="9;28" dur="3.6s" begin="1.1s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0.45;0" dur="3.6s" begin="1.1s" repeatCount="indefinite" />
+          </circle>
+          {/* node glows */}
+          <circle cx="80" cy="130" r="26" fill="url(#siSeedHeroGlow)" />
+          <circle cx="240" cy="255" r="24" fill="url(#siSeedHeroGlow)" />
+          {/* peer nodes */}
+          <g>
+            <circle cx="175" cy="80" r="5" fill="#f3efe0" opacity="0.85" />
+            <circle cx="270" cy="140" r="6" fill="#f3efe0" opacity="0.9" />
+            <circle cx="360" cy="95" r="5" fill="#f3efe0" opacity="0.8" />
+            <circle cx="390" cy="205" r="6.5" fill="#d4af37" />
+            <circle cx="460" cy="150" r="4.5" fill="#f3efe0" opacity="0.7" />
+            <circle cx="120" cy="320" r="6" fill="#f3efe0" opacity="0.85" />
+            <circle cx="150" cy="210" r="8" fill="#d4af37" />
+            <circle cx="80" cy="130" r="8" fill="#d4af37" />
+            <circle cx="240" cy="255" r="8" fill="#d4af37" />
+          </g>
+        </svg>
+      </div>
+      <div className="si-seedhero-wrap">
+        <div className="si-seedhero-copy">
+          <div className="si-seedhero-kick">◈ Seed Nodes</div>
+          <h2>Hold a complete backup of over{"\u00a0"}25,000 sermons.</h2>
+          <p>
+            SermonIndex is built on a peer-to-peer network where every user helps share sermon
+            content. Regular users share the sermons they’ve listened to. Seed nodes go further —
+            they download and serve a large portion of the whole library so it can never be lost.
+          </p>
+          <p>
+            With seed nodes distributed across the world, the sermon library becomes essentially
+            indestructible. No single point of failure. No government can censor it. The content
+            lives on across the body of Christ.
+          </p>
+          <div className="si-seedhero-stats">
+            <div className="s"><b>25,000+</b><small>Sermons preserved</small></div>
+            <div className="s"><b>Always-on</b><small>A Raspberry Pi or old laptop is perfect</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Tauri APIs — lazy-loaded to avoid top-level await
 let tauriInvoke = null;
@@ -123,8 +234,21 @@ export default function SeedNodePage({
   const [savingPath, setSavingPath] = useState(false);
   const [diskInfo, setDiskInfo] = useState(null); // { available_bytes, available_formatted, available_tb }
 
-  // STEP 3 — reachability
-  const [reach, setReach] = useState(null); // null | { checking } | { open, port }
+  // STEP 3 — reachability. Seeded from the SAVED probe result so leaving this
+  // page and coming back (or reopening the app) still shows the answer you
+  // already got — and so the "Verified Seed Node" badge below, which depends on
+  // it, doesn't claim you're unreachable simply because you haven't re-tested
+  // this session. The saved result never expires and is only replaced by an
+  // explicit Re-test. Shape: null | { open, open_v6, …, ts, port? }
+  const [reach, setReach] = useState(() => readReachability());
+  // PASSIVE inbound-IPv6 observation, read once on mount. Separate from `reach`
+  // on purpose: it is sticky and survives a node that has never been probed. A
+  // seed node reachable ONLY over IPv6 (the normal outcome on Starlink) is
+  // genuinely reachable, and the badge below must not call it unreachable.
+  const [v6obs] = useState(() => readIpv6Observation());
+  // In flight, kept out of `reach` so a running (or failed) test never blanks
+  // the result already on screen.
+  const [testing, setTesting] = useState(false);
   const [reachPort, setReachPort] = useState(null);
 
   // STEP 4 — download
@@ -159,7 +283,11 @@ export default function SeedNodePage({
     let cancelled = false;
     (async () => {
       const ok = await checkSeedAccess(nodeId);
-      if (!cancelled && ok) onUnlock(true);
+      if (cancelled) return;
+      // Mirror the server's answer locally — see utils/nodeStatus.js. This is
+      // what lets the Connections panel tell a Seed node from a Node.
+      writeSeedGranted(ok);
+      if (ok) onUnlock(true);
     })();
     return () => { cancelled = true; };
   }, [seedUnlocked, nodeId, onUnlock]);
@@ -169,6 +297,7 @@ export default function SeedNodePage({
     setCheckingAccess(true);
     setAccessMsg('');
     const ok = await checkSeedAccess(nodeId);
+    writeSeedGranted(ok);
     if (ok) onUnlock(true);
     else setAccessMsg('Not approved yet. Once the admin enables your node, press "Check access" again.');
     setCheckingAccess(false);
@@ -179,7 +308,7 @@ export default function SeedNodePage({
     setCheckingAccess(true);
     setAccessMsg('');
     const res = await requestSeedAccess(nodeId, reqEmail.trim());
-    if (res?.enabled) onUnlock(true);
+    if (res?.enabled) { writeSeedGranted(true); onUnlock(true); }
     else if (res?.requested) {
       setRequested(true);
       setAccessMsg("Request sent. You'll get access once the admin approves your node — then press \"Check access\".");
@@ -271,7 +400,7 @@ export default function SeedNodePage({
 
   // ── STEP 3: reachability test (mirrors ConnectionsPanel) ──────────────────
   const testReachability = useCallback(async () => {
-    setReach({ checking: true });
+    setTesting(true);
     // Get the node's listening port from the torrent session.
     let port = reachPort;
     try {
@@ -282,14 +411,16 @@ export default function SeedNodePage({
       }
     } catch {}
     if (!port) {
-      setReach({ open: false, port: null, noPort: true });
+      setTesting(false);
+      setReach({ open: false, port: null, noPort: true, ts: Date.now() });
       return;
     }
     setReachPort(port);
 
     const result = await probeReachability(port);
+    setTesting(false);
     if (result) {
-      setReach({ ...result, port });
+      setReach({ ...result, port, ts: Date.now() });
       saveReachability(result);
       // Register in the backbone directory so new users can find reachable seeds.
       try {
@@ -300,7 +431,7 @@ export default function SeedNodePage({
     }
     // Probe service unavailable — fall back to canyouseeme.org so the seed
     // node can still confirm the port manually.
-    setReach({ open: false, port, manual: true });
+    setReach({ open: false, port, manual: true, ts: Date.now() });
     await ensureTauri();
     if (tauriInvoke) {
       try { await tauriInvoke('open_url', { url: 'https://canyouseeme.org/' }); } catch {}
@@ -369,13 +500,28 @@ export default function SeedNodePage({
 
   if (!seedUnlocked) {
     return (
-      <div className="seed-section">
-        <div className="page-header">
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Become a Seed Node
-          </h2>
-          <p>Seed nodes carry the sermon library and serve it to the global peer network</p>
+      <div className="settings-page-root">
+        <div className="page-header-wide">
+          <div className="page-header">
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Become a Seed Node
+            </h2>
+            <p>Seed nodes carry the sermon library and serve it to the global peer network</p>
+          </div>
         </div>
+
+        {/* Full-width intro band, spanning both columns below. */}
+        <div className="page-header-wide">
+          <SeedNodeHero />
+        </div>
+
+        {/* Two columns (the shared Settings/Connections layout).
+            LEFT  — the one thing to DO on this page: request access.
+            RIGHT — the long explanation of what a seed node is, including the
+                    expandable hardware guide. Keeping the action and the
+                    explanation side by side means neither buries the other. */}
+        <div className="connections-layout">
+        <div className="connections-left">
 
         <div className="seed-card">
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>{iconLock} Request Seed Node Access</h3>
@@ -425,6 +571,11 @@ export default function SeedNodePage({
           </div>
           {accessMsg && <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '8px' }}>{accessMsg}</p>}
         </div>
+
+        </div>
+
+        {/* ── RIGHT: what a seed node is ── */}
+        <div className="connections-right">
 
         <div className="seed-card">
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -517,6 +668,9 @@ export default function SeedNodePage({
             "How beautiful on the mountains are the feet of those who bring good news" — Isaiah 52:7
           </p>
         </div>
+
+        </div>
+        </div>
       </div>
     );
   }
@@ -524,13 +678,30 @@ export default function SeedNodePage({
   // ─── UNLOCKED STATE ───────────────────────────────────────────────
 
   return (
-    <div className="seed-section">
-      <div className="page-header">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Seed Node Active
-        </h2>
-        <p>You are helping carry the sermon library for the global network</p>
+    <div className="settings-page-root">
+      <div className="page-header-wide">
+        <div className="page-header">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Seed Node Active
+          </h2>
+          <p>You are helping carry the sermon library for the global network</p>
+        </div>
       </div>
+
+      {/* Full-width intro band, spanning both columns below. */}
+      <div className="page-header-wide">
+        <SeedNodeHero />
+      </div>
+
+      {/* Two columns (the shared Settings/Connections layout).
+          This page is a numbered setup flow, so Steps 1–4 stay together in ONE
+          column, in order, top to bottom — splitting a "step 1, 2, 3, 4"
+          sequence across two columns would make the order ambiguous. Only the
+          genuinely independent cards (updates, live status readout, contact)
+          move to the right, where the status figures now sit alongside the
+          steps that produce them instead of far below them. */}
+      <div className="connections-layout">
+      <div className="connections-left">
 
       {/* Step 1: Choose what to host */}
       <div className="seed-card">
@@ -655,17 +826,24 @@ export default function SeedNodePage({
         </p>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px' }}>
-          <button className="btn btn-gold" onClick={testReachability} disabled={!!reach?.checking}>
-            {reach?.checking ? 'Testing…' : 'Test Reachability'}
+          <button className="btn btn-gold" onClick={testReachability} disabled={testing}>
+            {testing ? 'Testing…' : reach ? 'Re-test' : 'Test Reachability'}
           </button>
           {reachPort && (
             <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
               Node port: <strong style={{ color: 'var(--text-primary)' }}>{reachPort}</strong>
             </span>
           )}
+          {/* The result is kept indefinitely and never re-probed on its own, so
+              its age is shown alongside the button that refreshes it. */}
+          {!testing && reach?.ts && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              Last tested {timeAgo(reach.ts)}
+            </span>
+          )}
         </div>
 
-        {reach && !reach.checking && (
+        {reach && !testing && (
           reach.open ? (
             <p style={{ color: 'var(--green)', fontSize: '0.85rem', marginTop: '12px', fontWeight: 600 }}>
               ✓ Reachable — you're strengthening the backbone.
@@ -688,10 +866,14 @@ export default function SeedNodePage({
             </div>
           ) : (
             <div style={{ marginTop: '12px' }}>
-              <p style={{ color: reach.noPort ? 'var(--orange)' : 'var(--seed-blue)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
+              {/* Peer colour — the same one the node map uses for a port-closed
+                  node (NODE_COLORS.peer → var(--gold-text) in NetworkPage.jsx). */}
+              <p style={{ color: reach.noPort ? 'var(--orange)' : 'var(--gold-text)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
                 {reach.noPort
                   ? 'Not reachable yet — the P2P session isn\'t running, so there\'s no port to test. Start the node, then test again.'
-                  : `Port ${reach.port} isn't reachable from outside — your node still uploads to every peer it reaches, but others can't connect to you.`}
+                  /* A result restored from a previous session has no port recorded,
+                     so fall back to neutral wording rather than "Port undefined". */
+                  : `${reach.port || reachPort ? `Port ${reach.port || reachPort}` : "Your node's port"} isn't reachable from outside — your node still uploads to every peer it reaches, but others can't connect to you.`}
               </p>
               {!reach.noPort && (
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
@@ -708,7 +890,7 @@ export default function SeedNodePage({
                     1. In your router settings, turn on <strong>UPnP</strong>, then restart this app.
                   </p>
                   <p style={{ margin: '0 0 6px' }}>
-                    2. Or add a port forward: <strong>TCP {reach.port}</strong> (or the range
+                    2. Or add a port forward: <strong>TCP {reach.port || reachPort || "your node's port"}</strong> (or the range
                     {' '}<strong>{TORRENT_PORT_RANGE}</strong>) pointing to this computer.
                   </p>
                   {reach.manual && (
@@ -798,6 +980,11 @@ export default function SeedNodePage({
         )}
       </div>
 
+      </div>
+
+      {/* ── RIGHT: independent of the step sequence ── */}
+      <div className="connections-right">
+
       {/* Updates section */}
       <div className="seed-card">
         <h3>Library Updates</h3>
@@ -816,10 +1003,14 @@ export default function SeedNodePage({
 
         {/* Verified badge — a real seed node holds ~all of its scope on disk AND
             is reachable so peers can actually pull from it. Both are measured,
-            not claimed: coverage from files on disk, reachability from the probe. */}
+            not claimed: coverage from files on disk, reachability from the probe
+            OR from a real peer that connected in over IPv6. (It used to test
+            `reach.open` alone, which wrongly told every IPv6-only-reachable seed
+            node — Starlink, mobile broadband — that it was unreachable.) */}
         {(() => {
-          const verified = scopeTotal > 0 && (scopePercent >= 95) && reach?.open === true;
-          const nearly = scopeTotal > 0 && scopePercent >= 95 && reach?.open !== true;
+          const reachableSeed = isReachable({ reach, ipv6: v6obs });
+          const verified = scopeTotal > 0 && (scopePercent >= 95) && reachableSeed;
+          const nearly = scopeTotal > 0 && scopePercent >= 95 && !reachableSeed;
           return (
             <div style={{
               display: 'flex', alignItems: 'center', gap: '10px',
@@ -898,6 +1089,9 @@ export default function SeedNodePage({
           Questions about seed nodes? Email{' '}
           <a href={`mailto:${SEED_CONTACT_EMAIL}`} style={{ color: 'var(--gold-text)' }}>{SEED_CONTACT_EMAIL}</a>
         </p>
+      </div>
+
+      </div>
       </div>
     </div>
   );

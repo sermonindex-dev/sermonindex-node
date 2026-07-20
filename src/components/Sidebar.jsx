@@ -162,25 +162,25 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
         </div>
       ) : null}
 
-      <div className="sidebar-footer">
-        <div className="node-status">
-          <div className={`node-dot ${nodeOnline ? '' : 'offline'}`}></div>
-          <span>{nodeOnline ? 'Local Node Online' : 'Local Node Offline'}</span>
+      {/* Footer — what this node is actually holding. The online/offline status
+          line that used to sit above these figures has been removed on purpose:
+          the badge at the top right already states the node's state (Offline /
+          Peer / Node / Seed node) in the map's colours and is the single source
+          of truth. The whole footer drops out when the node is offline, so
+          nothing is left behind but an empty bordered strip. */}
+      {nodeOnline && (
+        <div className="sidebar-footer">
+          <div className="node-stats">
+            {nodeStats.filesShared} files · {nodeStats.storageUsed}
+          </div>
+          <div className="coverage-bar-container">
+            <div className="coverage-bar">
+              <div className="coverage-bar-fill" style={{ width: `${coverage}%` }}></div>
+            </div>
+            <span className="coverage-label">{coverage}% library coverage</span>
+          </div>
         </div>
-        {nodeOnline && (
-          <>
-            <div className="node-stats">
-              {nodeStats.filesShared} files · {nodeStats.storageUsed}
-            </div>
-            <div className="coverage-bar-container">
-              <div className="coverage-bar">
-                <div className="coverage-bar-fill" style={{ width: `${coverage}%` }}></div>
-              </div>
-              <span className="coverage-label">{coverage}% library coverage</span>
-            </div>
-          </>
-        )}
-      </div>
+      )}
     </div>
   );
 }

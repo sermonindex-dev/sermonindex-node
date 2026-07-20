@@ -177,7 +177,9 @@ export default function CommunityPage() {
   const muted = { color: 'var(--text-muted)', fontSize: '0.7rem' };
 
   return (
-    <div style={{ maxWidth: 980, margin: '0 auto' }}>
+    /* 1100px matches .connections-layout / .page-header-wide, so Community is
+       the same width as Your Stats, Settings, Connections and the rest. */
+    <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       <div className="page-header">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconChat}</span> Community

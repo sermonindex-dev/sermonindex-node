@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import CgnatNotice from './CgnatNotice.jsx';
+import { timeAgo } from '../utils/time.js';
 
 /**
  * ReachabilityBanner — the user's OWN reachability status, made prominent and
@@ -12,14 +13,28 @@ import CgnatNotice from './CgnatNotice.jsx';
  *      but the ISP hands out real routable IPv6. Treating this person as
  *      "unreachable" (as the old two-state banner did) was simply wrong, and
  *      sent them off to port-forward something that can never work.
- *   3. Neither                         → LEAF (blue). The existing honest
- *      "you still contribute by connecting outward" messaging.
+ *   3. Neither                         → PEER (yellow). The existing honest
+ *      "you still contribute by connecting outward" messaging. "Peer" is the
+ *      SAME word and the SAME colour the node map uses for a port-closed node
+ *      (NODE_COLORS.peer → var(--gold-text)), so the two views agree.
  *
- * Honesty rule: this NEVER claims "reachable" unless the probe actually said so.
- * `reachOpen` / `reachOpen6` are authoritative probe results; an outbound upload
- * count is deliberately NOT treated as proof of reachability. And open_v6:false
- * is only believed when v6Probe === 'ok' — if the probe server itself couldn't
- * make an IPv6 connection we say nothing rather than blaming the user.
+ * Honesty rule: this NEVER claims "reachable" unless we have EVIDENCE. There are
+ * exactly two kinds of evidence and both are real:
+ *
+ *   ACTIVE  — the probe server dialled us and got through (`reachOpen`,
+ *             `reachOpen6`).
+ *   PASSIVE — a peer out on the internet opened a connection TO US over a public
+ *             IPv6 address (`v6InboundSeen`). Our probe runs on a Bunny edge
+ *             script that has no outbound IPv6 whatsoever, so `reachOpen6` can
+ *             NEVER become true for anyone; this passive observation is the only
+ *             route to an honest IPv6 answer, and for a Starlink user it's the
+ *             only way they'll learn they are genuinely reachable.
+ *
+ * An outbound upload count is still deliberately NOT treated as proof — nor is
+ * an outbound IPv6 connection, which only shows we can dial out. And
+ * open_v6:false is only believed when v6Probe === 'ok'; if the probe server
+ * itself couldn't make an IPv6 connection we say nothing rather than blaming
+ * the user.
  *
  * Props:
  *   running  {boolean}          — the P2P session is up
@@ -33,26 +48,51 @@ import CgnatNotice from './CgnatNotice.jsx';
  *                                 address. Usually false even for CGNAT users, so
  *                                 the copy is worded as a possibility either way.
  *   testing  {boolean}          — a reachability test is in flight
+ *   testedAt {number|null}      — epoch ms of the result being shown. The saved
+ *                                 result NEVER expires, so its age is the only
+ *                                 thing telling the user how current it is.
+ *   v6InboundSeen {boolean}     — PASSIVE PROOF: a peer at a public IPv6 address
+ *                                 opened a connection to this node. Sticky and
+ *                                 persisted: once it has happened it stays true,
+ *                                 because reachability is a "has this ever been
+ *                                 demonstrated" fact, not a momentary one.
+ *   v6InboundAt {number|null}   — epoch ms we first observed that.
+ *   v6EgressSeen {boolean}      — we connected OUT to an IPv6 peer. Proves this
+ *                                 machine has working IPv6 and NOTHING MORE. It
+ *                                 is never shown as reachability; it is only used
+ *                                 to soften the "no IPv6" silence.
  *   onTest   {function}         — optional: trigger a (re)test
  */
 export default function ReachabilityBanner({
   running, port, reachOpen, reachOpen6 = false, v6Probe = 'none',
-  hasIpv6 = false, cgnat, testing, onTest,
+  hasIpv6 = false, cgnat, testing, testedAt = null, onTest,
+  v6InboundSeen = false, v6InboundAt = null, v6EgressSeen = false,
 }) {
   // Inline "how to open your port" directions — collapsed by default, expands
   // in place (no external link). Hook is declared unconditionally, above the
   // early returns, so hook order stays stable across renders.
   const [showGuide, setShowGuide] = useState(false);
 
+  // The result on screen is a SAVED one that never expires and is never
+  // silently re-probed, so the button is an explicit "Re-test" and the age line
+  // beneath it is what keeps the display honest about how old the reading is.
+  const age = timeAgo(testedAt);
   const testBtn = onTest ? (
-    <button
-      className="btn btn-outline"
-      style={{ fontSize: '0.78rem', padding: '6px 14px', whiteSpace: 'nowrap', flexShrink: 0 }}
-      onClick={onTest}
-      disabled={testing}
-    >
-      {testing ? 'Testing…' : 'Test again'}
-    </button>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
+      <button
+        className="btn btn-outline"
+        style={{ fontSize: '0.78rem', padding: '6px 14px', whiteSpace: 'nowrap' }}
+        onClick={onTest}
+        disabled={testing}
+      >
+        {testing ? 'Testing…' : 'Re-test'}
+      </button>
+      {(testing || age) && (
+        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          {testing ? 'Checking now…' : `Last tested ${age}`}
+        </span>
+      )}
+    </div>
   ) : null;
 
   // ── Node offline — no session, so no honest claim to make ──
@@ -88,6 +128,7 @@ export default function ReachabilityBanner({
             library indestructible. Thank you for strengthening the network.
           </div>
         </div>
+        {testBtn}
       </div>
     );
   }
@@ -111,11 +152,8 @@ export default function ReachabilityBanner({
             </span>
           </div>
           <div style={sub}>
-            We connected to your node from the outside world, so other people can too — they reach you on the
-            newer kind of internet address (IPv6). The older kind (IPv4) is closed, which is completely normal
-            on Starlink, T-Mobile Home Internet and mobile broadband: those providers share one old-style
-            address between many homes, but give every home a real modern one. Nothing to change here, and
-            nothing to forward. Thank you for strengthening the network.
+            Other people can reach your node over IPv6 — nothing to forward or change. That's the normal
+            good result on Starlink and mobile broadband. Thank you for strengthening the network.
           </div>
         </div>
         {testBtn}
@@ -123,16 +161,72 @@ export default function ReachabilityBanner({
     );
   }
 
-  // ── Port closed → LEAF node. Honest, and deliberately NOT alarming: for a
+  // ── PASSIVE PROOF of inbound IPv6 → a full node, over IPv6. ──
+  // Nobody dialled this person on our behalf: a real peer, somewhere out on the
+  // internet, opened a connection TO THEM over a public IPv6 address. That is
+  // ground truth, and it is the ONLY way we can ever answer this question —
+  // our probe server has no IPv6 route at all, so `reachOpen6` above can never
+  // become true for anyone.
+  //
+  // Placed BEFORE the "closed" branch on purpose: a node with proven inbound
+  // IPv6 is not a peer, and must never be shown port-forward instructions it
+  // does not need. It is deliberately NOT placed before the IPv4 branch — if
+  // IPv4 inbound works too, that fuller result is the one worth showing.
+  //
+  // Sticky: this stays true after the peer disconnects and across restarts. A
+  // reachability fact that flickers off is worse than no fact at all.
+  if (reachOpen !== true && v6InboundSeen === true) {
+    const seenAgo = timeAgo(v6InboundAt);
+    return (
+      <div style={box('rgba(61,138,65,0.12)', 'rgba(61,138,65,0.40)')}>
+        <span style={glyph('var(--green)')}>✓</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={title('var(--green)')}>Reachable over IPv6 — your node is a full node</span>
+            <span style={{
+              fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
+              color: 'var(--gold-text)', background: 'var(--gold-dim)', padding: '2px 8px', borderRadius: '10px',
+            }}>
+              Backbone
+            </span>
+          </div>
+          <div style={sub}>
+            Someone out there connected straight to your node — not the other way round — using the newer
+            kind of internet address (IPv6). That's the proof that matters: people <em>can</em> find you and
+            take sermons from you directly.
+            {reachOpen === false
+              ? <> The older kind of address (IPv4) stays closed, and on Starlink, T-Mobile Home Internet or
+                  mobile broadband it always will — those providers share one old-style address between many
+                  homes while giving every home a real modern one. Nothing to change, and nothing to
+                  forward.</>
+              : <> We haven't been able to check the older kind of address (IPv4) from outside, but it doesn't
+                  matter much: you're already reachable.</>}
+            {' '}Thank you for strengthening the network.
+          </div>
+          {seenAgo && (
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '5px' }}>
+              First seen {seenAgo} — noticed from a real connection, not a test
+            </div>
+          )}
+        </div>
+        {testBtn}
+      </div>
+    );
+  }
+
+  // ── Port closed → PEER. Honest, and deliberately NOT alarming: for a
   // great many people (Starlink, T-Mobile Home Internet, mobile broadband) this
   // is permanent and unfixable, and they are still contributing every day.
+  // "Peer" is the node map's own word for a port-closed node, and the colour
+  // below is the map's peer colour (NODE_COLORS.peer, #f8d355 / var(--gold-text))
+  // so someone who sees themselves on the map sees the same category here.
   if (reachOpen === false) {
     return (
-      <div style={{ ...box('rgba(45,108,181,0.10)', 'rgba(45,108,181,0.35)'), alignItems: 'flex-start' }}>
-        <span style={glyph('var(--seed-blue)')}>◈</span>
+      <div style={{ ...box('rgba(248,211,85,0.10)', 'rgba(248,211,85,0.35)'), alignItems: 'flex-start' }}>
+        <span style={glyph('var(--gold-text)')}>◈</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={title('var(--seed-blue)')}>
-            Your node is a <em>leaf</em> — still sharing, just not reachable
+          <div style={title('var(--gold-text)')}>
+            Your node is a <em>peer</em> — still sharing, just not reachable
           </div>
           <div style={sub}>
             Other people can't connect <em>to</em> you, so your node goes out and connects to them instead —
@@ -151,6 +245,19 @@ export default function ReachabilityBanner({
             detected={!!cgnat}
             v6Firewalled={hasIpv6 && v6Probe === 'ok' && reachOpen6 === false}
           />
+
+          {/* The WEAKER, honest claim. We have connected OUT to peers over IPv6,
+              which proves this machine's IPv6 works — but an outbound connection
+              says nothing whatsoever about whether anyone can come IN. So this
+              is worded as "not yet known", never as a result, and it is styled as
+              a quiet note rather than a green verdict. If an inbound IPv6 peer
+              ever does arrive, the branch above takes over and says so properly.
+              We can't test this ourselves: the probe server has no IPv6 route. */}
+          {v6EgressSeen && !v6InboundSeen && (
+            <div style={{ ...guidePanel, marginTop: '8px' }}>
+              Your connection has IPv6, which may let others reach you. We'll say so here if it happens.
+            </div>
+          )}
 
           {/* Inline, collapsible directions — reuses the gold "disclosure" idiom
               from the Connections panel's "Help the network more" section, with a
@@ -204,7 +311,7 @@ export default function ReachabilityBanner({
                   usually starts with 192.168 — you can find it in your computer's network settings.
                 </li>
                 <li style={{ ...guideStep, marginBottom: 0 }}>
-                  Save or apply the rule, then come back here and press <strong>Test again</strong>.
+                  Save or apply the rule, then come back here and press <strong>Re-test</strong>.
                 </li>
               </ol>
               <p style={{ margin: 0, color: 'var(--text-muted)' }}>

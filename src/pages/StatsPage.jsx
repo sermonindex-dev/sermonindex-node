@@ -76,6 +76,106 @@ function readUploadedLifetime() {
   } catch { return 0; }
 }
 
+// ── Daily record (task: two more honest graphs) ─────────────────────────────
+// The app stores NO history: `downloadState` entries are { downloaded, magnet,
+// diskSize, incomplete } with no timestamp anywhere, and `si-uploaded-lifetime`
+// is a single running total. So there is no past to chart — which means either
+// we invent one (never) or we start keeping one. This keeps one, and the charts
+// say plainly that the record starts the day you first open this page.
+//
+// Deliberately TINY, given the 22.7 MB master-list incident that silently blew
+// the ~5 MB localStorage quota: ONE row per day, at most 30 days, roughly 1.5 KB
+// in total. Nothing per-sermon ever goes in here. Writes are guarded and a
+// failure only warns — a chart is never worth breaking the page for.
+const HISTORY_KEY = 'si-daily-record';
+const HISTORY_MAX_DAYS = 30;
+
+// Local calendar day, e.g. "2026-07-19" (local on purpose — "today" should mean
+// the volunteer's today, not UTC's).
+function dayKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// "19 Jul" — short, plain, and in the reader's own locale order.
+function dayLabel(key) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ''));
+  if (!m) return '';
+  // Constructed from parts, not Date.parse, so "2026-07-19" isn't read as UTC
+  // and shown as the previous day west of Greenwich.
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  try { return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); }
+  catch { return key; }
+}
+
+// Shape: { base, days: [{ d:'YYYY-MM-DD', v:<lifetime uploaded bytes>, n:<sermons held> }] }
+// `base` is the lifetime-uploaded figure at the START of the retained window, so
+// the oldest kept day still has something honest to subtract from.
+const EMPTY_HISTORY = { base: 0, days: [] };
+
+function readHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    if (!rec || !Array.isArray(rec.days)) return null;
+    const days = rec.days
+      .filter(d => d && typeof d.d === 'string')
+      .map(d => ({ d: d.d, v: Number(d.v) || 0, n: Number(d.n) || 0 }))
+      .slice(-HISTORY_MAX_DAYS);
+    return { base: Number(rec.base) || 0, days };
+  } catch { return null; }
+}
+
+function writeHistory(rec) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(rec));
+  } catch (e) {
+    // Same spirit as catalog.js's _warnStorageWrite: say so, carry on.
+    console.warn('[Stats] Could not save your daily record:', e?.message || e);
+  }
+}
+
+/**
+ * Fold today's readings into the record and hand back the updated copy.
+ * Called with the live figures, so today's row simply tracks the latest values
+ * seen today. Returns the PREVIOUS object unchanged (and writes nothing) when
+ * nothing has actually moved, so this can be called as often as we like.
+ */
+function recordToday(uploadedLifetime, sermonsHeld) {
+  const today = dayKey();
+  const prev = readHistory();
+  const up = Number(uploadedLifetime) || 0;
+  const held = Number(sermonsHeld) || 0;
+
+  // First run ever: today's uploaded total becomes the baseline, so the first
+  // bar counts only what is shared from now on rather than crediting today with
+  // everything uploaded since the app was installed.
+  if (!prev) {
+    const fresh = { base: up, days: [{ d: today, v: up, n: held }] };
+    writeHistory(fresh);
+    return fresh;
+  }
+
+  const days = prev.days.map(d => ({ ...d }));
+  const last = days[days.length - 1];
+  if (last && last.d === today) {
+    if (last.v === up && last.n === held) return prev; // nothing changed
+    last.v = up;
+    last.n = held;
+  } else {
+    days.push({ d: today, v: up, n: held });
+  }
+
+  // Trim to the window, carrying `base` forward as days fall off the front so
+  // the oldest surviving day keeps a correct figure to subtract from.
+  let base = prev.base;
+  while (days.length > HISTORY_MAX_DAYS) base = days.shift().v;
+
+  const next = { base, days };
+  writeHistory(next);
+  return next;
+}
+
 // Decimal GB (1000^3), matching how the app sizes the library elsewhere.
 // Falls back to MB/KB for small contributions.
 function formatContribution(bytes) {
@@ -241,7 +341,7 @@ function BreakdownBars({ audio, video }) {
  * Mirrors the hub dashboard's AreaChart: fixed viewBox, responsive width,
  * gold line over a soft gold gradient. Pure inline SVG.
  */
-function AreaSparkline({ data, height = 120 }) {
+function AreaSparkline({ data, height = 120, gradId = 'stats-spark-grad' }) {
   const w = 340, h = height, pad = 6;
   const arr = data && data.length ? data : [0];
   const max = Math.max(1, ...arr);
@@ -256,13 +356,62 @@ function AreaSparkline({ data, height = 120 }) {
   return (
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none">
       <defs>
-        <linearGradient id="stats-spark-grad" x1="0" y1="0" x2="0" y2="1">
+        {/* The gradient id is a prop so a second sparkline on the page gets its
+            own <defs> id rather than two elements sharing one. */}
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--gold-text)" stopOpacity="0.38" />
           <stop offset="100%" stopColor="var(--gold-text)" stopOpacity="0.02" />
         </linearGradient>
       </defs>
-      <path d={area} fill="url(#stats-spark-grad)" />
+      <path d={area} fill={`url(#${gradId})`} />
       <path d={line} fill="none" stroke="var(--gold-text)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+/**
+ * DailyBars — one bar per day of the local daily record. Same rendering
+ * approach as AreaSparkline above (fixed viewBox, responsive width, inline SVG,
+ * gold from the existing tokens — no new colours, no charting dependency).
+ * `data` is [{ d:'YYYY-MM-DD', v:<number> }]; `format` labels the hover tooltip.
+ */
+function DailyBars({ data, height = 120, format = (v) => String(v) }) {
+  const w = 340, h = height, pad = 6;
+  const arr = data && data.length ? data : [{ d: '', v: 0 }];
+  const max = Math.max(1, ...arr.map(x => Number(x.v) || 0));
+  const slot = (w - 2 * pad) / arr.length;
+  const bw = Math.max(1.5, slot * 0.6);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="stats-daily-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--gold-text)" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="var(--gold-text)" stopOpacity="0.3" />
+        </linearGradient>
+      </defs>
+      {arr.map((x, i) => {
+        const v = Number(x.v) || 0;
+        // Zero days draw nothing at all — an empty column is the honest picture
+        // of a day when nothing was shared.
+        const bh = v > 0 ? Math.max(2, (v / max) * (h - 2 * pad)) : 0;
+        return (
+          <rect
+            key={x.d || i}
+            x={pad + slot * i + (slot - bw) / 2}
+            y={h - pad - bh}
+            width={bw}
+            height={bh}
+            fill="url(#stats-daily-grad)"
+          >
+            <title>{`${dayLabel(x.d)} — ${format(v)}`}</title>
+          </rect>
+        );
+      })}
+      {/* Baseline, so a run of empty days still reads as a chart. */}
+      <line
+        x1={pad} y1={h - pad} x2={w - pad} y2={h - pad}
+        stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
@@ -306,6 +455,44 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
 
   // Storage used — prefer the live node stats, fall back to the library stats.
   const storageUsed = nodeStats?.storageUsed || libraryStats?.downloadedSize || '0 B';
+
+  // ── The daily record behind the two day-by-day charts ─────────────────────
+  // Sermons complete on disk: libraryStats.downloadedFiles counts only the
+  // files that passed the size check, with the catalog tally as a fallback.
+  const sermonsHeld = Number(libraryStats?.downloadedFiles) || (breakdown.audio + breakdown.video);
+  const [history, setHistory] = useState(() => readHistory() || EMPTY_HISTORY);
+
+  // Fold the live figures into today's row. recordToday returns the previous
+  // object untouched when nothing has moved, so this settles immediately.
+  useEffect(() => {
+    setHistory(recordToday(uploaded, sermonsHeld));
+  }, [uploaded, sermonsHeld]);
+
+  // Shared per day = the rise in the lifetime uploaded total since the previous
+  // recorded day. Clamped at zero so a cleared browser store or a reinstalled
+  // app can never draw a negative day.
+  const dailyShared = useMemo(() => {
+    let prev = Number(history.base) || 0;
+    return history.days.map((d) => {
+      const v = Math.max(0, (Number(d.v) || 0) - prev);
+      prev = Number(d.v) || 0;
+      return { d: d.d, v };
+    });
+  }, [history]);
+
+  // Sermons held per day — the figure as it stood on each recorded day.
+  const dailyHeld = useMemo(
+    () => history.days.map(d => ({ d: d.d, v: Number(d.n) || 0 })),
+    [history]
+  );
+
+  const daysRecorded = history.days.length;
+  const firstDayLabel = daysRecorded ? dayLabel(history.days[0].d) : '';
+  const sharedInWindow = dailyShared.reduce((a, x) => a + x.v, 0);
+  const bestDay = dailyShared.reduce((a, x) => (x.v > a ? x.v : a), 0);
+  const heldGained = daysRecorded > 1
+    ? Math.max(0, dailyHeld[dailyHeld.length - 1].v - dailyHeld[0].v)
+    : 0;
 
   const refresh = useCallback(async () => {
     setUploaded(readUploadedLifetime());
@@ -402,7 +589,12 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
   ];
 
   return (
-    <div className="seed-section">
+    <div className="settings-page-root">
+      {/* Heading AND the hero card span the full width above the two columns:
+          the five headline tiles are the most-looked-at thing on the page and
+          they lay out far better across the whole width than squeezed into one
+          column. Everything below is split into two. */}
+      <div className="page-header-wide">
       <div className="page-header">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconStats}</span> Your Stats
@@ -492,6 +684,17 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
           ))}
         </div>
       </div>
+      </div>
+
+      {/* Two columns — the shared Settings/Connections layout.
+          LEFT  — what you are holding right now (coverage + hosting mix) and
+                  what you have given day by day. These two are the substance
+                  of "your contribution", so they lead.
+          RIGHT — the live peers picture, the library growth curve, and the
+                  closing encouragement. Split by visual weight, not by card
+                  count: the tall donut card balances the two shorter charts. */}
+      <div className="connections-layout">
+      <div className="connections-left">
 
       {/* Coverage donut + audio/video breakdown */}
       <div className="seed-card">
@@ -510,6 +713,41 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
           <BreakdownBars audio={breakdown.audio} video={breakdown.video} />
         </div>
       </div>
+
+      {/* What you've shared each day — real figures from the SAME lifetime
+          uploaded total heartbeat.js reports (si-uploaded-lifetime). Each bar
+          is the rise in that total since the previous recorded day, so nothing
+          here is estimated. The app kept no history before now, so the record
+          honestly begins the first day this page is opened. */}
+      <div className="seed-card">
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+          <h3 style={{ marginBottom: 0 }}>What You've Shared Each Day</h3>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            Total: <strong style={{ color: 'var(--gold-text)' }}>{formatContribution(sharedInWindow)}</strong>
+            {bestDay > 0 && <> · Best day: <strong style={{ color: 'var(--text-secondary)' }}>{formatContribution(bestDay)}</strong></>}
+          </span>
+        </div>
+        <p style={{ marginTop: '6px', marginBottom: '14px' }}>
+          Every bar is what your computer passed on to other believers that day. Each one covers the
+          time since the last day you had the app open, so nothing you gave is missed.
+        </p>
+        <div style={{
+          background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '10px 8px 4px',
+        }}>
+          <DailyBars data={dailyShared} format={formatContribution} />
+        </div>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '10px 0 0' }}>
+          {daysRecorded > 1
+            ? `Keeping a record since ${firstDayLabel} — the last ${daysRecorded} days you had the app open.`
+            : 'This started keeping a record today, so it will fill out over the coming days.'}
+        </p>
+      </div>
+
+      </div>
+
+      {/* ── RIGHT ── */}
+      <div className="connections-right">
 
       {/* Live "peers helped" sparkline */}
       <div className="seed-card">
@@ -532,6 +770,42 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
         </div>
       </div>
 
+      {/* Sermons safe on your computer, day by day — the count of files that
+          are complete on disk (libraryStats.downloadedFiles, the same figure
+          the rest of the app uses), recorded once a day. Real readings only:
+          no back-fill, no estimate for days the app wasn't open. */}
+      <div className="seed-card">
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+          <h3 style={{ marginBottom: 0 }}>Sermons Safe on Your Computer</h3>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            Now: <strong style={{ color: 'var(--gold-text)' }}>{sermonsHeld.toLocaleString()}</strong>
+            {heldGained > 0 && <> · Added since {firstDayLabel}: <strong style={{ color: 'var(--text-secondary)' }}>+{heldGained.toLocaleString()}</strong></>}
+          </span>
+        </div>
+        <p style={{ marginTop: '6px', marginBottom: '14px' }}>
+          How the number of sermons kept safe on your computer has grown. Every one of them is a
+          message that survives even if it disappears everywhere else.
+        </p>
+        {daysRecorded > 1 ? (
+          <>
+            <div style={{
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', padding: '10px 8px 4px',
+            }}>
+              <AreaSparkline data={dailyHeld.map(x => x.v)} gradId="stats-held-grad" />
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '10px 0 0' }}>
+              From {firstDayLabel} to today.
+            </p>
+          </>
+        ) : (
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+            Today is the first day of this record, so there is nothing to compare against yet. Come
+            back tomorrow and the line will begin.
+          </p>
+        )}
+      </div>
+
       {/* Closing encouragement */}
       <div className="seed-card">
         <p style={{ marginBottom: '8px' }}>
@@ -541,6 +815,9 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
         <p style={{ color: 'var(--gold-text)', fontStyle: 'italic', marginBottom: 0 }}>
           "The grass withereth, the flower fadeth: but the word of our God shall stand for ever." — Isaiah 40:8
         </p>
+      </div>
+
+      </div>
       </div>
     </div>
   );

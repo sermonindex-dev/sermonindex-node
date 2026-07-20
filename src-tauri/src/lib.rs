@@ -127,6 +127,112 @@ fn resolve_path(filename: &str) -> PathBuf {
     sharded
 }
 
+// ── Atomic file writes ──────────────────────────────────────────────────────
+// Writing straight to the final path means a force-quit or power loss mid-write
+// leaves a TRUNCATED file sitting at the real filename. `check_file_exists`
+// then reports it as present and the catalog's orphan-adoption pass marks it as
+// a completed download — a silently corrupt sermon that never self-heals.
+//
+// So every writer here stages into a sibling `<final>.part`, fsyncs it, and
+// only then renames it into place. Rename within a filesystem is atomic on both
+// Unix and Windows: the final name either doesn't exist or is the complete file.
+//
+// `.part` is deliberately chosen so a leftover staging file from a crash cannot
+// be mistaken for a sermon by anything downstream — see PART_SUFFIX below.
+
+/// Suffix for in-progress writes. Appended AFTER the real extension
+/// (`<id>.mp3.part`) so it does not match `\.(mp3|mp4)$` anywhere.
+const PART_SUFFIX: &str = ".part";
+
+/// The staging path for a given final path.
+fn part_path(final_path: &std::path::Path) -> PathBuf {
+    let mut name = final_path.file_name().unwrap_or_default().to_os_string();
+    name.push(PART_SUFFIX);
+    final_path.with_file_name(name)
+}
+
+/// Rename `tmp` onto `final_path`, tolerating an existing destination.
+///
+/// On Unix `rename(2)` replaces the destination atomically. On WINDOWS
+/// `fs::rename` FAILS if the destination already exists, so we remove it first
+/// and retry. That remove+rename window is not itself atomic, but the file
+/// being replaced is a already-complete file we are intentionally overwriting
+/// (a re-download), and the partial data never appears under the final name —
+/// which is the property this whole exercise is protecting. Doing better would
+/// need `ReplaceFileW`/`MoveFileExW` from the `windows` crate, which is not a
+/// dependency (see check_disk_space for the same tradeoff).
+fn atomic_rename(tmp: &std::path::Path, final_path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        match fs::rename(tmp, final_path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                if final_path.exists() {
+                    fs::remove_file(final_path)?;
+                    fs::rename(tmp, final_path)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(tmp, final_path)
+    }
+}
+
+/// fsync a file at `path` (durability before the rename).
+fn fsync_path(path: &std::path::Path) -> std::io::Result<()> {
+    let f = fs::File::open(path)?;
+    f.sync_all()
+}
+
+/// Write `bytes` to `final_path` atomically: stage -> fsync -> rename.
+/// The `.part` file is removed on every error path so failures never litter the
+/// folder. Returns the on-disk length of the finished file.
+fn atomic_write(final_path: &std::path::Path, bytes: &[u8]) -> Result<u64, String> {
+    use std::io::Write;
+    let tmp = part_path(final_path);
+    // Best-effort clean-up of a stale staging file from a previous crash.
+    let _ = fs::remove_file(&tmp);
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("Failed to write file: {}", e));
+    }
+
+    if let Err(e) = atomic_rename(&tmp, final_path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("Failed to finalize file: {}", e));
+    }
+
+    fs::metadata(final_path)
+        .map(|m| m.len())
+        .map_err(|e| format!("Failed to stat written file: {}", e))
+}
+
+/// Atomic write for text payloads (catalog.json, settings.json, …).
+fn atomic_write_str(final_path: &std::path::Path, data: &str) -> Result<u64, String> {
+    atomic_write(final_path, data.as_bytes())
+}
+
+/// What the save commands report back: where the file landed and how many bytes
+/// are ACTUALLY on disk (read back with `fs::metadata` after the rename, not
+/// counted from the network stream), so a short or failed write is visible to
+/// the caller instead of being silently recorded as a complete download.
+#[derive(Serialize)]
+struct SavedFile {
+    path: String,
+    size: u64,
+}
+
 /// Get the downloads storage path
 #[tauri::command]
 fn get_storage_path() -> Result<String, String> {
@@ -159,7 +265,7 @@ fn persist_storage_dir_setting(path: &str) -> Result<(), String> {
     }
     let serialized = serde_json::to_string_pretty(&value)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-    fs::write(&settings_path, serialized)
+    atomic_write_str(&settings_path, &serialized)
         .map_err(|e| format!("Failed to write settings: {}", e))?;
     Ok(())
 }
@@ -194,42 +300,481 @@ fn get_storage_dir() -> String {
 }
 
 /// Save a downloaded sermon file to disk from base64-encoded data
-/// Using base64 to avoid massive JSON arrays that crash IPC for large files
+/// Using base64 to avoid massive JSON arrays that crash IPC for large files.
+///
+/// Writes atomically (`<file>.part` -> fsync -> rename) and returns the REAL
+/// on-disk byte length, so the caller can verify the write instead of trusting
+/// the byte count it received over the network.
 #[tauri::command]
-fn save_sermon_file(filename: String, data_b64: String) -> Result<String, String> {
+fn save_sermon_file(filename: String, data_b64: String) -> Result<SavedFile, String> {
     use base64::Engine;
     // Sharded write target (creates downloads/<shard>/ as needed).
     let file_path = target_path(&filename);
     let bytes = base64::engine::general_purpose::STANDARD.decode(&data_b64)
         .map_err(|e| format!("Failed to decode base64: {}", e))?;
-    fs::write(&file_path, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
-    Ok(file_path.to_string_lossy().to_string())
+    let size = atomic_write(&file_path, &bytes)?;
+    Ok(SavedFile { path: file_path.to_string_lossy().to_string(), size })
 }
 
-/// Create/truncate a file for chunked writing (used for large files)
+/// Create/truncate the staging file for chunked writing (used for large files).
+///
+/// The bytes accumulate in `<file>.part`; the real filename does not appear
+/// until `finalize_sermon_file` renames it, so an interrupted chunked download
+/// can never be adopted as a complete sermon. Returns the FINAL path (unchanged
+/// from before) — that is what the caller wants to record once it completes.
 #[tauri::command]
 fn create_sermon_file(filename: String) -> Result<String, String> {
     // Sharded write target (creates downloads/<shard>/ as needed).
     let file_path = target_path(&filename);
-    // Create or truncate the file
-    fs::File::create(&file_path).map_err(|e| format!("Failed to create file: {}", e))?;
+    let tmp = part_path(&file_path);
+    // Create or truncate the staging file
+    fs::File::create(&tmp).map_err(|e| format!("Failed to create file: {}", e))?;
     Ok(file_path.to_string_lossy().to_string())
 }
 
-/// Append a base64-encoded chunk to an existing file
+/// Append a base64-encoded chunk to the in-progress staging file.
+/// Returns the total bytes staged so far (was `()`), so a caller can track
+/// progress and cross-check the final size.
 #[tauri::command]
-fn append_sermon_chunk(filename: String, chunk_b64: String) -> Result<(), String> {
+fn append_sermon_chunk(filename: String, chunk_b64: String) -> Result<u64, String> {
     use base64::Engine;
     use std::io::Write;
-    let file_path = resolve_path(&filename);
+    let tmp = part_path(&resolve_path(&filename));
     let bytes = base64::engine::general_purpose::STANDARD.decode(&chunk_b64)
         .map_err(|e| format!("Failed to decode base64 chunk: {}", e))?;
     let mut file = fs::OpenOptions::new()
         .append(true)
-        .open(&file_path)
+        .open(&tmp)
         .map_err(|e| format!("Failed to open file for append: {}", e))?;
-    file.write_all(&bytes).map_err(|e| format!("Failed to append chunk: {}", e))?;
+    if let Err(e) = file.write_all(&bytes) {
+        // Don't leave a half-written staging file behind on a failed download.
+        drop(file);
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("Failed to append chunk: {}", e));
+    }
+    let written = file.metadata().map(|m| m.len()).unwrap_or(0);
+    Ok(written)
+}
+
+/// Complete a chunked write: fsync the staging file and rename it onto the real
+/// filename. MUST be called after the last `append_sermon_chunk` — until it is,
+/// the sermon does not exist under its real name.
+///
+/// Idempotent: if the staging file is already gone but the final file exists
+/// (e.g. a retried call), it just reports the existing file's size.
+/// Returns the path and the REAL on-disk byte length.
+#[tauri::command]
+fn finalize_sermon_file(filename: String) -> Result<SavedFile, String> {
+    let file_path = target_path(&filename);
+    let tmp = part_path(&file_path);
+
+    if !tmp.exists() {
+        // Already finalized? Report the real file. Otherwise this is a genuine
+        // "nothing was ever written" error and must not look like success.
+        let existing = resolve_path(&filename);
+        if existing.exists() {
+            let size = fs::metadata(&existing)
+                .map(|m| m.len())
+                .map_err(|e| format!("Failed to stat file: {}", e))?;
+            return Ok(SavedFile { path: existing.to_string_lossy().to_string(), size });
+        }
+        return Err("No in-progress download to finalize".to_string());
+    }
+
+    if let Err(e) = fsync_path(&tmp) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("Failed to flush file: {}", e));
+    }
+    if let Err(e) = atomic_rename(&tmp, &file_path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("Failed to finalize file: {}", e));
+    }
+    let size = fs::metadata(&file_path)
+        .map(|m| m.len())
+        .map_err(|e| format!("Failed to stat written file: {}", e))?;
+    Ok(SavedFile { path: file_path.to_string_lossy().to_string(), size })
+}
+
+/// Abandon an in-progress chunked write, deleting the staging file.
+/// Safe to call unconditionally from a download's error path.
+#[tauri::command]
+fn abort_sermon_file(filename: String) -> Result<(), String> {
+    let tmp = part_path(&target_path(&filename));
+    if tmp.exists() {
+        fs::remove_file(&tmp).map_err(|e| format!("Failed to remove partial file: {}", e))?;
+    }
     Ok(())
+}
+
+// ── Native streaming download ───────────────────────────────────────────────
+// The JS path above accumulates the WHOLE file as chunks in the webview, copies
+// it into a second full-size Uint8Array, base64-encodes it (+33%) and pushes it
+// back over IPC. Peak memory is ~2x the file size on a machine that may be a
+// Raspberry Pi seed node holding 500 GB of video.
+//
+// `stream_sermon_file` does the download here instead: socket -> `<file>.part`
+// -> fsync -> atomic rename, one chunk in memory at a time, no base64 anywhere.
+// The chunked commands above are retained as a fallback (see downloadManager.js)
+// and are still the only path when running in a plain browser.
+
+/// Hosts a sermon may be downloaded from. Same shape as the `fetch_text` /
+/// `download_speaker_image` allowlists: a native command that writes an
+/// arbitrary URL to disk is a real risk, so the URL is constrained to the two
+/// sermon CDNs and the Archive.org download path the catalog builds from.
+const DOWNLOAD_ALLOWED_PREFIXES: &[&str] = &[
+    "https://archive.org/download/",
+    "https://sermonindex1.b-cdn.net/",
+    "https://sermonindex2.b-cdn.net/",
+];
+
+fn download_url_allowed(url: &str) -> bool {
+    DOWNLOAD_ALLOWED_PREFIXES.iter().any(|p| url.starts_with(p))
+}
+
+/// A source answering with one of these simply doesn't have the file - retrying
+/// it is pointless. Mirrors NON_RETRYABLE_STATUS in downloadManager.js.
+fn status_is_fatal_source(status: u16) -> bool {
+    matches!(status, 400 | 401 | 403 | 404 | 410 | 451)
+}
+
+/// Result of one streaming attempt.
+///
+/// NOTE: a failed *download* is reported as `Ok(StreamOutcome { ok: false, .. })`,
+/// not `Err`. The retry / backoff / source-alternation machinery deliberately
+/// stays in downloadManager.js (it is well tested and understands Retry-After,
+/// jitter and dead sources), so this command's job is to report faithfully what
+/// happened - status, raw Retry-After, whether the source is dead, whether the
+/// bytes on disk can be resumed - and let JS decide. `Err` is reserved for
+/// caller error (URL not allowed), which is not retryable by anyone.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct StreamOutcome {
+    /// True only when the file was fully received, fsynced and renamed into place.
+    ok: bool,
+    /// Final path (only when `ok`).
+    path: String,
+    /// REAL on-disk size read back with `fs::metadata` after the rename - never
+    /// the byte count off the network. The integrity layer records this.
+    size: u64,
+    /// Bytes staged in `<file>.part` by this attempt (including resumed bytes).
+    received: u64,
+    /// Total size the server reported, 0 when unknown.
+    total: u64,
+    /// Whether the staged bytes can be continued with a Range request.
+    resumable: bool,
+    /// HTTP status, 0 for a transport-level failure.
+    status: u16,
+    /// Raw `Retry-After` header, parsed on the JS side (which already handles
+    /// both the seconds and the HTTP-date form).
+    retry_after: String,
+    /// 404/403/... - the caller should drop this source rather than retry it.
+    fatal_source: bool,
+    /// The download was cancelled via `cancel_sermon_download`.
+    cancelled: bool,
+    /// Empty when `ok`.
+    error: String,
+}
+
+/// Stream `url` into `<final_path>.part`, then fsync + atomically rename.
+///
+/// Nothing is ever buffered whole: chunks go straight from the socket to the
+/// staging file, so peak memory is one chunk regardless of file size. The
+/// staging contract is the same one `finalize_sermon_file` implements - the
+/// real filename only appears via `atomic_rename` once every byte has landed.
+///
+/// Deliberately free of tauri types so it can be compile-verified outside the
+/// app (tauri needs webkit2gtk, which the dev sandbox doesn't have). The
+/// progress callback is `dyn FnMut + Send` because it is held across awaits
+/// inside a tauri command, whose future must be `Send`.
+async fn stream_url_to_part(
+    url: &str,
+    final_path: &std::path::Path,
+    resume: bool,
+    limit_bps: u64,
+    cancel: &std::sync::atomic::AtomicBool,
+    on_progress: &mut (dyn FnMut(u64, u64) + Send),
+) -> StreamOutcome {
+    use std::sync::atomic::Ordering;
+    use tokio::io::AsyncWriteExt;
+
+    let mut out = StreamOutcome::default();
+    let tmp = part_path(final_path);
+
+    // Only trust an existing `.part` when the caller explicitly asked to resume
+    // (i.e. a retry of the SAME url within one source). A fresh attempt starts
+    // clean, exactly like `create_sermon_file` truncating the staging file.
+    let mut start = if resume {
+        fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0)
+    } else {
+        let _ = fs::remove_file(&tmp);
+        0
+    };
+
+    let client = match reqwest::Client::builder()
+        // Connect timeout only for the handshake; a large file legitimately
+        // takes a long time, so there is no whole-request timeout. The read
+        // timeout turns a silently stalled socket into a retryable error
+        // instead of a download that hangs forever.
+        .connect_timeout(std::time::Duration::from_secs(60))
+        .read_timeout(std::time::Duration::from_secs(120))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            out.error = format!("HTTP client error: {e}");
+            return out;
+        }
+    };
+
+    let mut req = client.get(url);
+    if start > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={start}-"));
+    }
+
+    let mut resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            out.error = format!("Network error: {e}");
+            out.received = start;
+            out.resumable = start > 0;
+            return out;
+        }
+    };
+
+    let status = resp.status().as_u16();
+    out.status = status;
+    if let Some(v) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+        if let Ok(s) = v.to_str() {
+            out.retry_after = s.to_string();
+        }
+    }
+    if !resp.status().is_success() {
+        // 416 means our `.part` is at or past the end of the file - it is not a
+        // valid resume point, so drop it and let the next attempt start clean.
+        if status == 416 {
+            let _ = fs::remove_file(&tmp);
+        }
+        out.fatal_source = status_is_fatal_source(status);
+        out.error = format!("HTTP {status}");
+        return out;
+    }
+
+    let accept_ranges = resp
+        .headers()
+        .get(reqwest::header::ACCEPT_RANGES)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("bytes"))
+        .unwrap_or(false);
+    let content_length = resp.content_length().unwrap_or(0);
+
+    // 206 = the server honoured our Range and we append. Anything else (a 200
+    // to a Range request means the server ignored it) restarts the file.
+    let appending = status == 206 && start > 0;
+    if !appending {
+        start = 0;
+    }
+    let total = if appending {
+        // Content-Range: bytes <start>-<end>/<total>
+        resp.headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit('/').next().and_then(|t| t.trim().parse::<u64>().ok()))
+            .unwrap_or(if content_length > 0 { start + content_length } else { 0 })
+    } else {
+        content_length
+    };
+    out.total = total;
+    out.resumable = accept_ranges || appending;
+
+    let open = if appending {
+        tokio::fs::OpenOptions::new().append(true).open(&tmp).await
+    } else {
+        tokio::fs::File::create(&tmp).await
+    };
+    let mut file = match open {
+        Ok(f) => f,
+        Err(e) => {
+            out.error = format!("Failed to open staging file: {e}");
+            return out;
+        }
+    };
+
+    let mut written = start;
+    // Throttle baseline is per-ATTEMPT, matching the JS limiter it replaces:
+    // measuring from the start of the whole download would wave through an
+    // unthrottled burst after every backoff.
+    let throttle_start = std::time::Instant::now();
+    let throttle_base = written;
+    let mut last_progress = std::time::Instant::now();
+    on_progress(written, total);
+
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = file.flush().await;
+            out.cancelled = true;
+            out.received = written;
+            out.error = "Cancelled".to_string();
+            return out;
+        }
+        let chunk = match resp.chunk().await {
+            Ok(Some(c)) => c,
+            Ok(None) => break,
+            Err(e) => {
+                let _ = file.flush().await;
+                out.received = written;
+                // Whatever landed stays in `.part`, so the next attempt resumes
+                // from here if the server supports Range.
+                out.error = format!("Connection dropped at {written} bytes: {e}");
+                return out;
+            }
+        };
+        if let Err(e) = file.write_all(&chunk).await {
+            let _ = file.flush().await;
+            out.received = written;
+            out.error = format!("Failed to write to disk: {e}");
+            return out;
+        }
+        written += chunk.len() as u64;
+
+        // ~10 progress events/sec - enough for a smooth bar, not enough to
+        // flood the IPC channel or React's state updates.
+        if last_progress.elapsed() >= std::time::Duration::from_millis(100) {
+            last_progress = std::time::Instant::now();
+            on_progress(written, total);
+        }
+
+        if limit_bps > 0 {
+            let elapsed = throttle_start.elapsed().as_secs_f64();
+            let target = (written - throttle_base) as f64 / limit_bps as f64;
+            if target > elapsed {
+                tokio::time::sleep(std::time::Duration::from_secs_f64(target - elapsed)).await;
+            }
+        }
+    }
+
+    out.received = written;
+    on_progress(written, total);
+
+    if let Err(e) = file.flush().await {
+        out.error = format!("Failed to flush file: {e}");
+        return out;
+    }
+    drop(file);
+
+    // Short body: keep the `.part` so the next attempt resumes into it.
+    if total > 0 && written < total {
+        let pct = (written as f64 / total as f64 * 100.0).round() as u64;
+        out.error = format!("Incomplete download: got {written} of {total} bytes ({pct}%)");
+        return out;
+    }
+
+    if let Err(e) = fsync_path(&tmp) {
+        let _ = fs::remove_file(&tmp);
+        out.error = format!("Failed to flush file: {e}");
+        return out;
+    }
+    if let Err(e) = atomic_rename(&tmp, final_path) {
+        let _ = fs::remove_file(&tmp);
+        out.error = format!("Failed to finalize file: {e}");
+        return out;
+    }
+    // The only size worth recording is the one the filesystem reports.
+    match fs::metadata(final_path) {
+        Ok(m) => out.size = m.len(),
+        Err(e) => {
+            out.error = format!("Failed to stat written file: {e}");
+            return out;
+        }
+    }
+    out.ok = true;
+    out.path = final_path.to_string_lossy().to_string();
+    out
+}
+
+/// Cancellation registry: `<filename> -> flag`, set by `cancel_sermon_download`
+/// and polled by the streaming loop. `HashMap::new` is not const, so this is a
+/// `OnceLock` rather than a plain `static Mutex`.
+fn active_downloads(
+) -> &'static StdMutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>> {
+    static MAP: std::sync::OnceLock<
+        StdMutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    > = std::sync::OnceLock::new();
+    MAP.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+/// Progress event payload (`sermon-download-progress`).
+#[derive(Serialize, Clone)]
+struct DownloadProgress {
+    filename: String,
+    received: u64,
+    total: u64,
+}
+
+/// Download `url` straight to `<downloads>/<shard>/<filename>` without ever
+/// holding the file in memory.
+///
+/// `resume` = continue an existing `.part` with a Range request (used by the
+/// caller's retry loop for the SAME source); false truncates and starts clean.
+/// `limit_bps` is the user's download-speed setting in bytes/sec (0 = unlimited).
+///
+/// Progress is emitted as `sermon-download-progress` ~10x/sec.
+#[tauri::command]
+async fn stream_sermon_file(
+    app: tauri::AppHandle,
+    url: String,
+    filename: String,
+    resume: bool,
+    limit_bps: u64,
+) -> Result<StreamOutcome, String> {
+    use tauri::Emitter;
+
+    if !download_url_allowed(&url) {
+        return Err("URL not allowed".to_string());
+    }
+    // Sharded write target (creates downloads/<shard>/ as needed) - the same
+    // path create_sermon_file / finalize_sermon_file use.
+    let final_path = target_path(&filename);
+    let key = leaf(&filename);
+
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    match active_downloads().lock() {
+        Ok(mut map) => {
+            map.insert(key.clone(), cancel.clone());
+        }
+        Err(_) => return Err("Download registry unavailable".to_string()),
+    }
+
+    let progress_key = key.clone();
+    let mut on_progress = move |received: u64, total: u64| {
+        // Best-effort: a failed emit must never abort a download in progress.
+        let _ = app.emit(
+            "sermon-download-progress",
+            DownloadProgress { filename: progress_key.clone(), received, total },
+        );
+    };
+
+    let outcome =
+        stream_url_to_part(&url, &final_path, resume, limit_bps, &cancel, &mut on_progress).await;
+
+    if let Ok(mut map) = active_downloads().lock() {
+        map.remove(&key);
+    }
+    Ok(outcome)
+}
+
+/// Ask an in-flight `stream_sermon_file` to stop. Returns true if a matching
+/// download was found. The `.part` is left in place; the caller's error path
+/// removes it via `abort_sermon_file`, exactly as for the chunked path.
+#[tauri::command]
+fn cancel_sermon_download(filename: String) -> bool {
+    let key = leaf(&filename);
+    if let Ok(map) = active_downloads().lock() {
+        if let Some(flag) = map.get(&key) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if a downloaded file exists on disk
@@ -254,6 +799,11 @@ fn list_downloaded_files() -> Result<Vec<String>, String> {
                 if meta.is_file() {
                     // Legacy flat file in the downloads root.
                     if let Some(name) = entry.file_name().to_str() {
+                        // Never surface an in-progress write: the caller treats
+                        // this listing as proof a download is complete.
+                        if name.ends_with(PART_SUFFIX) {
+                            continue;
+                        }
                         if seen.insert(name.to_string()) {
                             files.push(name.to_string());
                         }
@@ -270,6 +820,9 @@ fn list_downloaded_files() -> Result<Vec<String>, String> {
                             if let Ok(m2) = e2.metadata() {
                                 if m2.is_file() {
                                     if let Some(n2) = e2.file_name().to_str() {
+                                        if n2.ends_with(PART_SUFFIX) {
+                                            continue;
+                                        }
                                         if seen.insert(n2.to_string()) {
                                             files.push(n2.to_string());
                                         }
@@ -290,7 +843,8 @@ fn list_downloaded_files() -> Result<Vec<String>, String> {
 fn save_catalog(data: String) -> Result<(), String> {
     let path = get_app_data_dir().join("catalog.json");
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Failed to create dir: {}", e))?;
-    fs::write(&path, data).map_err(|e| format!("Failed to write catalog: {}", e))?;
+    // Atomic: a truncated catalog.json is an empty library on next launch.
+    atomic_write_str(&path, &data).map_err(|e| format!("Failed to write catalog: {}", e))?;
     Ok(())
 }
 
@@ -310,7 +864,8 @@ fn load_catalog() -> Result<String, String> {
 fn save_download_state(data: String) -> Result<(), String> {
     let path = get_app_data_dir().join("download-state.json");
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Failed to create dir: {}", e))?;
-    fs::write(&path, data).map_err(|e| format!("Failed to write download state: {}", e))?;
+    atomic_write_str(&path, &data)
+        .map_err(|e| format!("Failed to write download state: {}", e))?;
     Ok(())
 }
 
@@ -330,7 +885,7 @@ fn load_download_state() -> Result<String, String> {
 fn save_settings(data: String) -> Result<(), String> {
     let path = get_app_data_dir().join("settings.json");
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Failed to create dir: {}", e))?;
-    fs::write(&path, data).map_err(|e| format!("Failed to write settings: {}", e))?;
+    atomic_write_str(&path, &data).map_err(|e| format!("Failed to write settings: {}", e))?;
     Ok(())
 }
 
@@ -665,6 +1220,11 @@ async fn fetch_text(url: String) -> Result<String, String> {
     const ALLOWED: &[&str] = &[
         "https://sermonindex1.b-cdn.net/",
         "https://sermonindex2.b-cdn.net/",
+        // Update-manifest host (app/latest.json), read by services/updater.js.
+        // It was missing, so that fetch ALWAYS failed and the delivery mode
+        // silently fell back to "prompt" — leaving the network-wide emergency
+        // "force" lever unreadable and therefore non-functional.
+        "https://sermonindex4.b-cdn.net/",
         "https://www.sermonindex.net/",
         "https://app.sermonindex.net/",
         "https://analytics.sermonindex.net/",
@@ -868,10 +1428,16 @@ fn delete_sermon_file(filename: String) -> Result<(), String> {
     let name = leaf(&filename);
     let sharded = downloads_dir().join(shard_for(&name)).join(&name);
     let flat = downloads_dir().join(&name);
-    for p in [sharded, flat] {
+    for p in [&sharded, &flat] {
         if p.exists() {
-            fs::remove_file(&p).map_err(|e| format!("Failed to delete file: {}", e))?;
+            fs::remove_file(p).map_err(|e| format!("Failed to delete file: {}", e))?;
         }
+    }
+    // Also drop any staging file left by an interrupted write of this sermon,
+    // so deleting really does reclaim the space. Best-effort: a missing or
+    // locked .part must not fail the delete.
+    for p in [&sharded, &flat] {
+        let _ = fs::remove_file(part_path(p));
     }
     Ok(())
 }
@@ -904,9 +1470,30 @@ fn sanitize_name(s: &str) -> String {
         .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
         .collect();
     let trimmed = cleaned.trim().trim_matches('.').to_string();
-    let mut out = if trimmed.is_empty() { "Unknown".to_string() } else { trimmed };
-    out.truncate(120);
-    out
+    let out = if trimmed.is_empty() { "Unknown".to_string() } else { trimmed };
+    truncate_on_char_boundary(out, 120)
+}
+
+/// Truncate a String to at most `max_bytes` bytes WITHOUT splitting a UTF-8
+/// character. `String::truncate` takes a BYTE index and PANICS when that index
+/// is not a character boundary — reachable from export_sermon/export_speaker for
+/// any title with accents, curly quotes, Greek or Hebrew that happens to land a
+/// multi-byte char across the cut point. Pure-ASCII input is unaffected (every
+/// byte index is a boundary), so behaviour there is byte-for-byte identical.
+fn truncate_on_char_boundary(mut s: String, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Walk back to the nearest boundary at or below max_bytes. `is_char_boundary`
+    // is O(1) and index 0 is always a boundary, so this stops within 3 steps.
+    // (`str::floor_char_boundary` would do this, but it is not stable on the
+    // 1.85 floor this crate pins in Cargo.toml.)
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s
 }
 
 /// The base folder exports are written into (Desktop, or home if no Desktop).
@@ -1017,19 +1604,20 @@ async fn download_speaker_image(url: String, name: String) -> Result<String, Str
         .filter(|e| e.len() <= 4 && e.chars().all(|c| c.is_ascii_alphanumeric()))
         .unwrap_or("png");
     let dest = dir.join(format!("{}.{}", sanitize_name(&name), ext));
-    fs::write(&dest, bytes.as_ref()).map_err(|e| format!("write failed: {e}"))?;
+    atomic_write(&dest, bytes.as_ref()).map_err(|e| format!("write failed: {e}"))?;
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// Check available disk space at a given path
-#[tauri::command]
-fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
+/// Free bytes at `path` on Unix, via `df -k`. Unchanged from the original
+/// implementation — this is the well-tested path and stays byte-for-byte.
+#[cfg(unix)]
+fn available_bytes_at(path: &str) -> Result<u64, String> {
     use std::process::Command;
 
     // Use 'df' on macOS/Linux to check available space
     let output = Command::new("df")
         .arg("-k")
-        .arg(&path)
+        .arg(path)
         .output()
         .map_err(|e| format!("Failed to check disk space: {}", e))?;
 
@@ -1047,7 +1635,85 @@ fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
     }
 
     let available_kb: u64 = parts[3].parse().unwrap_or(0);
-    let available_bytes = available_kb * 1024;
+    Ok(available_kb * 1024)
+}
+
+/// Reduce a Windows path to its volume root (`C:\`), which is what
+/// `fsutil volume diskfree` expects. UNC and other shapes pass through.
+#[cfg(windows)]
+fn windows_volume_root(path: &str) -> String {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && (bytes[0] as char).is_ascii_alphabetic() {
+        return format!("{}:\\", bytes[0] as char);
+    }
+    path.to_string()
+}
+
+/// Parse the free-byte count out of `fsutil volume diskfree` output.
+///
+/// The label wording, the ordering and the thousands separator all vary by
+/// Windows version AND by system locale, so keying off any English label would
+/// be fragile. Instead: take every "<label> : <number>" line, keep the digits
+/// (dropping the trailing human-readable "( 14.5 GB)" and any separator), and
+/// return the MINIMUM. fsutil prints free, total and quota-free; free <= total
+/// and quota-free <= free always hold, so the minimum is the conservative
+/// answer — it can under-report headroom but can never over-report it, which is
+/// the right failure direction for a "do you have room?" guard.
+#[cfg(windows)]
+fn parse_fsutil_diskfree(stdout: &str) -> Option<u64> {
+    let mut candidates: Vec<u64> = Vec::new();
+    for line in stdout.lines() {
+        let rhs = match line.split_once(':') {
+            Some((_, r)) => r,
+            None => continue,
+        };
+        let rhs = rhs.split('(').next().unwrap_or("");
+        let digits: String = rhs.chars().filter(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            continue;
+        }
+        if let Ok(n) = digits.parse::<u64>() {
+            candidates.push(n);
+        }
+    }
+    candidates.into_iter().min()
+}
+
+/// Free bytes at `path` on Windows, via `fsutil volume diskfree`.
+///
+/// TRADEOFF: `GetDiskFreeSpaceExW` would be the correct call, but the `windows`
+/// crate is NOT a dependency of this crate and neither is `sysinfo` (checked
+/// Cargo.toml) — pulling in either just for this one number is a large new
+/// dependency on the build, so we shell out instead. `fsutil` is preferred over
+/// `cmd /C dir` because `dir`'s output is heavily locale-dependent prose,
+/// whereas fsutil emits a stable "label : number" grid that survives
+/// translation (see parse_fsutil_diskfree). fsutil ships with every supported
+/// Windows and needs no elevation for `volume diskfree`.
+#[cfg(windows)]
+fn available_bytes_at(path: &str) -> Result<u64, String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    // CREATE_NO_WINDOW — without it a console window flashes on every check.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let root = windows_volume_root(path);
+    let output = Command::new("fsutil")
+        .args(["volume", "diskfree", &root])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Failed to check disk space: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_fsutil_diskfree(&stdout).ok_or_else(|| {
+        log::warn!("[Disk] Could not parse fsutil output for {}: {:?}", root, stdout);
+        "Could not parse disk space info".to_string()
+    })
+}
+
+/// Check available disk space at a given path
+#[tauri::command]
+fn check_disk_space(path: String) -> Result<DiskSpaceInfo, String> {
+    let available_bytes = available_bytes_at(&path)?;
     let available_tb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0 * 1024.0);
 
     Ok(DiskSpaceInfo {
@@ -1414,6 +2080,10 @@ pub fn run() {
             save_sermon_file,
             create_sermon_file,
             append_sermon_chunk,
+            finalize_sermon_file,
+            abort_sermon_file,
+            stream_sermon_file,
+            cancel_sermon_download,
             check_file_exists,
             list_downloaded_files,
             delete_sermon_file,

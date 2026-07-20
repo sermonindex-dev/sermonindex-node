@@ -18,11 +18,23 @@ import AboutPage from './pages/AboutPage';
 import ConditionsModal from './components/ConditionsModal';
 import { CONDITIONS_VERSION } from './data/conditions.jsx';
 
-// Error boundary to prevent full app crashes
+// Error boundary to prevent full app crashes.
+//
+// RECOVERY: "Try Again" used to do nothing but flip `hasError` back to false,
+// which re-rendered the EXACT component tree that had just thrown — so it either
+// crashed again immediately or sat there looking fixed while the underlying
+// state was still bad. Two changes make it mean something:
+//   1. `resetKey` is bumped on retry and keyed onto the children, so React
+//      unmounts and REMOUNTS the whole subtree instead of re-rendering it. Any
+//      corrupt component state is discarded rather than replayed.
+//   2. `onReset` lets the owner clear the app-level state that caused the crash
+//      (stop playback, drop the current sermon, return to a safe page) before
+//      the remount happens.
+// "Reload app" is the honest last resort when a remount isn't enough.
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, resetKey: 0 };
   }
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
@@ -30,6 +42,12 @@ class ErrorBoundary extends Component {
   componentDidCatch(error, errorInfo) {
     console.error('[App] Uncaught error:', error, errorInfo);
   }
+  handleRetry = () => {
+    // Clear the offending app state FIRST — the remount below must not walk
+    // straight back into it. A throwing reset handler must not block recovery.
+    try { this.props.onReset?.(); } catch (e) { console.warn('[App] Error-boundary reset handler failed:', e); }
+    this.setState((s) => ({ hasError: false, error: null, resetKey: s.resetKey + 1 }));
+  };
   render() {
     if (this.state.hasError) {
       return (
@@ -41,16 +59,27 @@ class ErrorBoundary extends Component {
           <p style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '500px', wordBreak: 'break-all' }}>
             {this.state.error?.message || 'Unknown error'}
           </p>
-          <button
-            onClick={() => { this.setState({ hasError: false, error: null }); }}
-            style={{ background: '#D4AF37', color: '#2a2a14', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}
-          >
-            Try Again
-          </button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={this.handleRetry}
+              style={{ background: '#D4AF37', color: '#2a2a14', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}
+            >
+              Try Again
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', padding: '10px 24px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}
+            >
+              Reload app
+            </button>
+          </div>
         </div>
       );
     }
-    return this.props.children;
+    // Keyed so a retry REMOUNTS the subtree rather than re-rendering the state
+    // that just threw. Downloads and seeding live in module-level singletons, not
+    // in this tree, so a remount never interrupts them.
+    return <React.Fragment key={this.state.resetKey}>{this.props.children}</React.Fragment>;
   }
 }
 import {
@@ -68,9 +97,10 @@ import { startHeartbeat, stopHeartbeat, fetchConfig, loadNodeIdFromDisk } from '
 import { loadSettings, saveSettings } from './services/tauriStore.js';
 import { startUpdateChecks } from './services/updater.js';
 import { fetchUnreadCount, chatPrefs } from './services/chatNotify.js';
-import { fetchSeeds, readReachability } from './services/network.js';
+import { fetchSeeds, readReachability, readIpv6Observation } from './services/network.js';
 import { subscribe as subscribeNodeMap } from './services/nodeMapStore.js';
 import { to12h } from './utils/time.js';
+import { deriveNodeState, isReachable, writeSeedGranted } from './utils/nodeStatus.js';
 
 // ── Seeding-policy helpers (task 108) + low-disk floor (task 105) ────────────
 // "Off" is represented as a tiny ~1 KB/s cap, NOT 0 — the native set_upload_limit
@@ -227,7 +257,8 @@ export default function App() {
   const [availablePacks, setAvailablePacks] = useState([]);   // content packs from server
   const [settingsTab, setSettingsTab] = useState(null);       // which settings sub-tab to open
   const [appVersion, setAppVersion] = useState('');           // shown beside "Node Software"
-  const [networkHealth, setNetworkHealth] = useState({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
+  // { key, label, color, blurb } — Offline / Peer / Node / Seed node.
+  const [networkHealth, setNetworkHealth] = useState(() => deriveNodeState({ running: false }));
   const [unreadChat, setUnreadChat] = useState(0);             // unread community messages (sidebar badge)
   const [nodesOnline, setNodesOnline] = useState(null);        // live nodes online (sidebar count beside Node Map)
   const [seedsOnline, setSeedsOnline] = useState(null);        // reachable seed nodes online (beside Seed Node)
@@ -247,6 +278,11 @@ export default function App() {
   // once) always reads the latest value instead of the first-render capture.
   const conditionsAgreedRef = useRef(conditionsAgreed);
   useEffect(() => { conditionsAgreedRef.current = conditionsAgreed; }, [conditionsAgreed]);
+  // Same trick for the low-disk flag: playSermon's background cache reads it
+  // without having to take `lowDisk` as a dependency (which would rebuild the
+  // callback, and with it the play effect, on every disk-guard tick).
+  const lowDiskRef = useRef(lowDisk);
+  useEffect(() => { lowDiskRef.current = lowDisk; }, [lowDisk]);
   // Mirror the consent flag into settings.json so the Rust liveness-ping task can
   // read it (Rust can't see localStorage). Runs on mount — which is what backfills
   // the flag for EXISTING users who agreed on a previous launch, otherwise their
@@ -450,6 +486,11 @@ export default function App() {
           ]);
           if (net?.checkSeedAccess && hb?.getNodeId) {
             const ok = await net.checkSeedAccess(hb.getNodeId());
+            // Mirror the answer locally so the Connections panel (which is
+            // rendered by a page that passes it no props) can tell a Seed node
+            // from a Node without repeating this call. Written from the real
+            // server answer only — see utils/nodeStatus.js.
+            writeSeedGranted(ok);
             if (ok) setSeedUnlocked(true);
           }
         } catch { /* non-critical */ }
@@ -550,7 +591,7 @@ export default function App() {
   // Poll network health for TopBar indicator
   useEffect(() => {
     if (!p2pRunning) {
-      setNetworkHealth({ label: 'Offline', color: 'var(--text-muted)', score: 0 });
+      setNetworkHealth(deriveNodeState({ running: false }));
       return;
     }
     let cancelled = false;
@@ -559,41 +600,30 @@ export default function App() {
         const torrent = await import('./services/torrent.js').catch(() => null);
         if (!torrent || cancelled) return;
         const status = await torrent.getStatus().catch(() => null);
-        const torrents = status?.running ? await torrent.listTorrents().catch(() => []) : [];
         if (cancelled) return;
-        const livePeers = torrents.reduce((n, t) => n + (t.stats?.live?.snapshot?.peer_stats?.live || 0), 0);
-        const uploaded = torrents.reduce((n, t) => n + (t.stats?.uploaded_bytes || 0), 0);
 
-        // Reachability = the primary health axis (see ConnectionsPanel). Read
-        // the last probe result (written by the Connections page) if it's fresh.
-        let reachOpen = null;
-        try {
-          const r = readReachability();
-          // "Reachable" means a peer can open a connection to us over EITHER
-          // address family. An IPv6-only-reachable node (the normal outcome on
-          // Starlink and mobile broadband) is a full node, so it must score as
-          // one here too — otherwise the TopBar contradicts the Connections
-          // panel's green "Reachable over IPv6" banner.
-          if (r && Date.now() - (r.ts || 0) < 30 * 60 * 1000) reachOpen = !!r.open || !!r.open_v6;
-        } catch {}
-        const serving = livePeers >= 1 || uploaded > 0;
+        // Offline / Peer / Node / Seed node — derived by the SHARED helper in
+        // utils/nodeStatus.js, the same call the Connections panel makes. This
+        // block used to re-implement it and had drifted (it counted IPv6 from
+        // the probe but never the passive inbound observation, and it applied a
+        // 30-minute freshness window the panel does not — so the TopBar could
+        // say one thing while the panel said another about the same node).
+        //
+        // The freshness window is deliberately gone: the saved reachability
+        // result never expires and is only ever replaced by an explicit
+        // Re-test, which is the contract the rest of the app already follows.
+        let reach = null, ipv6 = null;
+        try { reach = readReachability(); } catch {}
+        try { ipv6 = readIpv6Observation(); } catch {}
 
-        // Mirror ConnectionsPanel tiers exactly.
-        let score;
-        if (!status?.running) score = 0;
-        else if (reachOpen === true && serving) score = 100;
-        else if (reachOpen === true) score = 75;
-        else if (serving) score = 60;
-        else if (reachOpen === false) score = 35;
-        else score = 45;
-        // Same "leaf node" tier as ConnectionsPanel: port closed but
-        // demonstrably uploading is a valid shape of node, not a warning.
-        const isLeaf = status?.running && reachOpen === false && serving;
-        const label = isLeaf ? 'Leaf node — contributing'
-          : score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : score > 0 ? 'Fair' : 'Offline';
-        const color = isLeaf ? 'var(--seed-blue)'
-          : score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--gold-text)' : score > 0 ? 'var(--orange)' : 'var(--text-muted)';
-        setNetworkHealth({ label, color, score });
+        const state = deriveNodeState({
+          running: !!status?.running,
+          reachable: isReachable({ reach, ipv6 }),
+          // Live value via the ref, so an approval that lands mid-session is
+          // picked up on the next tick without re-creating this effect.
+          seedGranted: seedUnlockedRef.current,
+        });
+        setNetworkHealth(state);
       } catch {}
     };
     poll();
@@ -790,6 +820,12 @@ export default function App() {
   // Navigation with revalidation for downloads page
   // Optional 2nd arg: sub-tab (e.g. 'connections' for settings page)
   const navigateTo = useCallback(async (newPage, subTab) => {
+    // Leaving Browse Sermons clears the search box. Opening a sermon from the
+    // Dashboard sets the search to that sermon's title to jump straight to it —
+    // without this, that one-off search was still sitting there on every later
+    // visit, so the library looked permanently filtered to a single result
+    // instead of returning to the full randomised view.
+    if (newPage !== 'library') setSearch('');
     setPage(newPage);
     if (subTab) setSettingsTab(subTab);
     else setSettingsTab(null);
@@ -818,15 +854,23 @@ export default function App() {
       // States: SEEDING = file saved, seeding to the torrent swarm
       //         COMPLETE = all done (magnet may still arrive via a later notify)
       const postProcessStates = [DL_STATE.SEEDING, DL_STATE.COMPLETE];
+      // The size we record is `diskSize` — what the filesystem reported after the
+      // Rust save/finalize, NOT `bytesDownloaded` (bytes counted off the wire).
+      // Recording the wire count is exactly why a failed write was invisible: the
+      // two only ever agree when the write really happened, so the wire count
+      // reported a full library, a full coverage %, full Seed Node progress and a
+      // heartbeat listing files that were never on disk. bytesDownloaded remains
+      // the fallback ONLY for the no-native-backend case (browser dev), where
+      // downloadManager sets diskSize to the received count anyway.
+      const realSize = state.diskSize || state.bytesDownloaded || 0;
       if (postProcessStates.includes(state.state) && !markOnceSet.has(sermonId)) {
         markOnceSet.add(sermonId);
-        const size = state.bytesDownloaded || 0;
-        markDownloaded(sermonId, state.magnet || `local-${sermonId}`, size);
+        markDownloaded(sermonId, state.magnet || `local-${sermonId}`, realSize);
         setCatalog(getCatalog());
         setLibraryStats(getLibraryStats());
       }
       if (state.state === DL_STATE.COMPLETE) {
-        markDownloaded(sermonId, state.magnet, state.bytesDownloaded || 0);
+        markDownloaded(sermonId, state.magnet, realSize);
         setCatalog(getCatalog());
         setLibraryStats(getLibraryStats());
       }
@@ -869,6 +913,17 @@ export default function App() {
   // with a 15-min cooldown before a fresh burst.
   useEffect(() => {
     let cancelled = false;
+    // The disk check shells out to `df` (or fsutil on Windows) — a real process
+    // spawn. Running it on every 60s tick meant ~1,440 subprocesses a day for the
+    // life of the app, which on a machine left running for weeks is pure waste.
+    // It is a disk-FULL guard, not a live meter: free space changes slowly, and
+    // the only thing that moves it fast is a download, which fails loudly on its
+    // own. 15 minutes gives the guard plenty of warning (a full-speed download
+    // does not clear tens of GB in a quarter of an hour) at 1/15th the cost.
+    // The FIRST tick still checks immediately, so a machine that is already full
+    // at launch is caught right away.
+    const DISK_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+    let lastDiskCheck = 0;
     const MIN_HEAL_GAP_MS = 2 * 60 * 1000;   // ≤ ~one restart attempt / 2 min
     const MAX_HEAL_ATTEMPTS = 5;             // cap consecutive tries…
     const HEAL_COOLDOWN_MS = 15 * 60 * 1000; // …then wait before a fresh burst
@@ -876,22 +931,28 @@ export default function App() {
     const tick = async () => {
       // (a) Low-disk guard — local, safe pre-consent. Uses the SAME check_disk_space
       // path the Seed Node page uses, against the real configured storage dir.
-      try {
-        const core = await import('@tauri-apps/api/core').catch(() => null);
-        if (core) {
-          const dir = await core.invoke('get_storage_dir').catch(() => null);
-          if (dir) {
-            const info = await core.invoke('check_disk_space', { path: dir }).catch(() => null);
-            if (!cancelled && info) {
-              const freeBytes = Number(info.available_bytes || 0);
-              const low = freeBytes > 0 && freeBytes < LOW_DISK_THRESHOLD_BYTES;
-              setLowDisk(low);
-              setDiskFreeFormatted(info.available_formatted || null);
-              if (low) console.warn(`[App] Low disk space — only ${info.available_formatted} free; new downloads paused (seeding continues).`);
+      // Rate-limited to DISK_CHECK_INTERVAL_MS (see above); the self-heal in (b)
+      // is cheap and keeps running on the 60s tick.
+      const now = Date.now();
+      if (now - lastDiskCheck >= DISK_CHECK_INTERVAL_MS) {
+        lastDiskCheck = now;
+        try {
+          const core = await import('@tauri-apps/api/core').catch(() => null);
+          if (core) {
+            const dir = await core.invoke('get_storage_dir').catch(() => null);
+            if (dir) {
+              const info = await core.invoke('check_disk_space', { path: dir }).catch(() => null);
+              if (!cancelled && info) {
+                const freeBytes = Number(info.available_bytes || 0);
+                const low = freeBytes > 0 && freeBytes < LOW_DISK_THRESHOLD_BYTES;
+                setLowDisk(low);
+                setDiskFreeFormatted(info.available_formatted || null);
+                if (low) console.warn(`[App] Low disk space — only ${info.available_formatted} free; new downloads paused (seeding continues).`);
+              }
             }
           }
-        }
-      } catch { /* non-Tauri / dev — skip disk guard */ }
+        } catch { /* non-Tauri / dev — skip disk guard */ }
+      }
 
       // (b) Self-heal the torrent session — only with consent AND P2P enabled.
       if (cancelled) return;
@@ -1251,11 +1312,29 @@ export default function App() {
       }
     }
 
-    // Trigger download in background if not already downloaded
+    // ── Pressing play also CACHES THE SERMON TO DISK ──────────────────────
+    // Behaviour deliberately unchanged (it is what makes the archive available
+    // offline and what feeds the swarm), but it is no longer silent:
+    //   - it goes through the normal download queue, so the sermon's Library card
+    //     shows the same progress bar a manual download does — the storage use is
+    //     visible in the UI rather than happening behind the user's back;
+    //   - the failure is logged instead of being swallowed by an empty catch,
+    //     so a storage-cap refusal or a disk error is diagnosable;
+    //   - it is skipped while the low-disk guard is tripped. Quietly filling the
+    //     last of someone's disk just because they pressed play is not a
+    //     behaviour worth preserving, and it matches the guard the rest of the
+    //     app already honours. Playback itself still streams normally.
+    // NOT DONE HERE, and it needs an owner: there is still no wording anywhere in
+    // the UI telling a user that browsing consumes storage. That belongs in the
+    // player/Settings copy, which this file does not own.
     if (!sermon.downloaded) {
       const existing = downloadManager.getState(sermon.id);
-      if (!existing || existing.state === DL_STATE.ERROR) {
-        downloadManager.download(sermon).catch(() => {});
+      if (lowDiskRef.current) {
+        console.warn(`[App] Low disk — not caching "${sermon.title}" to disk; streaming only.`);
+      } else if (!existing || existing.state === DL_STATE.ERROR) {
+        downloadManager.download(sermon).catch((err) => {
+          console.warn(`[App] Background cache of "${sermon.title}" failed:`, err?.message || err);
+        });
       }
     }
   }, [currentSermon, isPlaying, volume]);
@@ -1331,28 +1410,36 @@ export default function App() {
   }, []);
 
   // ── Re-download (for incomplete files) ────────────────────────────────
+  //
+  // DOWNLOAD FIRST, REPLACE AFTER. This used to delete the file up front and
+  // then start the download, so any failure — offline, 404, full disk — left the
+  // user with LESS than they started with: the old copy destroyed and no new one.
+  // That is a live hazard the moment the integrity check starts flagging files,
+  // because a false positive would then delete a perfectly good sermon.
+  //
+  // No temp-file juggling is needed here: the Rust writers already stage into
+  // `<file>.part` and only rename onto the real filename on a successful
+  // finalize. So the existing copy survives untouched until a COMPLETE new file
+  // atomically replaces it, and a failed attempt leaves the old file exactly as
+  // it was. `markRemoved`/`delete_sermon_file` are gone from this path entirely.
   const handleRedownload = useCallback(async (sermonId) => {
     const sermon = getCatalog().find(s => s.id === sermonId);
     if (!sermon) return;
-    // Delete the partial file first
-    try {
-      const tauriMod = await import('@tauri-apps/api/core').catch(() => null);
-      if (tauriMod) {
-        const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
-        const filename = `${sermonId}.${ext}`;
-        await tauriMod.invoke('delete_sermon_file', { filename }).catch(() => {});
-      }
-    } catch {}
-    // Remove from download state
-    markRemoved(sermonId);
-    setCatalog(getCatalog());
-    setLibraryStats(getLibraryStats());
-    // Re-download
+    // download() short-circuits on a COMPLETE queue entry, so clear it (state
+    // only — this touches no files) or the re-download would no-op.
+    downloadManager.forget(sermonId);
     try {
       await downloadManager.download(sermon);
+      // Success: the progress listener has already re-recorded the entry with the
+      // REAL on-disk size and re-run the integrity check against it.
     } catch (err) {
-      console.error('[App] Re-download failed:', err);
+      // The previous file is still on disk and still marked as it was — the user
+      // has lost nothing. Leave the Incomplete badge alone so the Re-download
+      // button stays available.
+      console.error('[App] Re-download failed (previous file left intact):', err);
     }
+    setCatalog(getCatalog());
+    setLibraryStats(getLibraryStats());
   }, []);
 
   // ── Open the app downloads folder ────────────────────────────────────────
@@ -1450,8 +1537,26 @@ export default function App() {
     }
   };
 
+  // Recovery for the SHELL boundary below. A crash out here is almost always the
+  // player: a bad stream URL, a sermon object the PlayerBar can't render, or a
+  // media element in a broken state. Tearing the player down is therefore the
+  // reset that actually removes the cause — and it also stops audio that would
+  // otherwise keep playing behind an error screen with no way to silence it.
+  const handleShellReset = useCallback(() => {
+    closePlayer();
+    setPage('dashboard');
+  }, [closePlayer]);
+
   return (
-    <>
+    // SHELL boundary. The <audio> element, the mini video player, the Sidebar and
+    // the PlayerBar all used to sit OUTSIDE every boundary, so a throw in any of
+    // them took the whole window to a blank screen with no recovery at all — and
+    // an <audio> element with no boundary above it can keep playing through a
+    // crash while its controls are gone. React always uses the NEAREST boundary,
+    // so page-level crashes are still caught by the inner boundary around
+    // renderPage() and never reach this one: the shell (and playback) survives a
+    // page crash exactly as it does today.
+    <ErrorBoundary onReset={handleShellReset}>
       {/* First-launch agreement gate — blocks the app until conditions are accepted */}
       {!conditionsAgreed && (
         <ConditionsModal mode="agree" onAgree={handleAgreeConditions} />
@@ -1611,7 +1716,9 @@ export default function App() {
       <div className="main-content">
         <TopBar contentMode={contentMode} announcement={announcement} onNavigate={navigateTo} networkHealth={networkHealth} />
         <div className={`content-scroll ${page === 'network' || page === 'connections' ? 'no-pad' : ''}`}>
-          <ErrorBoundary>
+          {/* Page boundary — a crashing page must not take the shell (or
+              playback) with it. Its reset returns to a page known to render. */}
+          <ErrorBoundary onReset={() => setPage('dashboard')}>
             {renderPage()}
           </ErrorBoundary>
         </div>
@@ -1633,6 +1740,6 @@ export default function App() {
           />
         )}
       </div>
-    </>
+    </ErrorBoundary>
   );
 }

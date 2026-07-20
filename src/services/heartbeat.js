@@ -116,14 +116,36 @@ export async function loadNodeIdFromDisk() {
   } catch {}
 }
 
-// Cached geo data
+// Cached geo data.
+//
+// The cache EXPIRES rather than living for the whole process. Long-running seed
+// nodes are a first-class use case, so a process can easily stay up for months —
+// a laptop that moves city (or country) would otherwise sit on the public node
+// map at its original coordinates forever.
+//
+// 6 hours is the balance point: a node that physically moves is corrected within
+// one working day, while the third-party free tiers stay untouched. At the 5-min
+// beat cadence that's 4 lookups/day/node against ipapi.co's 1000/day-per-IP
+// budget (~0.4% of it), versus 288 beats/day if we looked up every beat.
+//
+// On failure we deliberately KEEP the previous value — a stale-but-plausible
+// location is far better on the map than "Unknown / XX" — and only push the next
+// attempt out by GEO_RETRY_MS so a provider outage doesn't get hammered every beat.
+const GEO_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const GEO_RETRY_MS = 30 * 60 * 1000;   // back off 30 min after a failed refresh
+const GEO_UNKNOWN = { city: 'Unknown', region: '', country: 'XX', lat: 0, lon: 0 };
+
 let _geoData = null;
+let _geoNextCheck = 0; // epoch ms; before this, serve the cached value untouched
 
 /**
  * Look up this node's approximate location using free IP geolocation APIs.
+ *
+ * Refresh is LAZY — it happens on the first heartbeat after the cache expires,
+ * so there is no extra timer to keep alive.
  */
 async function getGeoLocation() {
-  if (_geoData) return _geoData;
+  if (Date.now() < _geoNextCheck) return _geoData || GEO_UNKNOWN;
 
   // Provider 1: ipapi.co (HTTPS, free tier 1000/day)
   try {
@@ -132,6 +154,7 @@ async function getGeoLocation() {
       const data = await res.json();
       if (data.city && data.country_code) {
         _geoData = { city: data.city, region: data.region_code || data.region || '', country: data.country_code, lat: data.latitude || 0, lon: data.longitude || 0 };
+        _geoNextCheck = Date.now() + GEO_TTL_MS;
         console.log('[Heartbeat] Geo (ipapi.co):', _geoData.city, _geoData.country);
         return _geoData;
       }
@@ -147,6 +170,7 @@ async function getGeoLocation() {
       const data = await res.json();
       if (data.success !== false && data.city) {
         _geoData = { city: data.city, region: data.region_code || data.region || '', country: data.country_code || 'XX', lat: data.latitude || 0, lon: data.longitude || 0 };
+        _geoNextCheck = Date.now() + GEO_TTL_MS;
         console.log('[Heartbeat] Geo (ipwho.is):', _geoData.city, _geoData.country);
         return _geoData;
       }
@@ -166,6 +190,7 @@ async function getGeoLocation() {
       const data = await res.json();
       if (data.lat && data.lon && data.lat !== 0) {
         _geoData = { city: data.city || 'Unknown', region: data.region || '', country: data.country || 'XX', lat: data.lat, lon: data.lon };
+        _geoNextCheck = Date.now() + GEO_TTL_MS;
         console.log('[Heartbeat] Geo (server-side):', _geoData.city, _geoData.country);
         return _geoData;
       }
@@ -174,8 +199,16 @@ async function getGeoLocation() {
     console.warn('[Heartbeat] Server geo lookup failed:', e.message);
   }
 
-  console.warn('[Heartbeat] All geo providers failed');
-  return { city: 'Unknown', region: '', country: 'XX', lat: 0, lon: 0 };
+  // Every provider failed. Keep whatever we had — a stale-but-plausible location
+  // beats blanking a node out to Unknown/XX on the public map — and just delay the
+  // next attempt so we don't retry on every single beat.
+  _geoNextCheck = Date.now() + GEO_RETRY_MS;
+  console.warn(
+    _geoData
+      ? '[Heartbeat] All geo providers failed — keeping previous location'
+      : '[Heartbeat] All geo providers failed'
+  );
+  return _geoData || GEO_UNKNOWN;
 }
 
 /**
@@ -237,7 +270,14 @@ async function sendHeartbeat() {
     }
 
     // Lifetime uploaded bytes — this node's contribution to network data transfer.
-    const uploadedLifetime = accumulateUploaded((p2pStatus && p2pStatus.uploaded_bytes) || 0);
+    // Pass null (not 0) when there is no reading to report: if getStatus() failed or
+    // the session isn't running, `p2pStatus.uploaded_bytes` is absent and a 0 would
+    // be indistinguishable from a genuinely idle session. See accumulateUploaded().
+    const haveUploadReading = !!(p2pStatus && p2pStatus.running && p2pStatus.uploaded_bytes != null);
+    const uploadedLifetime = accumulateUploaded(
+      haveUploadReading ? p2pStatus.uploaded_bytes : null,
+      haveUploadReading ? p2pStatus.uptime : 0
+    );
 
     // Seed telemetry — scope-relative progress, so the admin dashboard can answer
     // "is this a FULL seed node?". This is deliberately NOT library_coverage: that
@@ -277,10 +317,17 @@ async function sendHeartbeat() {
       node_type: stats.nodeType || 'user',
       // Reachability lets the dashboard classify: seed / reachable "node" (port
       // open) / "peer" (running but port closed). From the last probe result.
+      // "Reachable" means a peer can open a connection to us over EITHER address
+      // family — matching App.jsx's health derivation. A node reachable ONLY
+      // over IPv6 (the normal good outcome on Starlink and mobile broadband) is
+      // a full node; reporting just `r.open` sent it to the dashboard as
+      // unreachable, so the map miscategorised it as a peer while the app itself
+      // showed a green "Reachable over IPv6" banner.
       reachable: (() => {
         try {
           const r = JSON.parse(localStorage.getItem('si-reach') || 'null');
-          return r && typeof r.open === 'boolean' ? r.open : null;
+          if (!r || typeof r.open !== 'boolean') return null;
+          return r.open || r.open_v6 === true;
         } catch { return null; }
       })(),
       lat: geo.lat,
@@ -354,15 +401,61 @@ function scheduleHeartbeatRetry() {
 // Lifetime uploaded bytes. librqbit's session upload counter resets on restart,
 // so keep a running total in localStorage and report that as this node's
 // contribution to total network data transferred.
-function accumulateUploaded(sessionUploaded) {
+//
+// `sessionUploaded` is the sum of uploaded_bytes over the CURRENTLY-LOADED
+// torrents, which means it can fall for two very different reasons:
+//
+//   1. The session restarted and the counter genuinely reset to 0. The whole new
+//      value is fresh upload and must be added.
+//   2. A torrent was removed and its bytes left the sum. Nothing was uploaded;
+//      the total simply covers fewer torrents than it did a moment ago.
+//
+// The old code inferred (1) from the byte total alone — any drop was treated as a
+// restart and the ENTIRE running total was re-added. But pruneMissing() runs after
+// every sermon deletion (App.jsx), so case (2) happened routinely and silently
+// inflated this node's lifetime figure. The server stores uploaded_bytes as a
+// monotonic high-water mark (MAX(existing, incoming)), so that inflation was
+// permanent and fed straight into the network-wide "Data Transferred" stat.
+//
+// The fix is to stop inferring a restart from the bytes at all and read it from the
+// session's OWN start marker instead: `uptime_secs`, derived in Rust from
+// `started_at.elapsed()` (torrent_node.rs). It climbs monotonically for the life of
+// a session and can only go backwards when a new session object is constructed.
+// Removing a torrent does not touch it, so case (2) cannot be mistaken for case (1).
+//
+// When uptime says the session is the same one as last beat, any decrease is case
+// (2) and the delta is clamped to 0. The cost is that the removed torrent's last
+// (at most 5 minutes of) upload goes unrecorded — a bounded undercount, which is
+// the right way to err against a value the server can never revise downwards.
+//
+// `sessionUploaded == null` means "no reading this beat" (getStatus() failed, or
+// the session isn't running). Previously the caller passed 0 in that case, which
+// wrote lastSession: 0 and made the next successful beat re-add the full session
+// total — the same over-counting bug by a different route. Now we leave the stored
+// state completely untouched and just report the last known lifetime.
+function accumulateUploaded(sessionUploaded, sessionUptime) {
   try {
     const raw = localStorage.getItem('si-uploaded-lifetime');
     const st = raw ? JSON.parse(raw) : { lifetime: 0, lastSession: 0 };
     let lifetime = Number(st.lifetime) || 0;
+
+    // No usable reading — preserve state and report what we already have.
+    if (sessionUploaded == null) return lifetime;
+
     const last = Number(st.lastSession) || 0;
     const s = Number(sessionUploaded) || 0;
-    lifetime += s < last ? s : (s - last); // s < last ⇒ counter reset on restart
-    localStorage.setItem('si-uploaded-lifetime', JSON.stringify({ lifetime, lastSession: s }));
+    const uptime = Number(sessionUptime) || 0;
+    // `lastUptime` is absent on state written by older builds; treating it as 0
+    // just means we take the monotonic branch, which is the safe direction.
+    const lastUptime = Number(st.lastUptime) || 0;
+
+    // Session restarted ⇒ `s` is a fresh counter starting from 0, so all of it is
+    // new. Otherwise the counter is continuous with last beat's and only the
+    // increase is new — a decrease means torrents left the set, not new upload.
+    const restarted = uptime < lastUptime;
+    lifetime += restarted ? s : Math.max(0, s - last);
+
+    localStorage.setItem('si-uploaded-lifetime', JSON.stringify({ lifetime, lastSession: s, lastUptime: uptime }));
     return lifetime;
   } catch { return Number(sessionUploaded) || 0; }
 }
@@ -475,6 +568,13 @@ export function startHeartbeat(getStats, options = {}) {
 
 /**
  * Stop heartbeats and notify server this node is going offline.
+ *
+ * This runs from a `beforeunload` handler (App.jsx), and browsers/WKWebViews do
+ * not reliably keep an async fetch alive through unload — the document is torn
+ * down first and the request is cancelled. When that happened the shutdown never
+ * landed and the dashboard kept the node "online" until the 15-min staleness
+ * window expired. navigator.sendBeacon exists precisely for this: the request is
+ * handed to the browser, which sends it independently of the page's lifetime.
  */
 export async function stopHeartbeat() {
   if (intervalId) {
@@ -482,11 +582,37 @@ export async function stopHeartbeat() {
     intervalId = null;
   }
 
+  const url = `${API_BASE}/api/node/shutdown`;
+  const body = JSON.stringify({ node_id: getNodeId() });
+
+  // sendBeacon always POSTs and only lets us pick the Content-Type via the Blob
+  // type, so we send the JSON as text/plain. Two reasons that's the right choice:
+  //  - The server's handleShutdown() does `await req.json()` and never inspects
+  //    Content-Type, so the body parses exactly the same (verified in
+  //    server/si-app-dashboard.ts).
+  //  - text/plain is CORS-safelisted, so this is a simple cross-origin request.
+  //    application/json would force a preflight, and an unloading page cannot be
+  //    relied on to complete the OPTIONS round-trip — the very failure we're fixing.
   try {
-    await fetch(`${API_BASE}/api/node/shutdown`, {
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      const blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
+      if (navigator.sendBeacon(url, blob)) {
+        console.log('[Heartbeat] Shutdown notification queued (sendBeacon)');
+        return;
+      }
+      // Returned false — queue full or blocked. Fall through to fetch.
+    }
+  } catch { /* no sendBeacon in this environment — fall through to fetch */ }
+
+  // Fallback for environments without sendBeacon (or when it refused the payload).
+  // `keepalive` asks the fetch to outlive the document where it's supported; it's
+  // still weaker than a beacon, which is why it's the second choice, not the first.
+  try {
+    await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node_id: getNodeId() }),
+      body,
+      keepalive: true,
     });
     console.log('[Heartbeat] Shutdown notification sent');
   } catch {

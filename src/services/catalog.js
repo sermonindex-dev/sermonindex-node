@@ -146,10 +146,73 @@ function expandSermon(entry, speakers, topics) {
   };
 }
 
+// ── On-disk integrity ─────────────────────────────────────────────────────
+//
+// The signed master list carries a `size` for every sermon it lists: the EXACT
+// byte length of the file that was streamed and hashed into the canonical
+// .torrent (generate-canonical-torrents.mjs — `size: hashed.length`). The piece
+// hashes cover exactly those bytes, so a local file of any other length is by
+// definition not the file in the swarm.
+//
+// TOLERANCE: none — the comparison is exact. These are binary mp3/mp4 written
+// byte-for-byte from the same CDN objects the generator hashed; there is no
+// transcoding, no re-encoding and no text translation anywhere in the path that
+// could legitimately shift the length by a byte. A one-byte difference means a
+// different infohash, which means a swarm of one. Anything but exact would be
+// pretending to check.
+//
+// Returns 'ok' | 'bad' | 'unknown'. 'unknown' whenever either number is missing:
+// many sermons are not in the master list at all, and MISSING DATA MUST NEVER
+// MARK A FILE INCOMPLETE.
+function _checkSize(sermon, diskSize) {
+  const expected = Number(sermon?.verifiedSize) || 0;
+  const actual = Number(diskSize) || 0;
+  if (expected <= 0 || actual <= 0) return 'unknown';
+  return actual === expected ? 'ok' : 'bad';
+}
+
+// Apply a verdict to a download-state entry; returns true if anything changed.
+// 'unknown' deliberately leaves any existing verdict alone — a launch where the
+// master list hasn't arrived yet must not erase a real finding from last time.
+function _applySizeVerdict(id, verdict) {
+  const st = downloadState[id];
+  if (!st) return false;
+  if (verdict === 'bad') {
+    if (st.incomplete) return false;
+    st.incomplete = true;
+    return true;
+  }
+  if (verdict === 'ok') {
+    if (!st.incomplete) return false;
+    delete st.incomplete;
+    return true;
+  }
+  return false;
+}
+
+// Walk `items` in small concurrent batches, yielding to the event loop between
+// batches. These passes can cover tens of thousands of entries; awaiting one IPC
+// call at a time in a tight loop both serialised ~33k round-trips and never let
+// the UI thread breathe. Batching overlaps the latency, the cap keeps us from
+// hammering IPC, and the setTimeout(0) is a real macrotask boundary so React can
+// render and input events can land.
+// `shouldStop` is optional and checked only at batch boundaries: a user-triggered
+// sweep must be able to stop promptly without abandoning IPC calls mid-flight.
+// Existing callers pass nothing and are unaffected.
+const VERIFY_BATCH_SIZE = 32;
+async function _inBatches(items, fn, batchSize = VERIFY_BATCH_SIZE, shouldStop = null) {
+  for (let i = 0; i < items.length; i += batchSize) {
+    if (shouldStop && shouldStop()) return false;
+    await Promise.all(items.slice(i, i + batchSize).map(fn));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  return true;
+}
+
 // ── State ─────────────────────────────────────────────────────────────────
 
 let catalog = [];
-let downloadState = {}; // sermonId → { downloaded: boolean, magnet: string }
+let downloadState = {}; // sermonId → { downloaded: boolean, magnet: string, diskSize: number, incomplete?: boolean }
 
 /**
  * Initialize the catalog — expand compact data, load download state
@@ -190,65 +253,77 @@ export async function initCatalog() {
       const dlCount = Object.keys(downloadState).length;
       if (files !== null && !(files.length === 0 && dlCount > 2)) {
         const fileSet = new Set(files);
-        const validIds = new Set(catalog.map(s => s.id));
+        // Map, not repeated catalog.find(): the old lookup inside a loop over
+        // every download entry was O(entries × catalog) — 33k × 33k on a seed node.
+        const byId = new Map(catalog.map(s => [s.id, s]));
         let removed = 0;
-        let incomplete = 0;
+        const present = [];
         for (const id of Object.keys(downloadState)) {
-          if (!validIds.has(id)) {
+          const sermon = byId.get(id);
+          if (!sermon) {
             delete downloadState[id];
             removed++;
             continue;
           }
-          const sermon = catalog.find(s => s.id === id);
-          if (sermon) {
-            const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
-            const filename = `${id}.${ext}`;
-            // CONSERVATIVE: only delete when the file is definitively absent from
-            // a SUCCESSFUL, NON-EMPTY listing. Both are already guaranteed here
-            // (files !== null and the empty-with-entries case was excluded above).
-            if (!fileSet.has(filename)) {
-              delete downloadState[id];
-              removed++;
-            } else {
-              // File is present on disk — keep the entry. Refresh the disk size
-              // for accurate display, but NEVER delete based on get_file_size:
-              // a 0-byte read or a thrown error is a transient/read failure, not
-              // proof the download is bad (the file is in the listing).
-              try {
-                const diskSize = await tauriMod.invoke('get_file_size', { filename });
-                if (diskSize > 0) {
-                  downloadState[id].diskSize = diskSize;
-                  if (downloadState[id].incomplete) delete downloadState[id].incomplete;
-                }
-                // diskSize === 0 → leave the existing entry untouched (keep it).
-              } catch {
-                // get_file_size failed — keep the entry, file is still listed.
-              }
-            }
+          const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
+          const filename = `${id}.${ext}`;
+          // CONSERVATIVE: only delete when the file is definitively absent from
+          // a SUCCESSFUL, NON-EMPTY listing. Both are already guaranteed here
+          // (files !== null and the empty-with-entries case was excluded above).
+          if (!fileSet.has(filename)) {
+            delete downloadState[id];
+            removed++;
+          } else {
+            present.push({ id, filename, sermon });
           }
         }
+        // File is present on disk — keep the entry. Refresh the disk size for
+        // accurate display, but NEVER delete based on get_file_size: a 0-byte
+        // read or a thrown error is a transient/read failure, not proof the
+        // download is bad (the file is in the listing).
+        let verdicts = 0;
+        await _inBatches(present, async ({ id, filename, sermon }) => {
+          let diskSize = 0;
+          try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch { return; }
+          if (diskSize <= 0) return; // leave the existing entry untouched
+          downloadState[id].diskSize = diskSize;
+          // Note: at THIS point in startup the master list usually hasn't been
+          // applied yet, so verifiedSize is absent and the verdict is 'unknown',
+          // which leaves any previous finding intact. The real verification pass
+          // is the one scheduled when the master list lands (see
+          // _scheduleIntegrityPass) and on every visit to My Downloads.
+          if (_applySizeVerdict(id, _checkSize(sermon, diskSize))) verdicts++;
+        });
         // ── ADOPT ORPHANS: the folder is the source of truth ──
         // Any <id>.<ext> file on disk that maps to a catalog sermon but isn't
         // in downloadState gets added (this recovers downloads whose state was
         // lost, so My Downloads always matches the actual folder contents).
-        let adopted = 0;
+        const orphans = [];
         for (const filename of files) {
           const base = filename.replace(/\.(mp3|mp4)$/i, '');
-          if (base === filename) continue; // not a sermon media file
-          if (!validIds.has(base)) continue; // unknown id — leave foreign files alone
-          if (!downloadState[base]?.downloaded) {
-            let diskSize = 0;
-            try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch {}
-            downloadState[base] = {
-              downloaded: true,
-              magnet: downloadState[base]?.magnet || `local-${base}`,
-              diskSize: diskSize || downloadState[base]?.diskSize || 0,
-            };
-            adopted++;
-          }
+          if (base === filename) continue;  // not a sermon media file
+          if (!byId.has(base)) continue;    // unknown id — leave foreign files alone
+          if (!downloadState[base]?.downloaded) orphans.push({ filename, base });
         }
-        if (removed > 0 || incomplete > 0 || adopted > 0) {
-          console.log(`[Catalog] Reconciled downloads: ${removed} stale removed, ${adopted} orphan files adopted`);
+        let adopted = 0;
+        await _inBatches(orphans, async ({ filename, base }) => {
+          let diskSize = 0;
+          try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch {}
+          downloadState[base] = {
+            downloaded: true,
+            magnet: downloadState[base]?.magnet || `local-${base}`,
+            diskSize: diskSize || downloadState[base]?.diskSize || 0,
+          };
+          // An adopted file is VERIFIED, not trusted. Adoption used to mark a
+          // file downloaded on EXISTENCE ALONE, so a half-copied file sitting in
+          // the folder counted towards coverage and got announced to the swarm.
+          if (_checkSize(byId.get(base), diskSize) === 'bad') {
+            downloadState[base].incomplete = true;
+          }
+          adopted++;
+        });
+        if (removed > 0 || verdicts > 0 || adopted > 0) {
+          console.log(`[Catalog] Reconciled downloads: ${removed} stale removed, ${adopted} orphan files adopted, ${verdicts} integrity verdict(s) changed`);
           _persistDownloadState();
         }
       } else if (files !== null && files.length === 0 && dlCount > 2) {
@@ -270,7 +345,7 @@ export async function initCatalog() {
   // bumping master_list_version (see reconcileMasterListVersion, called from the
   // heartbeat) instead of re-downloading the whole file on every start.
   try {
-    const cached = _loadMasterListCache();
+    const cached = await _loadMasterListCache();
     if (cached && cached.entries) {
       const merged = applyMasterListEntries(cached.entries);
       console.log(`[Catalog] Master list applied from cache — ${merged} sermons have canonical torrents (version: ${cached.version || 'local'})`);
@@ -299,27 +374,63 @@ export function hasMasterList() {
 // admin bumps `master_list_version` (delivered inside the heartbeat config →
 // reconcileMasterListVersion). This kills the "re-download the whole file on every
 // start" behaviour while keeping the trust anchor perfectly up to date on command.
-const MASTER_LIST_CACHE_KEY = 'si_master_list';                       // JSON { version, entries }
-const MASTER_LIST_APPLIED_VERSION_KEY = 'si_master_list_applied_version'; // string
+//
+// The cache lives in a FILE, not localStorage. master-list.json is 22.7 MB
+// (measured: 22,666,759 bytes), and WebView2/WebKitGTK enforce roughly a 5 MB
+// per-origin quota — so the setItem below threw on those platforms, the throw
+// was swallowed, and every node re-downloaded the whole 22.7 MB on EVERY launch:
+// exactly what this cache exists to prevent. The Rust save_catalog/load_catalog
+// pair writes atomically into the app data dir and has no quota. (Those two
+// commands were otherwise unused — nothing else reads or writes catalog.json.)
+const MASTER_LIST_CACHE_KEY = 'si_master_list';                       // legacy localStorage key (migrated away from)
+const MASTER_LIST_APPLIED_VERSION_KEY = 'si_master_list_applied_version'; // string — tiny, localStorage is fine
 
-function _loadMasterListCache() {
+// One loud line whenever a localStorage write fails ANYWHERE in this file.
+// Silent quota failures are how a 22.7 MB cache appeared to work for months;
+// this class of failure must never be invisible again.
+function _warnStorageWrite(what, e) {
+  console.warn(`[Catalog] localStorage write FAILED for ${what} — data NOT saved (quota or private mode?): ${e?.message || e}`);
+}
+
+async function _loadMasterListCache() {
+  // Preferred: the on-disk cache.
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const raw = await invoke('load_catalog');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.entries && typeof parsed.entries === 'object') return parsed;
+    }
+  } catch { /* no native side, or nothing cached yet — fall through */ }
+  // Legacy: a copy small enough to have fitted in localStorage on some platform.
   try {
     const raw = localStorage.getItem(MASTER_LIST_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.entries && typeof parsed.entries === 'object') return parsed;
+    if (parsed && parsed.entries && typeof parsed.entries === 'object') {
+      // Hand the quota back; the file cache takes over from here.
+      try { localStorage.removeItem(MASTER_LIST_CACHE_KEY); } catch { /* non-fatal */ }
+      return parsed;
+    }
   } catch { /* corrupt/unavailable — treat as no cache */ }
   return null;
 }
 
-function _saveMasterListCache(version, entries) {
-  // Quota-safe: master-list.json can be large. If the write throws (quota,
-  // private mode, etc.) just skip caching — the app still works, it just
-  // re-fetches on the next launch instead of serving from cache.
+async function _saveMasterListCache(version, entries) {
+  const data = JSON.stringify({ version: version || '', entries });
   try {
-    localStorage.setItem(MASTER_LIST_CACHE_KEY, JSON.stringify({ version: version || '', entries }));
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('save_catalog', { data });
+    return;
   } catch (e) {
-    console.warn('[Catalog] Master list cache write skipped (storage quota?):', e?.message || e);
+    console.warn('[Catalog] Master list cache write to disk failed:', e?.message || e);
+  }
+  // Browser-dev fallback ONLY. This is the write that silently fails at ~5 MB in
+  // a real webview, which is why it is no longer the primary path.
+  try {
+    localStorage.setItem(MASTER_LIST_CACHE_KEY, data);
+  } catch (e) {
+    _warnStorageWrite('master list cache', e);
   }
 }
 
@@ -328,7 +439,11 @@ function _getAppliedMasterListVersion() {
 }
 
 function _setAppliedMasterListVersion(version) {
-  try { localStorage.setItem(MASTER_LIST_APPLIED_VERSION_KEY, String(version || '')); } catch { /* non-fatal */ }
+  try {
+    localStorage.setItem(MASTER_LIST_APPLIED_VERSION_KEY, String(version || ''));
+  } catch (e) {
+    _warnStorageWrite('applied master-list version', e);
+  }
 }
 
 /**
@@ -355,8 +470,24 @@ export function applyMasterListEntries(entries) {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('si-master-list', { detail: { merged } }));
     }
+    // verifiedSize has just become available — audit what's on disk against it.
+    _scheduleIntegrityPass();
   }
   return merged;
+}
+
+// Run the on-disk integrity pass ONCE per session, shortly after the master list
+// (the only source of verifiedSize) has been applied. Without this the check
+// would only ever run if the user happened to open My Downloads, and coverage %,
+// Seed Node progress and the heartbeat would keep reporting unverified files.
+// Background and non-blocking: it batches its IPC and yields between batches.
+let _integrityPassScheduled = false;
+function _scheduleIntegrityPass() {
+  if (_integrityPassScheduled) return;
+  _integrityPassScheduled = true;
+  setTimeout(() => {
+    revalidateDownloads().catch(() => {});
+  }, 5000); // let startup settle — this is an audit, not a gate
 }
 
 // Retry schedule when the master list can't be fetched/parsed (transient CDN
@@ -494,7 +625,7 @@ async function _fetchMasterListOnce(cacheVersion) {
   // with the server-pushed version when known, else the version we already applied,
   // else a local timestamp marker (so a later server version always differs → pull).
   const version = cacheVersion || _getAppliedMasterListVersion() || `local-${Date.now()}`;
-  _saveMasterListCache(version, data.entries);
+  await _saveMasterListCache(version, data.entries);
   console.log(`[Catalog] Master list loaded from network — ${merged} sermons have canonical torrents (cached version: ${version})`);
   return merged;
 }
@@ -541,26 +672,97 @@ export async function forceRefreshMasterList() {
 }
 
 /**
- * Fetch catalog update from the API (new sermons only)
+ * Fetch catalog update from the API (new sermons only).
+ *
+ * Everything that arrives here is UNSIGNED and untrusted (unlike the master
+ * list, which is ed25519-verified). It used to be pushed into `catalog`
+ * verbatim, which meant an API object was a different SHAPE from every other
+ * sermon: no `format`, no `type`, no `archiveUrl`/`cdnUrl`, no `sizeBytes`. Such
+ * an entry silently breaks the things that read those fields — the downloader
+ * picks its filename extension from `format`/`type`, revalidation derives the
+ * on-disk filename the same way, and the player reads `url`. So now every entry
+ * goes through the SAME expansion the built-in catalog uses and is validated
+ * first; anything that doesn't validate is dropped rather than half-merged.
  */
+
+// Accept only entries we can actually act on. Returns a fully-expanded sermon
+// object (identical in shape to the built-in catalog) or null.
+function _expandApiSermon(entry, speakers, topics) {
+  // Compact row — exactly the built-in format. Expand it as-is.
+  if (Array.isArray(entry)) {
+    if (typeof entry[0] !== 'string' || !entry[0]) return null;
+    const s = expandSermon(entry, speakers, topics);
+    return s.url ? s : null;
+  }
+  if (!entry || typeof entry !== 'object') return null;
+
+  const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+  const title = typeof entry.title === 'string' ? entry.title.trim() : '';
+  // An id is the filename stem on disk and the catalog key — it must be a plain
+  // token. Anything else could collide with, or escape, a real sermon filename.
+  if (!/^[A-Za-z0-9._-]+$/.test(id) || !title) return null;
+
+  // Rebuild the compact row and expand it, so the resulting object is produced by
+  // exactly one code path. Unknown speaker/topic strings are appended to the
+  // local index arrays rather than trusted as numeric indices from the API.
+  const speakerName = typeof entry.speaker === 'string' && entry.speaker.trim() ? entry.speaker.trim() : 'Unknown';
+  let spkIdx = speakers.findIndex((s) => s[0] === speakerName);
+  if (spkIdx < 0) spkIdx = speakers.push([speakerName, typeof entry.speakerImage === 'string' ? entry.speakerImage : '']) - 1;
+  const topicName = typeof entry.topic === 'string' && entry.topic.trim() ? entry.topic.trim() : 'General';
+  let topIdx = topics.indexOf(topicName);
+  if (topIdx < 0) topIdx = topics.push(topicName) - 1;
+
+  const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0);
+  const code = (v) => (typeof v === 'string' && /^[A-Za-z0-9._/-]+$/.test(v) ? v : '');
+  const isVideo = entry.type === 'video' || entry.type === 1 || entry.format === 'mp4';
+
+  const row = [
+    id,
+    title,
+    spkIdx,
+    topIdx,
+    typeof entry.scripture === 'string' ? entry.scripture : '',
+    num(entry.duration),
+    num(entry.sizeKB) || Math.round(num(entry.sizeBytes) / 1024),
+    code(entry.archiveCode),
+    code(entry.cdnCode),
+    isVideo ? 1 : 0,
+    num(entry.views),
+  ];
+  const sermon = expandSermon(row, speakers, topics);
+  // No source URL = nothing to play and nothing to download. Not a sermon.
+  return sermon.url ? sermon : null;
+}
+
 async function fetchCatalogUpdate() {
   try {
     const res = await fetch(CATALOG_URL);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.sermons && data.sermons.length > 0) {
-        // Merge new sermons into catalog (don't replace — the built-in is authoritative)
-        const existingIds = new Set(catalog.map(s => s.id));
-        let added = 0;
-        for (const s of data.sermons) {
-          if (!existingIds.has(s.id)) {
-            catalog.push(s);
-            added++;
-          }
-        }
-        if (added > 0) console.log(`[Catalog] Added ${added} new sermons from API`);
-      }
+    if (!res.ok) return;
+    const data = await res.json();
+    const incoming = Array.isArray(data?.sermons) ? data.sermons
+      : Array.isArray(data?.c) ? data.c
+      : null;
+    if (!incoming || incoming.length === 0) return;
+
+    // Index arrays the expansion resolves against. Prefer the ones the API sent
+    // (a compact payload carries its own), else extend the built-in ones.
+    const speakers = Array.isArray(data?.s) ? data.s.slice() : compactData.s.slice();
+    const topics = Array.isArray(data?.t) ? data.t.slice() : compactData.t.slice();
+
+    // Merge new sermons into catalog (don't replace — the built-in is authoritative)
+    const existingIds = new Set(catalog.map(s => s.id));
+    let added = 0;
+    let rejected = 0;
+    for (const raw of incoming) {
+      const sermon = _expandApiSermon(raw, speakers, topics);
+      if (!sermon) { rejected++; continue; }
+      if (existingIds.has(sermon.id)) continue;
+      existingIds.add(sermon.id);
+      catalog.push(sermon);
+      added++;
     }
+    if (added > 0) console.log(`[Catalog] Added ${added} new sermons from API`);
+    if (rejected > 0) console.warn(`[Catalog] Dropped ${rejected} malformed sermon(s) from the API update`);
   } catch {
     // Silently fail — use built-in catalog
   }
@@ -610,10 +812,25 @@ export function searchCatalog(query) {
 }
 
 /**
- * Mark a sermon as downloaded with its magnet link (or `local-<id>` placeholder)
+ * Mark a sermon as downloaded with its magnet link (or `local-<id>` placeholder).
+ *
+ * `diskSize` must be the REAL on-disk byte length the Rust save/finalize command
+ * reported — not the number of bytes counted off the network. Those two only
+ * agree when the write actually succeeded, which is the whole point: recording
+ * the wire count is what made a failed disk write invisible.
+ *
+ * The same verifiedSize check the revalidation pass uses is applied here (for
+ * free — no IPC, the size is already in hand), so a download that lands at the
+ * wrong length is flagged immediately rather than waiting for the next audit.
  */
 export function markDownloaded(sermonId, magnet, diskSize) {
-  downloadState[sermonId] = { downloaded: true, magnet, diskSize: diskSize || 0 };
+  const size = Number(diskSize) || 0;
+  downloadState[sermonId] = { downloaded: true, magnet, diskSize: size };
+  const sermon = catalog.find(s => s.id === sermonId);
+  if (_checkSize(sermon, size) === 'bad') {
+    downloadState[sermonId].incomplete = true;
+    console.warn(`[Catalog] ${sermonId}: on-disk size ${size} != canonical ${sermon?.verifiedSize} — marked incomplete`);
+  }
   _persistDownloadState();
 }
 
@@ -657,46 +874,76 @@ export async function revalidateDownloads() {
       return false;
     }
     const fileSet = new Set(files);
-    const validIds = new Set(catalog.map(s => s.id));
+    // Map, not repeated catalog.find(): this walks every download entry, and on a
+    // seed node that is 33k lookups into a 33k array.
+    const byId = new Map(catalog.map(s => [s.id, s]));
     let changed = 0;
+    let bad = 0;
     // Adopt orphan files on disk (folder = source of truth) so My Downloads
     // always matches the actual folder — recovers downloads whose state was lost.
+    const orphans = [];
     for (const filename of files) {
       const base = filename.replace(/\.(mp3|mp4)$/i, '');
-      if (base === filename || !validIds.has(base)) continue;
-      if (!downloadState[base]?.downloaded) {
-        let diskSize = 0;
-        try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch {}
-        downloadState[base] = { downloaded: true, magnet: downloadState[base]?.magnet || `local-${base}`, diskSize: diskSize || 0 };
-        changed++;
-      }
+      if (base === filename || !byId.has(base)) continue;
+      if (!downloadState[base]?.downloaded) orphans.push({ filename, base });
     }
+    await _inBatches(orphans, async ({ filename, base }) => {
+      let diskSize = 0;
+      try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch {}
+      downloadState[base] = { downloaded: true, magnet: downloadState[base]?.magnet || `local-${base}`, diskSize: diskSize || 0 };
+      // Adoption VERIFIES, it doesn't trust. A file that is merely present used
+      // to be marked downloaded on existence alone, so a half-copied file counted
+      // towards coverage and got announced to the swarm as a complete sermon.
+      if (_checkSize(byId.get(base), diskSize) === 'bad') {
+        downloadState[base].incomplete = true;
+        bad++;
+      }
+      changed++;
+    });
+
+    // Absent-from-disk entries first (no IPC — pure bookkeeping), then one
+    // batched size pass over what actually survives.
+    const present = [];
     for (const id of Object.keys(downloadState)) {
       if (!downloadState[id].downloaded) continue;
-      const sermon = catalog.find(s => s.id === id);
-      if (sermon) {
-        const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
-        const filename = `${id}.${ext}`;
-        if (!fileSet.has(filename)) {
-          delete downloadState[id];
-          changed++;
-        } else {
-          // File is present in a successful, non-empty listing — keep the entry.
-          // Refresh disk size for accurate stats, but NEVER delete on a 0-byte
-          // read or a get_file_size error (transient read failure, not proof
-          // the file is bad — it is still in the listing).
-          try {
-            const diskSize = await tauriMod.invoke('get_file_size', { filename });
-            if (diskSize > 0 && downloadState[id].diskSize !== diskSize) {
-              downloadState[id].diskSize = diskSize;
-              changed++;
-            }
-          } catch {}
-        }
+      const sermon = byId.get(id);
+      if (!sermon) continue;
+      const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
+      const filename = `${id}.${ext}`;
+      if (!fileSet.has(filename)) {
+        delete downloadState[id];
+        changed++;
+      } else {
+        present.push({ id, filename, sermon });
       }
     }
+    // File is present in a successful, non-empty listing — keep the entry.
+    // Refresh disk size for accurate stats, but NEVER delete on a 0-byte read or
+    // a get_file_size error (transient read failure, not proof the file is bad —
+    // it is still in the listing).
+    await _inBatches(present, async ({ id, filename, sermon }) => {
+      let diskSize = 0;
+      try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch { return; }
+      if (diskSize <= 0) return;
+      if (downloadState[id].diskSize !== diskSize) {
+        downloadState[id].diskSize = diskSize;
+        changed++;
+      }
+      // THE integrity check. Compare what is on disk against the byte length the
+      // SIGNED master list says this sermon has (verifiedSize). A mismatch is the
+      // Incomplete badge, the Re-download button, exclusion from exports and
+      // exclusion from seed progress — all of which existed but could never fire,
+      // because nothing ever set `incomplete`. Sermons with no verifiedSize get a
+      // verdict of 'unknown', which changes nothing: MISSING DATA MUST NEVER MARK
+      // A FILE INCOMPLETE.
+      const verdict = _checkSize(sermon, diskSize);
+      if (_applySizeVerdict(id, verdict)) {
+        changed++;
+        if (verdict === 'bad') bad++;
+      }
+    });
     if (changed > 0) {
-      console.log(`[Catalog] Revalidation: updated ${changed} entries`);
+      console.log(`[Catalog] Revalidation: updated ${changed} entries${bad > 0 ? `, ${bad} failed the size check (marked incomplete)` : ''}`);
       _persistDownloadState();
       return true;
     }
@@ -704,6 +951,144 @@ export async function revalidateDownloads() {
     console.warn('[Catalog] Revalidation failed:', e);
   }
   return false;
+}
+
+/**
+ * USER-TRIGGERED verification sweep ("Verify & Repair Library" in Settings).
+ *
+ * Same integrity rule as revalidateDownloads — it calls the very same _checkSize
+ * / _applySizeVerdict / _inBatches helpers, so there is exactly ONE definition of
+ * "is this file complete" in the app. The difference is purely that this variant
+ * is observable and interruptible: it reports progress, can be stopped, and
+ * hands back a tally plus the list of sermons that need repairing.
+ *
+ * Scope is the DOWNLOAD FOLDER, not just downloadState: every <id>.<ext> on disk
+ * that maps to a catalog sermon is checked (this catches files whose bookkeeping
+ * was lost), plus every entry that claims to be downloaded but whose file is gone.
+ *
+ * It deliberately DELETES NOTHING and adopts nothing. Verdicts are written back
+ * to existing downloadState entries only (that is what drives the Incomplete
+ * badge); a file with no state entry is counted but not recorded. Users are told
+ * "nothing is deleted", so this must stay true.
+ *
+ * options:
+ *   onProgress({ done, total })  — throttled, safe to setState from
+ *   shouldStop()                 — return true to abort at the next batch boundary
+ *
+ * Resolves to:
+ *   { ok, stopped, total, checked, complete, damaged, missing, unchecked, repairable }
+ * `ok:false` means the sweep could not run at all (no native layer, or the file
+ * listing failed / looked untrustworthy) — never a reason to mark anything bad.
+ * `repairable` is an array of catalog sermon objects for the repair step.
+ */
+// (Progress stride is now computed per-sweep from the library size — see
+//  `progressEvery` in verifyLibrary — so a fixed constant is no longer used.)
+
+export async function verifyLibrary({ onProgress, shouldStop } = {}) {
+  const result = {
+    ok: false, stopped: false,
+    total: 0, checked: 0, complete: 0, damaged: 0, missing: 0, unchecked: 0,
+    repairable: [],
+  };
+  const stop = () => (typeof shouldStop === 'function' ? !!shouldStop() : false);
+
+  const tauriMod = await import('@tauri-apps/api/core').catch(() => null);
+  if (!tauriMod) return result; // browser dev mode — nothing on disk to check
+
+  let files = null;
+  try {
+    files = await tauriMod.invoke('list_downloaded_files');
+  } catch (listErr) {
+    console.warn('[Catalog] Verify: list_downloaded_files failed:', listErr?.message || listErr);
+    return result;
+  }
+  if (!Array.isArray(files)) return result;
+
+  // Same guard revalidateDownloads uses: an empty listing while we hold many
+  // entries means the read failed (fd exhaustion), not that the library vanished.
+  const dlCount = Object.keys(downloadState).length;
+  if (files.length === 0 && dlCount > 2) {
+    console.warn(`[Catalog] Verify: 0 files on disk but ${dlCount} entries — refusing to report (possible fd exhaustion)`);
+    return result;
+  }
+
+  const byId = new Map(catalog.map((s) => [s.id, s]));
+  const fileSet = new Set(files);
+
+  // 1. Everything present in the folder that we can identify.
+  const present = [];
+  for (const filename of files) {
+    const base = filename.replace(/\.(mp3|mp4)$/i, '');
+    if (base === filename) continue;      // not a sermon media file
+    const sermon = byId.get(base);
+    if (!sermon) continue;                // foreign file — leave it alone
+    present.push({ id: base, filename, sermon });
+  }
+  // 2. Entries that claim to be downloaded but whose file is not there.
+  const absent = [];
+  for (const id of Object.keys(downloadState)) {
+    if (!downloadState[id].downloaded) continue;
+    const sermon = byId.get(id);
+    if (!sermon) continue;
+    const ext = sermon.type === 'video' ? 'mp4' : 'mp3';
+    if (!fileSet.has(`${id}.${ext}`)) absent.push(sermon);
+  }
+
+  result.total = present.length + absent.length;
+  result.missing = absent.length;
+  result.repairable.push(...absent);
+
+  // The absent ones are already resolved (pure bookkeeping, no IPC), so count
+  // them towards progress up front rather than making the bar start behind.
+  let done = absent.length;
+  let changed = 0;
+  // Aim for ~100 progress updates across the whole sweep regardless of size:
+  // every item for a small library, every ~335 for a full 33.5k seed node.
+  const progressEvery = Math.max(1, Math.floor(result.total / 100));
+  const report = () => { if (typeof onProgress === 'function') onProgress({ done, total: result.total }); };
+  report();
+
+  const finished = await _inBatches(present, async ({ id, filename, sermon }) => {
+    let diskSize = 0;
+    let readFailed = false;
+    try { diskSize = await tauriMod.invoke('get_file_size', { filename }); } catch { readFailed = true; }
+    done++;
+    if (readFailed || Number(diskSize) <= 0) {
+      // A failed/zero read is a read problem, not proof of damage. Counted as
+      // "couldn't check" and the existing verdict is left exactly as it was.
+      result.unchecked++;
+    } else {
+      if (downloadState[id] && downloadState[id].diskSize !== diskSize) {
+        downloadState[id].diskSize = diskSize;
+        changed++;
+      }
+      const verdict = _checkSize(sermon, diskSize);
+      if (_applySizeVerdict(id, verdict)) changed++;
+      if (verdict === 'bad') {
+        result.damaged++;
+        result.repairable.push(sermon);
+      } else if (verdict === 'ok') {
+        result.complete++;
+      } else {
+        // No canonical size published for this sermon — nothing to compare
+        // against. MISSING DATA MUST NEVER MARK A FILE INCOMPLETE.
+        result.unchecked++;
+      }
+      result.checked++;
+    }
+    // Report on a stride PROPORTIONAL to library size, so the bar moves
+    // smoothly whether there are 25 sermons or 33,000. A fixed stride of 25
+    // meant a small library jumped straight from 0% to 100% and looked broken.
+    if (done % progressEvery === 0) report();
+  }, VERIFY_BATCH_SIZE, stop);
+
+  done = Math.min(done, result.total);
+  report();
+  if (changed > 0) _persistDownloadState();
+  result.stopped = !finished;
+  result.ok = true;
+  console.log(`[Catalog] Verify ${finished ? 'complete' : 'stopped'}: ${result.checked}/${result.total} checked, ${result.complete} complete, ${result.damaged} damaged, ${result.missing} missing, ${result.unchecked} not checked`);
+  return result;
 }
 
 /**

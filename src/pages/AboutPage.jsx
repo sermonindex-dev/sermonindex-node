@@ -1,5 +1,8 @@
 import React from 'react';
 import { CONDITIONS_SUMMARY } from '../data/conditions.jsx';
+// Same white wordmark the sidebar uses. Safe to `import` — the asset exists in
+// the repo, so Vite resolves it at build time.
+import logo from '../assets/sermon-index-white.png';
 
 const seedMark = (
   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -53,6 +56,56 @@ function SiteLink({ children }) {
 const h = { fontSize: '1rem', fontWeight: 700, color: 'var(--gold-text)', margin: '0 0 10px' };
 const p = { fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)', margin: '0 0 12px' };
 
+// ── About hero band ───────────────────────────────────────────────────────
+// Built to match `SeedNodeHero()` on the Seed Node page: a full-width band that
+// sits inside `.page-header-wide` above `.connections-layout`, so it spans both
+// columns and lines up with them. Like that band it carries its OWN dark olive
+// surface in both themes (see `.si-abouthero` in styles.css) and uses fixed
+// light text colours rather than the --text-* tokens, which flip with the theme.
+//
+// The Spurgeon portrait replaces the seed band's SVG: it bleeds in from the left
+// and is feathered out toward the copy on the right.
+//
+// The portrait is referenced as a PLAIN PUBLIC URL, deliberately NOT a Vite
+// `import`. The file is not in the repo yet; a missing `import` would fail the
+// build, whereas a missing public asset just 404s. `onError` then hides the
+// element so the band degrades cleanly to logo + text.
+const SPURGEON_SRC = '/images/about-spurgeon.png';
+
+function AboutHero() {
+  return (
+    <div className="si-abouthero">
+      <div className="si-abouthero-portrait" aria-hidden="true">
+        <img
+          src={SPURGEON_SRC}
+          alt=""
+          aria-hidden="true"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      </div>
+      <img className="si-abouthero-logo" src={logo} alt="SermonIndex" />
+      <div className="si-abouthero-wrap">
+        <div className="si-abouthero-copy">
+          <h2>Our Mission</h2>
+          <p className="si-abouthero-lede">
+            "<SiteLink>SermonIndex</SiteLink>'s assignment is to honour and preserve the past preaching of
+            God's Word and to promote revival to this generation."
+          </p>
+          <p>
+            Since 2002 — begun by Greg Gordon after reading Leonard Ravenhill's
+            <em> Why Revival Tarries</em> — <SiteLink>SermonIndex</SiteLink> has grown into a library of tens
+            of thousands of sermons from voices such as Charles Spurgeon, A.W. Tozer, and
+            Leonard Ravenhill. These messages have been made freely available and
+            distributed over 100 million times, reaching nearly every nation on earth.
+            Being undenominational, we seek to serve all who love our Lord Jesus Christ in
+            sincerity, holding to the Scriptures as the inspired Word of God.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AboutPage({ version = '', onShowConditions }) {
   const extLink = {
     display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem',
@@ -62,9 +115,9 @@ export default function AboutPage({ version = '', onShowConditions }) {
 
   return (
     <div className="settings-page-root">
-      <div style={{ maxWidth: '760px', margin: '0 auto', padding: '4px 0 40px' }}>
-
-        {/* Header */}
+      {/* Header spans the full width above both columns (same pattern Settings
+          uses), so it lines up with the left-hand column beneath it. */}
+      <div className="page-header-wide" style={{ padding: '4px 0 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '22px', color: 'var(--gold-text)' }}>
           <span style={{ display: 'flex' }}>{seedMark}</span>
           <div>
@@ -75,62 +128,25 @@ export default function AboutPage({ version = '', onShowConditions }) {
           </div>
         </div>
 
-        {/* Mission */}
-        <div className="seed-card" style={{ marginBottom: '16px' }}>
-          <h3 style={h}>Our Mission</h3>
-          <p style={{ ...p, color: 'var(--text-primary)', fontStyle: 'italic' }}>
-            "<SiteLink>SermonIndex</SiteLink>'s assignment is to honour and preserve the past preaching of
-            God's Word and to promote revival to this generation."
-          </p>
-          <p style={p}>
-            Since 2002 — begun by Greg Gordon after reading Leonard Ravenhill's
-            <em> Why Revival Tarries</em> — <SiteLink>SermonIndex</SiteLink> has grown into a library of tens
-            of thousands of sermons from voices such as Charles Spurgeon, A.W. Tozer, and
-            Leonard Ravenhill. These messages have been made freely available and
-            distributed over 100 million times, reaching nearly every nation on earth.
-            Being undenominational, we seek to serve all who love our Lord Jesus Christ in
-            sincerity, holding to the Scriptures as the inspired Word of God.
-          </p>
-        </div>
+        {/* Mission, as the page's hero. Lives inside `.page-header-wide` rather
+            than in a column — same as the Seed Node band — so it spans the full
+            1100px, lines up with the two columns beneath, and lets the portrait
+            bleed off its left edge. */}
+        <AboutHero />
+      </div>
 
-        {/* Node vision */}
-        <div className="seed-card" style={{ marginBottom: '16px' }}>
-          <h3 style={h}>Why the Node Software Exists</h3>
-          <p style={p}>
-            There is a quiet danger in "one place." Everything that lives on a single set
-            of servers can be lost from a single set of servers — through cost, hardware
-            failure, pressure, or a decision made far above our heads. An archive this
-            precious should not hang on so thin a thread.
-          </p>
-          <p style={p}>
-            This software turns your computer into a living part of the archive. You use
-            it to browse and download sermons to keep and hear offline — and in the
-            background, your app quietly shares those same files with others, computer to
-            computer, around the world. There is no central server doing the work.
-            <strong style={{ color: 'var(--text-primary)' }}> The network is the people running it</strong>,
-            and the more of us who run it, the more permanent the archive becomes.
-          </p>
-          <p style={{
-            fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)',
-            borderLeft: '3px solid var(--gold)', paddingLeft: '14px', margin: '0 0 12px', fontStyle: 'italic',
-          }}>
-            With seed nodes distributed across the world, the sermon library becomes
-            essentially indestructible. No single point of failure. No authority can
-            censor it. The content lives on across the body of Christ.
-            <br /><br />
-            "How beautiful on the mountains are the feet of those who bring good news"
-            — Isaiah 52:7
-          </p>
-          <p style={{ ...p, margin: 0 }}>
-            Not a company guarding an archive, but the church herself carrying it —
-            thousands of ordinary computers in homes, on shelves, beside routers, across
-            dozens of nations, together forming something no outage and no authority can
-            erase. A fire handed from house to house that cannot be put out.
-          </p>
-        </div>
+      {/* Two columns, the shared layout Settings and Connections use.
+          LEFT  — what you may do with the sermons: the plain-English conditions
+                  and the links out to the website.
+          RIGHT — the long "why this software exists" essay. It is a single
+                  tall block of prose, so it balances the shorter blocks on the
+                  left far better than any card-count split would.
+          The mission itself now lives in the hero band above. */}
+      <div className="connections-layout" style={{ paddingBottom: '40px' }}>
+        <div className="connections-left">
 
         {/* Conditions summary */}
-        <div className="seed-card" style={{ marginBottom: '16px' }}>
+        <div className="seed-card">
           <h3 style={h}>Copying Permissions &amp; Conditions</h3>
           <p style={{ ...p, marginBottom: '10px' }}>
             In short:
@@ -155,6 +171,46 @@ export default function AboutPage({ version = '', onShowConditions }) {
           <span style={extLink} onClick={() => openExternal('https://forums.sermonindex.net')}>{iconExt} Forums</span>
           <span style={extLink} onClick={() => openExternal('https://www.sermonindex.net/md/copying-permissions/')}>{iconExt} Copying Permissions</span>
           <span style={extLink} onClick={() => openExternal('https://www.sermonindex.net/md/donate/')}>{iconExt} Donate</span>
+        </div>
+
+        </div>
+
+        {/* ── RIGHT: why this software exists ── */}
+        <div className="connections-right">
+          <div className="seed-card">
+            <h3 style={h}>Why the Node Software Exists</h3>
+            <p style={p}>
+              There is a quiet danger in "one place." Everything that lives on a single set
+              of servers can be lost from a single set of servers — through cost, hardware
+              failure, pressure, or a decision made far above our heads. An archive this
+              precious should not hang on so thin a thread.
+            </p>
+            <p style={p}>
+              This software turns your computer into a living part of the archive. You use
+              it to browse and download sermons to keep and hear offline — and in the
+              background, your app quietly shares those same files with others, computer to
+              computer, around the world. There is no central server doing the work.
+              <strong style={{ color: 'var(--text-primary)' }}> The network is the people running it</strong>,
+              and the more of us who run it, the more permanent the archive becomes.
+            </p>
+            <p style={{
+              fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)',
+              borderLeft: '3px solid var(--gold)', paddingLeft: '14px', margin: '0 0 12px', fontStyle: 'italic',
+            }}>
+              With seed nodes distributed across the world, the sermon library becomes
+              essentially indestructible. No single point of failure. No authority can
+              censor it. The content lives on across the body of Christ.
+              <br /><br />
+              "How beautiful on the mountains are the feet of those who bring good news"
+              — Isaiah 52:7
+            </p>
+            <p style={{ ...p, margin: 0 }}>
+              Not a company guarding an archive, but the church herself carrying it —
+              thousands of ordinary computers in homes, on shelves, beside routers, across
+              dozens of nations, together forming something no outage and no authority can
+              erase. A fire handed from house to house that cannot be put out.
+            </p>
+          </div>
         </div>
 
       </div>
