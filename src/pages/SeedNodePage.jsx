@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import PiBoard from '../components/PiBoard.jsx';
 import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess, saveReachability, readReachability, readIpv6Observation } from '../services/network.js';
 import { timeAgo } from '../utils/time.js';
 import { isReachable, writeSeedGranted } from '../utils/nodeStatus.js';
@@ -503,7 +504,13 @@ export default function SeedNodePage({
       <div className="settings-page-root">
         <div className="page-header-wide">
           <div className="page-header">
-            <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* The board sits to the LEFT of the heading, at the top of the
+                page, because this page is asking someone to put a physical
+                machine somewhere in their house and leave it on. A line drawing
+                of that machine makes the ask concrete before a word is read —
+                much more than another abstract circuit glyph does. */}
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <PiBoard size={54} />
               <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Become a Seed Node
             </h2>
             <p>Seed nodes carry the sermon library and serve it to the global peer network</p>
@@ -642,8 +649,11 @@ export default function SeedNodePage({
                 </div>
               </div>
               <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontWeight: 600, color: 'var(--gold-text)', marginBottom: '3px' }}>
-                  Option B — Dedicated low-power node (Raspberry Pi)
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '3px' }}>
+                  <PiBoard size={34} />
+                  <span style={{ fontWeight: 600, color: 'var(--gold-text)' }}>
+                    Option B — Dedicated low-power node (Raspberry Pi)
+                  </span>
                 </div>
                 <div>
                   A <strong style={{ color: 'var(--text-primary)' }}>Raspberry Pi 5 (8 GB)</strong> in a{' '}
@@ -681,7 +691,8 @@ export default function SeedNodePage({
     <div className="settings-page-root">
       <div className="page-header-wide">
         <div className="page-header">
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <PiBoard size={54} />
             <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconCircuitry}</span> Seed Node Active
           </h2>
           <p>You are helping carry the sermon library for the global network</p>

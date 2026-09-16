@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { getSeedProgress } from '../services/catalog.js';
+import { getIpv6Observation } from '../services/torrent.js';
+import ConnectivityChart from '../components/ConnectivityChart.jsx';
 
 // ── Invite / share (moved here from ImpactPanel) ────────────────────────────
 // Canonical public landing page for the node software — shared verbatim in
@@ -107,7 +109,15 @@ function dayLabel(key) {
   catch { return key; }
 }
 
-// Shape: { base, days: [{ d:'YYYY-MM-DD', v:<lifetime uploaded bytes>, n:<sermons held> }] }
+// Shape: { base, days: [{ d:'YYYY-MM-DD', v:<lifetime uploaded bytes>, n:<sermons held>,
+//                          i:<peak peers that came to us>, o:<peak peers we dialled> }] }
+//
+// `i` and `o` (0.0.331) are the two figures the old record could not produce.
+// They are stored as the DAY'S PEAK rather than the latest reading, because the
+// seeding rotation pauses torrents outside its live window — so the
+// instantaneous count legitimately falls back to 0 many times a day, and
+// recording the latest value would mean a day when twenty people took sermons
+// from you could easily end up written down as a zero.
 // `base` is the lifetime-uploaded figure at the START of the retained window, so
 // the oldest kept day still has something honest to subtract from.
 const EMPTY_HISTORY = { base: 0, days: [] };
@@ -120,7 +130,13 @@ function readHistory() {
     if (!rec || !Array.isArray(rec.days)) return null;
     const days = rec.days
       .filter(d => d && typeof d.d === 'string')
-      .map(d => ({ d: d.d, v: Number(d.v) || 0, n: Number(d.n) || 0 }))
+      .map(d => ({
+        d: d.d,
+        v: Number(d.v) || 0,
+        n: Number(d.n) || 0,
+        i: Number(d.i) || 0,
+        o: Number(d.o) || 0,
+      }))
       .slice(-HISTORY_MAX_DAYS);
     return { base: Number(rec.base) || 0, days };
   } catch { return null; }
@@ -141,17 +157,19 @@ function writeHistory(rec) {
  * seen today. Returns the PREVIOUS object unchanged (and writes nothing) when
  * nothing has actually moved, so this can be called as often as we like.
  */
-function recordToday(uploadedLifetime, sermonsHeld) {
+function recordToday(uploadedLifetime, sermonsHeld, peersIn = 0, peersOut = 0) {
   const today = dayKey();
   const prev = readHistory();
   const up = Number(uploadedLifetime) || 0;
   const held = Number(sermonsHeld) || 0;
+  const pin = Math.max(0, Number(peersIn) || 0);
+  const pout = Math.max(0, Number(peersOut) || 0);
 
   // First run ever: today's uploaded total becomes the baseline, so the first
   // bar counts only what is shared from now on rather than crediting today with
   // everything uploaded since the app was installed.
   if (!prev) {
-    const fresh = { base: up, days: [{ d: today, v: up, n: held }] };
+    const fresh = { base: up, days: [{ d: today, v: up, n: held, i: pin, o: pout }] };
     writeHistory(fresh);
     return fresh;
   }
@@ -159,11 +177,18 @@ function recordToday(uploadedLifetime, sermonsHeld) {
   const days = prev.days.map(d => ({ ...d }));
   const last = days[days.length - 1];
   if (last && last.d === today) {
-    if (last.v === up && last.n === held) return prev; // nothing changed
+    // Peaks only ever rise (see the note on the shape above).
+    const nextI = Math.max(Number(last.i) || 0, pin);
+    const nextO = Math.max(Number(last.o) || 0, pout);
+    if (last.v === up && last.n === held && nextI === last.i && nextO === last.o) {
+      return prev; // nothing changed
+    }
     last.v = up;
     last.n = held;
+    last.i = nextI;
+    last.o = nextO;
   } else {
-    days.push({ d: today, v: up, n: held });
+    days.push({ d: today, v: up, n: held, i: pin, o: pout });
   }
 
   // Trim to the window, carrying `base` forward as days fall off the front so
@@ -439,6 +464,9 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
   const [shareOpen, setShareOpen] = useState(false); // invite/share dropdown (hover / click / focus)
   const copiedTimer = useRef(null);
   const peersRef = useRef(0);                          // latest peers for the sampler
+  // Direction (0.0.331). `peers` above is a bare total; these say who dialled
+  // whom, which is the only thing that answers "am I serving, or just taking?"
+  const [dir, setDir] = useState({ inb: 0, out: 0, peak: 0 });
   const seededRef = useRef(false);                     // seed the sparkline exactly once
 
   // Audio vs video you're hosting — downloaded counts straight from the catalog
@@ -465,8 +493,48 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
   // Fold the live figures into today's row. recordToday returns the previous
   // object untouched when nothing has moved, so this settles immediately.
   useEffect(() => {
-    setHistory(recordToday(uploaded, sermonsHeld));
-  }, [uploaded, sermonsHeld]);
+    setHistory(recordToday(uploaded, sermonsHeld, dir.peak, dir.out));
+  }, [uploaded, sermonsHeld, dir.peak, dir.out]);
+
+  // Direction poll. The native side throttles the real peer-table scan to once
+  // every 30 s, so asking every 20 s costs nothing and keeps the reading fresh.
+  // A missing answer (session down, older native build) is left as the previous
+  // value rather than written down as zero — absence is not evidence.
+  useEffect(() => {
+    let alive = true;
+    const read = async () => {
+      const obs = await getIpv6Observation();
+      if (!alive || !obs) return;
+      setDir({
+        inb: Number(obs.inbound_peers) || 0,
+        out: Number(obs.outbound_peers) || 0,
+        peak: Number(obs.inbound_peers_peak) || 0,
+      });
+    };
+    read();
+    const id = setInterval(read, 20000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // The seven most recent recorded days, oldest first.
+  const weekDirection = useMemo(
+    () => history.days.slice(-7).map(d => ({
+      d: d.d,
+      label: dayLabel(d.d),
+      inb: Number(d.i) || 0,
+      out: Number(d.o) || 0,
+    })),
+    [history]
+  );
+
+  // Match the chart's stepped palette to the theme actually in force.
+  const themeMode = (() => {
+    try {
+      const attr = document.documentElement.getAttribute('data-theme');
+      if (attr === 'dark' || attr === 'light') return attr;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch { return 'light'; }
+  })();
 
   // Shared per day = the rise in the lifetime uploaded total since the previous
   // recorded day. Clamped at zero so a cleared browser store or a reinstalled
@@ -749,18 +817,46 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
       {/* ── RIGHT ── */}
       <div className="connections-right">
 
-      {/* Live "peers helped" sparkline */}
+      {/* ── Giving vs taking, day by day ──────────────────────────────────
+          The card this app was missing. Everything else counts peers without
+          direction, and a total cannot tell "people are taking sermons from me"
+          apart from "I am taking from them" — which is the one thing a person
+          running a node wants to know. */}
       <div className="seed-card">
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-          <h3 style={{ marginBottom: 0 }}>Peers You're Helping (live)</h3>
+          <h3 style={{ marginBottom: 0 }}>Giving vs Taking</h3>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            Served all-time: <strong style={{ color: 'var(--text-primary)' }}>{dir.peak.toLocaleString()}</strong>
+          </span>
+        </div>
+        <p style={{ marginTop: '6px', marginBottom: '14px' }}>
+          A connection someone opened <em>to you</em> means they found your node and took a sermon from
+          it — that is you serving the network. A connection you opened to them only shows your own
+          line works. Over a week, the balance between the two is the honest picture.
+        </p>
+        <ConnectivityChart days={weekDirection} mode={themeMode} />
+      </div>
+
+      {/* Live peers connected right now */}
+      <div className="seed-card">
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+          {/* Renamed in 0.0.331. This was "Peers You're Helping (live)", which
+              read as a lifetime total of people served — but the figure behind
+              it is `peer_stats.live` summed across torrents, i.e. peers
+              connected AT THIS INSTANT. Under seeding rotation that is 0 most
+              of the time, so long-running nodes were being told they had helped
+              nobody. The number was fine; the heading was a lie about it. The
+              lifetime figure now lives in the card above. */}
+          <h3 style={{ marginBottom: 0 }}>Peers Connected Right Now</h3>
           <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Now: <strong style={{ color: 'var(--gold-text)' }}>{peers.toLocaleString()}</strong>
             {peakPeers > 0 && <> · Peak: <strong style={{ color: 'var(--text-secondary)' }}>{peakPeers.toLocaleString()}</strong></>}
           </span>
         </div>
         <p style={{ marginTop: '6px', marginBottom: '14px' }}>
-          Sampled every {Math.round(SAMPLE_MS / 1000)} seconds while the app is open — a live picture of the
-          peers pulling sermons from your node right now.
+          Sampled every {Math.round(SAMPLE_MS / 1000)} seconds while the app is open. This rises and falls
+          all day as your node rotates through the library — a zero here means nobody is mid-download
+          this second, not that you have helped nobody.
         </p>
         <div style={{
           background: 'var(--bg-tertiary)', border: '1px solid var(--border)',

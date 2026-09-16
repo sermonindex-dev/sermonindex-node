@@ -240,22 +240,30 @@ export default function CommunityPage() {
             <div
               ref={listRef}
               onScroll={handleListScroll}
-              style={{ overflowY: 'auto', height: '62vh', minHeight: 480, display: 'flex', flexDirection: 'column', gap: '12px' }}
+              className="si-chat-scroll"
+              style={{ overflowY: 'auto', height: '62vh', minHeight: 480, display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px' }}
             >
               {messages.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                   {loadedOnce ? 'No messages yet — be the first to say hello.' : 'Loading messages…'}
                 </div>
-              ) : messages.map((m) => {
-                // Chat bubble: prominent colored name on top, small muted #node id
-                // beneath it, then the message. Own messages align right (gold bubble);
-                // moderator messages get a verified badge and a soft-yellow "forum" bubble.
+              ) : messages.map((m, mi) => {
+                // Chat row: avatar chip + bubble. The bubble's INNER corner is
+                // squared (see .si-chat-bubble) so it points back at whoever
+                // sent it — who-said-what is answered by shape before anyone
+                // reads a name, and it still works when the window is narrow
+                // and left/right alignment stops being obvious.
+                //
+                // Moderator messages keep their soft-yellow treatment and the
+                // verified badge; own messages keep the gold tint.
                 const isMine = String(m.node) === nodeShort();
                 const isMod = m.is_moderator === true;
                 let bubbleBg, bubbleBorder, nameColor, idColor, textColor;
                 if (isMod) {
-                  bubbleBg = '#fdf6d8'; bubbleBorder = '#e4d08a';
-                  nameColor = '#8a6a12'; idColor = 'rgba(60,50,20,0.65)'; textColor = '#3a3320';
+                  // Tokens, not literals — the old hardcoded near-white made the
+                  // moderator bubble the brightest thing on the dark theme.
+                  bubbleBg = 'var(--mod-bg)'; bubbleBorder = 'var(--mod-border)';
+                  nameColor = 'var(--mod-name)'; idColor = 'var(--mod-id)'; textColor = 'var(--mod-text)';
                 } else if (isMine) {
                   bubbleBg = 'var(--gold-dim)'; bubbleBorder = 'var(--border)';
                   nameColor = 'var(--gold-text)'; idColor = 'var(--text-muted)'; textColor = 'var(--text-primary)';
@@ -263,35 +271,74 @@ export default function CommunityPage() {
                   bubbleBg = 'var(--bg-tertiary)'; bubbleBorder = 'var(--border)';
                   nameColor = userColor(m.node); idColor = 'var(--text-muted)'; textColor = 'var(--text-primary)';
                 }
+
+                // Day divider whenever the calendar day changes. A week of
+                // conversation otherwise reads as one very long afternoon.
+                const prev = mi > 0 ? messages[mi - 1] : null;
+                const dayOf = (ts) => { const d = new Date(Number(ts) || 0); return d.toDateString(); };
+                const showDay = !prev || dayOf(prev.ts) !== dayOf(m.ts);
+                const dayLabel = (() => {
+                  const d = new Date(Number(m.ts) || 0);
+                  const today = new Date();
+                  const y = new Date(); y.setDate(today.getDate() - 1);
+                  if (d.toDateString() === today.toDateString()) return 'Today';
+                  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+                  try { return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }); }
+                  catch { return d.toDateString(); }
+                })();
+
+                // Consecutive messages from the same person drop the avatar and
+                // the name, so a back-and-forth reads as a conversation rather
+                // than as a stack of identical headed cards.
+                const sameAsPrev = !showDay && prev && String(prev.node) === String(m.node);
+
                 return (
-                  <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start' }}>
-                    <div style={{ maxWidth: '80%', minWidth: 0, padding: '8px 12px 9px', borderRadius: 'var(--radius)', background: bubbleBg, border: `1px solid ${bubbleBorder}` }}>
-                      {/* Sender name — prominent, inside the bubble; a verified badge marks moderators */}
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.95rem', color: nameColor, lineHeight: 1.25, wordBreak: 'break-word' }}>
-                          {m.name}
-                          {isMod && (
-                            <span title="Verified moderator" aria-label="Verified moderator" style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: 5, position: 'relative', top: '-1px' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" role="img" aria-hidden="true">
-                                <circle cx="12" cy="12" r="10" style={{ fill: 'var(--gold, #D4AF37)' }} />
-                                <path d="M7.5 12.5 L10.6 15.5 L16.5 8.7" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </span>
-                          )}
-                        </span>
-                        <span style={{ marginLeft: 'auto', color: idColor, opacity: 0.8, fontSize: '0.68rem', flexShrink: 0 }}>
-                          {fmtTime(m.ts)}
-                        </span>
-                      </div>
-                      {/* Node id — small, muted, secondary line under the name */}
-                      <div title={`node ${m.node}`} style={{ fontFamily: 'monospace', fontSize: '0.66rem', color: idColor, marginTop: '1px', marginBottom: '5px' }}>
-                        #{m.node}
-                      </div>
-                      <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', color: textColor, lineHeight: 1.5, wordBreak: 'break-word' }}>
-                        {m.text}
+                  <React.Fragment key={m.id}>
+                    {showDay && <div className="si-chat-day">{dayLabel}</div>}
+                    <div className={'si-chat-row' + (isMine ? ' mine' : '')}
+                         style={sameAsPrev ? { marginTop: '-6px' } : undefined}>
+                      {sameAsPrev ? (
+                        <div style={{ width: '30px', flexShrink: 0 }} aria-hidden="true" />
+                      ) : (
+                        <div
+                          className="si-chat-avatar"
+                          title={`node ${m.node}`}
+                          style={{ background: bubbleBg, color: nameColor }}
+                        >
+                          {(m.name || '?').trim().charAt(0) || '?'}
+                        </div>
+                      )}
+                      <div className="si-chat-bubble" style={{ background: bubbleBg, borderColor: bubbleBorder }}>
+                        {!sameAsPrev && (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+                              <span style={{ fontWeight: 700, fontSize: '0.92rem', color: nameColor, lineHeight: 1.25, wordBreak: 'break-word' }}>
+                                {m.name}
+                                {isMod && (
+                                  <span title="Verified moderator" aria-label="Verified moderator" style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: 5, position: 'relative', top: '-1px' }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" role="img" aria-hidden="true">
+                                      <circle cx="12" cy="12" r="10" style={{ fill: 'var(--gold, #D4AF37)' }} />
+                                      <path d="M7.5 12.5 L10.6 15.5 L16.5 8.7" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </span>
+                                )}
+                              </span>
+                              <span title={`node ${m.node}`} style={{ fontFamily: 'monospace', fontSize: '0.64rem', color: idColor, opacity: 0.75 }}>
+                                #{m.node}
+                              </span>
+                              <span style={{ marginLeft: 'auto', color: idColor, opacity: 0.8, fontSize: '0.68rem', flexShrink: 0 }}>
+                                {fmtTime(m.ts)}
+                              </span>
+                            </div>
+                            <div style={{ height: '4px' }} />
+                          </>
+                        )}
+                        <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', color: textColor, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                          {m.text}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -316,7 +363,11 @@ export default function CommunityPage() {
       </div>
 
       {/* Composer */}
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+      {/* One composer shell holding the field and the button, rather than two
+          separate controls sitting next to each other. The focus ring lives on
+          the SHELL (.si-chat-composer:focus-within), so typing lights the whole
+          thing — which is what makes it read as one object. */}
+      <div className="si-chat-composer">
         <textarea
           rows={2}
           value={draft}
@@ -325,13 +376,13 @@ export default function CommunityPage() {
           placeholder={savedName ? 'Write a message… (Enter to send, Shift+Enter for a new line)' : 'Set your display name above to join the conversation'}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
-          style={{
-            flex: 1, resize: 'none', padding: '10px 14px', background: 'var(--bg-tertiary)',
-            border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text-primary)',
-            fontSize: '0.85rem', fontFamily: 'var(--font)', outline: 'none', lineHeight: 1.4,
-          }}
         />
-        <button className="btn btn-gold" onClick={send} disabled={sending || !draft.trim()} style={{ opacity: sending || !draft.trim() ? 0.6 : 1 }}>
+        <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', alignSelf: 'center', flexShrink: 0,
+                       opacity: draft.length > 400 ? 1 : 0 , transition: 'opacity 0.2s' }}>
+          {500 - draft.length}
+        </span>
+        <button className="btn btn-gold" onClick={send} disabled={sending || !draft.trim()}
+                style={{ opacity: sending || !draft.trim() ? 0.55 : 1, flexShrink: 0, padding: '7px 18px' }}>
           {sending ? 'Sending…' : 'Send'}
         </button>
       </div>

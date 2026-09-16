@@ -310,6 +310,16 @@ async function sendHeartbeat() {
       storage_used_bytes: stats.storageUsedBytes || 0,
       uploaded_bytes: uploadedLifetime,
       peers_connected: livePeers || stats.peersConnected || 0,
+      // Direction. `peers_connected` is a bare total and cannot tell "people
+      // are taking sermons from me" apart from "I am taking from them" — the
+      // one question a node operator actually has. `peers_in` counts peers that
+      // DIALLED US; `peers_in_peak` is the high-water mark, because the live
+      // figure drops to 0 whenever the rotation window moves off the torrents
+      // those peers were on, and a momentary 0 was being shown as "0 peers
+      // helped".
+      peers_in: stats.peersIn || 0,
+      peers_out: stats.peersOut || 0,
+      peers_in_peak: stats.peersInPeak || 0,
       uptime_seconds: Math.floor((Date.now() - _startTime) / 1000),
       library_coverage: stats.libraryCoverage || 0,
       content_mode: stats.contentMode || 'cdn',
@@ -323,11 +333,38 @@ async function sendHeartbeat() {
       // a full node; reporting just `r.open` sent it to the dashboard as
       // unreachable, so the map miscategorised it as a peer while the app itself
       // showed a green "Reachable over IPv6" banner.
+      //
+      // 0.0.331 — this used to read `r.open || r.open_v6 === true`, and that is
+      // exactly why a node could show a green "Reachable over IPv6 — your node
+      // is a full node" banner while the map drew it as a YELLOW PEER at the
+      // same moment. Our reachability probe runs on a Bunny edge script with no
+      // outbound IPv6 at all (it answers `v6_probe: 'unsupported'`), so
+      // `r.open_v6` can NEVER be true for anybody. The expression therefore
+      // collapsed to `r.open` — the IPv4 result alone — and every node behind
+      // CGNAT, Starlink, T-Mobile Home Internet or any IPv6-only setup reported
+      // `reachable: false` however genuinely reachable it was.
+      //
+      // The evidence that justified the green banner was in the SAME
+      // localStorage blob and was never read: `v6_inbound_seen`, set when a real
+      // peer at a public IPv6 address opened a connection TO US (see
+      // torrent_node.rs, `counters.incoming_connections > 0`). That is stronger
+      // than any probe we can run — nobody dialled them on our behalf; a
+      // stranger on the internet reached them unaided.
+      //
+      // Read straight from localStorage rather than importing network.js: this
+      // module deliberately has no imports, and the key is a stable contract
+      // (network.js STICKY_KEYS).
+      //
+      // Order: passive proof, then the active IPv4 probe, then null. `null`
+      // means "we don't know" and the server keeps what it had — the right
+      // answer when we have nothing. Reporting a guessed `false` is what moved
+      // working nodes into the peer bucket in the first place.
       reachable: (() => {
         try {
           const r = JSON.parse(localStorage.getItem('si-reach') || 'null');
+          if (r && r.v6_inbound_seen === true) return true;
           if (!r || typeof r.open !== 'boolean') return null;
-          return r.open || r.open_v6 === true;
+          return r.open === true;
         } catch { return null; }
       })(),
       lat: geo.lat,
@@ -365,6 +402,19 @@ async function sendHeartbeat() {
       if (data.config && typeof data.config.master_list_version === 'string') {
         import('./catalog.js')
           .then(m => m.reconcileMasterListVersion(data.config.master_list_version))
+          .catch(() => {});
+      }
+
+      // Catalog refresh, exactly as master_list_version above. Two different
+      // things travel under similar names and it is worth being clear which is
+      // which: master_list_version refreshes the TORRENTS (what can be
+      // downloaded and seeded); catalog_version refreshes the SERMON INDEX
+      // (what can be FOUND in Search). Before 0.0.332 only the first existed,
+      // so a newly published sermon was fully downloadable and completely
+      // unsearchable until the app was relaunched.
+      if (data.config && typeof data.config.catalog_version === 'string') {
+        import('./catalog.js')
+          .then(m => m.reconcileCatalogVersion(data.config.catalog_version))
           .catch(() => {});
       }
 

@@ -172,6 +172,36 @@ pub struct Ipv6Observation {
     /// True when a peer table was inspected. Lets the UI distinguish
     /// "observed nothing yet" from "could not observe".
     pub observed: bool,
+
+    // ── Direction, ALL address families (added 0.0.331) ──────────────────────
+    //
+    // Everything above is deliberately IPv6-only, because it exists to answer
+    // one narrow question: "can we honestly show a green IPv6-reachable
+    // badge?". The fields below answer a different and much more everyday one,
+    // the one node operators actually ask: "am I giving to this network, or
+    // only taking from it?"
+    //
+    // For that, address family is irrelevant and IPv4 peers are most of the
+    // swarm. The distinction that matters is the same one though: a peer that
+    // DIALLED US took something from us across a connection we did not have to
+    // make, which is the definition of serving. A peer we dialled proves only
+    // that our egress works.
+    //
+    // Counts, not booleans: "3 people came to me this hour" and "1 person did"
+    // are different facts, and a boolean throws that away.
+    /// Peers that opened a connection TO this node, any address family.
+    pub inbound_peers: usize,
+    /// Peers this node dialled out to, any address family.
+    pub outbound_peers: usize,
+    /// High-water mark of `inbound_peers` for this session.
+    ///
+    /// Necessary because `inbound_peers` is a snapshot of the live peer tables,
+    /// and the seeding rotation deliberately pauses torrents outside its
+    /// window — so a node that served twenty people an hour ago can legitimately
+    /// read 0 right now. The old UI showed that momentary 0 under the heading
+    /// "peers helped", which told people who had been seeding for weeks that
+    /// they had helped nobody. This never decreases.
+    pub inbound_peers_peak: usize,
     // NOTE: we deliberately do NOT return any peer IP address. The booleans are
     // everything the UI needs, and shipping a stranger's IP into the frontend
     // (and from there into logs the user may paste publicly) is not something
@@ -708,6 +738,17 @@ impl TorrentHandle {
                     let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() else {
                         continue;
                     };
+
+                    // Direction first, for EVERY family — this is counted before
+                    // the IPv6 filter below on purpose. IPv4 peers are most of
+                    // the swarm, and "did anyone come to me?" is a question
+                    // about people, not about address families.
+                    if peer.counters.incoming_connections > 0 {
+                        obs.inbound_peers += 1;
+                    } else if peer.counters.connections > 0 {
+                        obs.outbound_peers += 1;
+                    }
+
                     if !is_global_unicast_ipv6(&addr) {
                         continue;
                     }
@@ -737,6 +778,15 @@ impl TorrentHandle {
             outbound_ipv6_peers: obs.outbound_ipv6_peers,
             known_ipv6_peers: obs.known_ipv6_peers,
             torrents_checked: obs.torrents_checked,
+            inbound_peers: obs.inbound_peers,
+            outbound_peers: obs.outbound_peers,
+            // The peak is the one figure here that is a claim about the whole
+            // session rather than about this instant, so it merges upward and
+            // never falls back.
+            inbound_peers_peak: cache
+                .value
+                .inbound_peers_peak
+                .max(obs.inbound_peers),
         };
         cache.last_scan = Some(Instant::now());
 

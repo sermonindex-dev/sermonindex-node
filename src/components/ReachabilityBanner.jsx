@@ -177,12 +177,29 @@ export default function ReachabilityBanner({
   // reachability fact that flickers off is worse than no fact at all.
   if (reachOpen !== true && v6InboundSeen === true) {
     const seenAgo = timeAgo(v6InboundAt);
+    // 0.0.331 — this claim is STICKY: once a peer has dialled in, it is true
+    // for ever, because reachability is a has-this-ever-happened fact. That is
+    // still the right rule, but the banner used to state it in the present
+    // tense with no date on it, so a single inbound connection months ago read
+    // as "you are reachable right now". Worse, the map disagreed out loud: it
+    // classifies from the heartbeat's `reachable`, which until 0.0.331 never
+    // looked at this observation at all — so the same node showed a green
+    // "full node" banner here and a yellow peer dot there, and people quite
+    // reasonably concluded one of them was lying.
+    //
+    // Both ends are fixed now (heartbeat.js reads v6_inbound_seen), so the two
+    // views agree. What remains is honesty about age: say WHEN, in the heading,
+    // where it cannot be missed.
+    const stale = v6InboundAt != null && (Date.now() - v6InboundAt) > 7 * 24 * 60 * 60 * 1000;
     return (
       <div style={box('rgba(61,138,65,0.12)', 'rgba(61,138,65,0.40)')}>
         <span style={glyph('var(--green)')}>✓</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={title('var(--green)')}>Reachable over IPv6 — your node is a full node</span>
+            <span style={title('var(--green)')}>
+              Reachable over IPv6 — your node is a full node
+              {seenAgo && <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> · confirmed {seenAgo}</span>}
+            </span>
             <span style={{
               fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
               color: 'var(--gold-text)', background: 'var(--gold-dim)', padding: '2px 8px', borderRadius: '10px',
@@ -205,7 +222,9 @@ export default function ReachabilityBanner({
           </div>
           {seenAgo && (
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '5px' }}>
-              First seen {seenAgo} — noticed from a real connection, not a test
+              First seen {seenAgo} — noticed from a real connection, not a test.
+              {stale && ' Nothing has come in since, so this is a fact about the past; '
+                      + 'if your router or provider has changed, re-test to be sure.'}
             </div>
           )}
         </div>

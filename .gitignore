@@ -13,8 +13,21 @@ ipfs_debug.log
 
 # Never commit release credentials (Bunny storage write-passwords, signing password,
 # CDN API key). scripts/release.mjs reads these locally; they must stay off GitHub.
-scripts/release.secrets.json
-release.secrets.json
+#
+# GLOBS, not exact paths. The exact-path version missed
+# scripts/release.secrets.json.bak-si2 — a 600-byte file holding bunnyApiKey,
+# a signing password and a key path — which `git add -A` would have committed
+# and pushed. A rule that protects the file but not a copy of the file is not
+# protecting anything, because making copies is exactly what people do.
+*release.secrets.json*
+*secrets*.json
+*.secrets.json*
+
+# Editor/agent safety copies. Useful on disk, noise in history — and, as above,
+# the way a protected file quietly becomes an unprotected one.
+*.bak
+*.bak-*
+*.orig
 
 # Bundled speaker portraits — fetched locally via scripts/fetch-speaker-images.mjs
 # (run before building a release; the app falls back to the CDN if absent)

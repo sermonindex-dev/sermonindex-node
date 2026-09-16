@@ -44,13 +44,69 @@ function catOf(n) {
 // theme-aware token used on the (light OR dark) node lists, stat row and
 // country table — a raw #f8d355 yellow is unreadable on a light surface, so the
 // peer text there maps to the readable gold/yellow token instead.
+// ── Node map palette (re-stepped 0.0.332) ───────────────────────────────────
+//
+// These dots are the most important picture in the app, and the old trio
+// (#2d6cb5 / #4caf50 / #f8d355) had two problems on the map's dark canvas: the
+// green and the yellow both sat outside the lightness band for a dark surface,
+// and gold↔green separated by only ΔE 15.5 under protanopia — passable, but the
+// thinnest margin of any pair in the app, on the one view where getting it
+// wrong means a volunteer cannot tell whether they are a node or a peer.
+//
+// The values below are validated against BOTH surfaces: every check passes in
+// light and in dark — lightness band, chroma floor, CVD separation across all
+// pairs, the normal-vision floor, and contrast.
+//
+// SHAPE CARRIES THE SAME MEANING, deliberately. Dark-mode gold↔aqua separate by
+// ΔE 4.0 under tritanopia, which is below the floor where colour alone may be
+// trusted; and colour alone is a bad idea here regardless, because this is the
+// screen where someone decides whether their router needs changing. So:
+//
+//   seed  filled dot + outer ring   "a backbone machine"
+//   node  filled dot                "reachable — people can come to you"
+//   peer  hollow ring               "still sharing; not a meeting point"
+//
+// A hollow ring for `peer` is the right metaphor rather than an arbitrary
+// distinction: the middle is literally open, and it is the shape you can still
+// read at 3px on a phone when the colours have washed out.
 const NODE_COLORS = {
-  seed: { hex: '#2d6cb5', rgb: '45,108,181', cssVar: 'var(--seed-blue)' }, // blue
-  node: { hex: '#4caf50', rgb: '76,175,80',  cssVar: 'var(--green)' },     // green
-  peer: { hex: '#f8d355', rgb: '248,211,85', cssVar: 'var(--gold-text)' }, // yellow
+  seed: {
+    hex: '#2a78d6', hexDark: '#3987e5',
+    rgb: '42,120,214', rgbDark: '57,135,229',
+    cssVar: 'var(--seed-blue)', shape: 'ringed',
+  },
+  node: {
+    hex: '#1baf7a', hexDark: '#199e70',
+    rgb: '27,175,122', rgbDark: '25,158,112',
+    cssVar: 'var(--green)', shape: 'filled',
+  },
+  peer: {
+    hex: '#a97400', hexDark: '#c98500',
+    rgb: '169,116,0', rgbDark: '201,133,0',
+    cssVar: 'var(--gold-text)', shape: 'hollow',
+  },
 };
+
+/** True when the app is showing its dark theme right now. */
+function isDarkTheme() {
+  try {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  } catch { return false; }
+}
+
 function nodeColor(n) {
-  return NODE_COLORS[catOf(n)] || NODE_COLORS.peer;
+  const base = NODE_COLORS[catOf(n)] || NODE_COLORS.peer;
+  // Both modes are separately stepped for their own surface — not an automatic
+  // flip of one another, which is how a palette ends up unreadable on one of
+  // the two themes nobody tested.
+  const dark = isDarkTheme();
+  return {
+    ...base,
+    hex: dark ? base.hexDark : base.hex,
+    rgb: dark ? base.rgbDark : base.rgb,
+  };
 }
 
 // ISO-3166 alpha-2 → full country name, for the country-name hover tooltip.
@@ -374,12 +430,13 @@ export default function NetworkPage({ nodeStats }) {
       // Draw nodes
       nodes.forEach(node => {
         const [x, y] = project(node.lat, node.lon);
-        const cat = catOf(node);
-        const isSeed = cat === 'seed';
         const isMe = node.id === myId;
         // Bubble radius ~50% larger than before (was 6 / 5 / 3.5) so nodes are
         // easier to spot; the glow (baseR * 3 + …) and inner highlight scale with it.
-        const baseR = isSeed ? 9 : isMe ? 7.5 : 5.25;
+        // Seeds are drawn exactly like other nodes (plain dot, no larger bubble
+        // and no label) — only their BLUE colour distinguishes them, matching the
+        // yellow peer dots in every other respect.
+        const baseR = isMe ? 7.5 : 5.25;
         // Glow "breathes" via pulse, but ONLY the outer glow radius changes —
         // the dot center (x, y) is a pure function of (node, projection), so it
         // never moves frame-to-frame.
@@ -391,24 +448,40 @@ export default function NetworkPage({ nodeStats }) {
         // keeps its category color and is identified by the "YOU" label below.
         const { hex: dotColor, rgb } = nodeColor(node);
         const glow = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-        glow.addColorStop(0, `rgba(${rgb},${(isMe || isSeed) ? 0.32 : 0.18})`);
+        glow.addColorStop(0, `rgba(${rgb},${isMe ? 0.32 : 0.18})`);
         glow.addColorStop(1, `rgba(${rgb},0)`);
         ctx.fillStyle = glow;
         ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI * 2); ctx.fill();
 
-        ctx.beginPath(); ctx.arc(x, y, baseR, 0, Math.PI * 2);
-        ctx.fillStyle = dotColor;
-        ctx.fill();
-        ctx.beginPath(); ctx.arc(x, y, isSeed ? 3.5 : 2.25, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,240,200,0.9)'; ctx.fill();
+        // Shape, not just colour — see the note on NODE_COLORS. Someone who
+        // cannot separate the hues must still be able to answer "am I a node
+        // or a peer?", and this is the screen where that question gets asked.
+        const shape = nodeColor(node).shape;
+        if (shape === 'hollow') {
+          // Peer: an open ring. Reads as "not a meeting point" at a glance, and
+          // survives being 3px wide on a phone.
+          ctx.beginPath(); ctx.arc(x, y, baseR, 0, Math.PI * 2);
+          ctx.lineWidth = Math.max(1.6, baseR * 0.42);
+          ctx.strokeStyle = dotColor;
+          ctx.stroke();
+        } else {
+          ctx.beginPath(); ctx.arc(x, y, baseR, 0, Math.PI * 2);
+          ctx.fillStyle = dotColor;
+          ctx.fill();
+          if (shape === 'ringed') {
+            // Seed: a filled dot inside its own halo ring.
+            ctx.beginPath(); ctx.arc(x, y, baseR + 2.6, 0, Math.PI * 2);
+            ctx.lineWidth = 1.2;
+            ctx.strokeStyle = `rgba(${rgb},0.85)`;
+            ctx.stroke();
+          }
+          ctx.beginPath(); ctx.arc(x, y, 2.25, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,240,200,0.9)'; ctx.fill();
+        }
 
-        if (isSeed) {
-          ctx.font = '9px Verdana, sans-serif';
-          ctx.fillStyle = `rgba(${NODE_COLORS.seed.rgb},0.85)`;
-          ctx.textAlign = 'center';
-          ctx.fillText(node.city, x, y - baseR - 6);
-          ctx.fillText(`SEED · ${node.coverage}%`, x, y - baseR + 2);
-        } else if (isMe) {
+        // No seed labels on the map — a seed is just a blue dot. City/coverage
+        // remain available on hover (the tooltip) and in the node list below.
+        if (isMe) {
           ctx.font = 'bold 9px Verdana, sans-serif';
           ctx.fillStyle = 'rgba(76,175,80,0.7)';
           ctx.textAlign = 'center';

@@ -603,8 +603,11 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                     <div className="bulk-speaker-meta">{metaText}</div>
                   </div>
                   <div className="bulk-speaker-action" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {/* var(--green), not the old #3ca35b literal: that was a
+                        light-theme green that stayed exactly as dark on the dark
+                        theme, where it sat close to unreadable. */}
                     {exp?.state === 'done' && (
-                      <span style={{ fontSize: '0.72rem', color: '#3ca35b', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--green)', whiteSpace: 'nowrap' }}>
                         Exported {exp.exported}{exp.failed ? ` · ${exp.failed} skipped` : ''}
                       </span>
                     )}

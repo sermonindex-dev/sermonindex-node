@@ -2317,3 +2317,384 @@ html[data-theme='dark'] .si-abouthero {
 .dash-hl-go { display: inline-flex; align-items: center; gap: 6px; margin-top: 11px; font-size: 0.78rem; font-weight: 700; color: var(--gold-text); }
 .dash-hl-card:hover .dash-hl-go { text-decoration: underline; }
 @media (max-width: 720px) { .dash-hl { grid-template-columns: 1fr; } }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.331 — SURFACE TEXTURE
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Every button and menu row in the app was a flat fill inside a 1px border.
+   That is clean, but it is also completely inert: nothing on screen suggests a
+   surface you could press, and the olive/gold palette — which wants to feel
+   like cloth, board and gilding — was being rendered as flat paint.
+
+   What this adds is deliberately restrained, because texture is the effect
+   easiest to overdo and quickest to look dated:
+
+     1. A 2–3% vertical gradient across the face. Below the threshold where
+        anyone consciously registers a gradient, above the one where a surface
+        stops reading as lit from somewhere.
+     2. A 1px inset highlight along the top edge. This is what actually does the
+        work — it is the single cue that reads as "raised".
+     3. A 45° grain at 2–4% opacity. Repeating-linear-gradient, not an image:
+        no request, no asset, scales with the element, themes automatically.
+
+   All of it is pure CSS on tokens, so dark mode inherits it without a second
+   definition, and none of it changes any measurement — same padding, same
+   radius, same border. Anything that already has its own background (the gold
+   primary button) keeps it and only gains the lighting.
+
+   Everything below is behind `@media (prefers-reduced-transparency: no-preference)`
+   where it moves, and the grain is dropped entirely under forced-colors, where
+   the OS is deliberately flattening the UI and second-guessing it is rude.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* One grain definition, reused. 45° to cut across the app's strong
+     horizontal rhythm of rows and cards. */
+  --grain: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.022) 0px,
+    rgba(0, 0, 0, 0.022) 1px,
+    rgba(255, 255, 255, 0.016) 1px,
+    rgba(255, 255, 255, 0.016) 3px
+  );
+  /* The top-edge highlight and the bottom seat. */
+  --face-lit: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
+  --face-lit-press: inset 0 2px 3px rgba(0, 0, 0, 0.14);
+}
+
+:root[data-theme="dark"] {
+  /* Dark surfaces need a dimmer highlight or the top edge looks chalked on. */
+  --grain: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.10) 0px,
+    rgba(0, 0, 0, 0.10) 1px,
+    rgba(255, 255, 255, 0.022) 1px,
+    rgba(255, 255, 255, 0.022) 3px
+  );
+  --face-lit: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  --face-lit-press: inset 0 2px 4px rgba(0, 0, 0, 0.42);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  position: relative;
+  box-shadow: var(--face-lit);
+  background-image: var(--grain);
+  /* The grain sits UNDER whatever background-color the variant sets, so
+     .btn-gold keeps its gold and simply gains a weave. */
+  background-blend-mode: overlay;
+}
+
+.btn:active {
+  box-shadow: var(--face-lit-press);
+  transform: translateY(0.5px);
+}
+
+.btn-outline {
+  /* Was `background: transparent`, which cannot show a face at all. A tertiary
+     surface is still quiet against the page but is now something to press. */
+  background-color: var(--bg-tertiary);
+}
+
+.btn-outline:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--gold);
+  color: var(--gold-text);
+}
+
+.btn-gold {
+  /* Warm the primary action with a face gradient rather than a flat fill.
+     `--gold-hover` is the app's own darker step, so this invents no colour. */
+  background-image: var(--grain),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(0, 0, 0, 0.06));
+}
+
+.btn-gold:hover {
+  background-image: var(--grain),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.20), rgba(0, 0, 0, 0.04));
+}
+
+/* ── Sidebar menu rows ───────────────────────────────────────────────────── */
+
+.nav-item.active {
+  /* Keeps the gold inset spine that already marks the active row and adds the
+     lit top edge, so the active item reads as a raised tab rather than a
+     differently-coloured rectangle. */
+  background-image: var(--grain);
+  box-shadow: inset 3px 0 0 var(--gold), var(--face-lit);
+}
+
+.nav-item:hover {
+  background-image: var(--grain);
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+
+.seed-card {
+  /* The faintest possible top-edge light. A card is not a control, so it gets
+     the lighting cue and none of the press behaviour. */
+  box-shadow: var(--face-lit);
+}
+
+/* ── Opt-outs ────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-transparency: reduce) {
+  .btn, .btn-gold, .btn-outline, .nav-item.active, .nav-item:hover, .seed-card {
+    background-image: none;
+  }
+}
+
+@media (forced-colors: active) {
+  /* The OS is flattening the UI on purpose. Take the hint completely. */
+  .btn, .btn-gold, .btn-outline, .nav-item.active, .nav-item:hover, .seed-card {
+    background-image: none;
+    box-shadow: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.332 — TEXTURE, PART TWO: everything else
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Part one (0.0.331) lit the buttons and the sidebar rows. This finishes the
+   job on the surfaces people actually spend their time looking at — cards,
+   inputs, pills, the chat — so the app reads as one material rather than as a
+   lit control sitting on a flat page.
+
+   Same three ingredients throughout, so nothing here is a new idea: a face
+   gradient, a 1px top highlight, and the 45° grain. What changes per surface is
+   only how much. The rule of thumb used below:
+
+     control you press     full lighting + press state       (buttons)
+     surface you type in   inset lighting — it recedes       (inputs)
+     surface you read      the faintest top edge only        (cards, bubbles)
+
+   An inset shadow on an input and an outset one on a button is the whole
+   grammar: things you push come toward you, things you fill go away from you.
+   Getting that backwards is what makes an interface feel plasticky, and it is
+   the most common way a "textured" redesign goes wrong.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --face-inset: inset 0 1px 2px rgba(0, 0, 0, 0.07), inset 0 0 0 1px rgba(0, 0, 0, 0.012);
+  --face-raise: 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.045);
+}
+:root[data-theme="dark"] {
+  --face-inset: inset 0 1px 3px rgba(0, 0, 0, 0.40), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --face-raise: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.30);
+}
+
+/* ── Inputs: recessed, not raised ────────────────────────────────────────── */
+
+input[type="text"], input[type="password"], input[type="number"],
+input[type="search"], input[type="email"], textarea, select {
+  background-color: var(--bg-tertiary);
+  box-shadow: var(--face-inset);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus,
+input[type="search"]:focus, input[type="email"]:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--gold);
+  /* The focus ring is the gold at low alpha rather than the browser default,
+     so it belongs to this palette instead of the operating system's. */
+  box-shadow: var(--face-inset), 0 0 0 3px var(--gold-dim);
+}
+
+/* ── Cards: lift, don't just outline ─────────────────────────────────────── */
+
+.seed-card {
+  background-image: var(--grain);
+  box-shadow: var(--face-lit), var(--face-raise);
+}
+
+/* ── Pills & badges ──────────────────────────────────────────────────────── */
+
+.pill {
+  background-image: var(--grain);
+  box-shadow: var(--face-lit);
+}
+
+/* ── Meters / progress bars ──────────────────────────────────────────────── */
+
+.bar {
+  box-shadow: var(--face-inset);
+  overflow: hidden;
+}
+.bar > i {
+  /* A filled bar reads as liquid in a channel: lit along the top, and with the
+     grain running through the fill so it is the same material as everything
+     else rather than a flat block of colour. */
+  background-image: var(--grain),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* ═══ CHAT ═══════════════════════════════════════════════════════════════════
+
+   The chat was a column of identical rounded rectangles: same radius on all
+   four corners, same flat fill, name and time and body stacked inside with no
+   separation. It read as a log file rather than a conversation.
+
+   Four changes, none of them decoration for its own sake:
+
+     1. The bubble's inner corner is square. This is the oldest trick in
+        messaging UI and the reason it survives: a squared corner on the side
+        the message came from points at its author, so who-said-what is
+        answered by shape before anyone reads a name. It also means your own
+        messages and everyone else's differ in silhouette, not just alignment,
+        which still works when the window is narrow.
+     2. An avatar chip carrying the speaker's initial, tinted from the same
+        colour their name already uses. Gives the eye a fixed anchor to scan
+        down the left edge.
+     3. A day divider, so a conversation that spans a week stops looking like
+        one long afternoon.
+     4. The composer is a real composer — recessed field, the send button
+        sitting inside the same rounded shell.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.si-chat-scroll {
+  /* Fade the top edge so messages dissolve into the header instead of being
+     guillotined by it. mask-image is progressive: browsers without it simply
+     get a hard edge, which is what we had before. */
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 100%);
+  scrollbar-width: thin;
+}
+
+.si-chat-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-end;
+}
+.si-chat-row.mine { flex-direction: row-reverse; }
+
+.si-chat-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.8rem;
+  line-height: 1;
+  text-transform: uppercase;
+  user-select: none;
+  background-image: var(--grain);
+  box-shadow: var(--face-lit);
+  border: 1px solid var(--border);
+}
+
+.si-chat-bubble {
+  max-width: 78%;
+  min-width: 0;
+  padding: 8px 13px 9px;
+  border: 1px solid var(--border);
+  background-image: var(--grain);
+  box-shadow: var(--face-lit), 0 1px 2px rgba(0, 0, 0, 0.05);
+  /* Squared inner corner — see note 1 above. */
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
+}
+.si-chat-row.mine .si-chat-bubble {
+  border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
+}
+
+.si-chat-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 2px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.si-chat-day::before, .si-chat-day::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.si-chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 7px 7px 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-tertiary);
+  box-shadow: var(--face-inset);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.si-chat-composer:focus-within {
+  border-color: var(--gold);
+  box-shadow: var(--face-inset), 0 0 0 3px var(--gold-dim);
+}
+.si-chat-composer textarea {
+  /* The field itself disappears — the SHELL above is the input, which is why
+     the focus ring lives on the shell and not here. */
+  flex: 1;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  resize: none;
+  padding: 4px 0;
+  font-family: var(--font);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+.si-chat-composer textarea:focus { outline: none; box-shadow: none; border: none; }
+
+/* ── Opt-outs (mirrors 0.0.331) ──────────────────────────────────────────── */
+
+@media (prefers-reduced-transparency: reduce) {
+  .seed-card, .pill, .bar > i, .si-chat-bubble, .si-chat-avatar { background-image: none; }
+}
+
+@media (forced-colors: active) {
+  .seed-card, .pill, .bar > i, .si-chat-bubble, .si-chat-avatar,
+  input, textarea, select, .si-chat-composer {
+    background-image: none;
+    box-shadow: none;
+  }
+  .si-chat-scroll { -webkit-mask-image: none; mask-image: none; }
+}
+
+/* ── Moderator bubble ────────────────────────────────────────────────────────
+   Was hardcoded to #fdf6d8 with #3a3320 text, i.e. a near-white card with dark
+   ink — which is correct on the light theme and a glaring white slab on the
+   dark one, brighter than anything else on the page. Because the values were
+   literals in the JSX there was nowhere for dark mode to override them.
+   Tokens now, defined for both themes, so the moderator still reads as
+   distinctly "official" without shouting after dark. */
+:root {
+  --mod-bg: #fdf6d8;
+  --mod-border: #e4d08a;
+  --mod-name: #8a6a12;
+  --mod-id: rgba(60, 50, 20, 0.65);
+  --mod-text: #3a3320;
+}
+:root[data-theme="dark"] {
+  --mod-bg: #3a3218;
+  --mod-border: #6d5c22;
+  --mod-name: #e8cf6a;
+  --mod-id: rgba(232, 207, 106, 0.6);
+  --mod-text: #efe6c8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --mod-bg: #3a3218;
+    --mod-border: #6d5c22;
+    --mod-name: #e8cf6a;
+    --mod-id: rgba(232, 207, 106, 0.6);
+    --mod-text: #efe6c8;
+  }
+}

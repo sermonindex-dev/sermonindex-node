@@ -62,7 +62,8 @@ class ErrorBoundary extends Component {
           <div style={{ display: 'flex', gap: '12px' }}>
             <button
               onClick={this.handleRetry}
-              style={{ background: '#D4AF37', color: '#2a2a14', border: 'none', padding: '10px 24px', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem' }}
+              className="btn btn-gold"
+              style={{ padding: '10px 24px', fontSize: '0.9rem' }}
             >
               Try Again
             </button>
@@ -84,6 +85,7 @@ class ErrorBoundary extends Component {
 }
 import {
   initCatalog,
+  refreshCatalog,
   getCatalog,
   searchCatalog,
   getDownloaded,
@@ -297,6 +299,45 @@ export default function App() {
 
   // The active media type: 'audio' or 'video'
   const mediaType = currentSermon?.type === 'video' ? 'video' : 'audio';
+
+  // ── One owner for "the catalog changed" ────────────────────────────────────
+  //
+  // There are eight `setCatalog(getCatalog())` calls scattered through this
+  // file, and not one of them owned the question of when new sermons arrive
+  // from the API. That is precisely how the 0.0.332 bug happened: the fetch
+  // mutated the catalog array in the background and nothing was listening, so
+  // sermons that had been downloaded and were being seeded could not be found
+  // in Search.
+  //
+  // Now catalog.js fires `si-catalog-updated` whenever it merges anything in,
+  // and this is the single place that reacts to it. Any future code path that
+  // adds sermons only has to fire that event.
+  useEffect(() => {
+    const onUpdated = (e) => {
+      const n = e?.detail?.added || 0;
+      if (n > 0) console.log(`[App] ${n} new sermon(s) — refreshing the library view`);
+      setCatalog(getCatalog());
+      setLibraryStats(getLibraryStats());
+    };
+    window.addEventListener('si-catalog-updated', onUpdated);
+
+    // A long-running node (the whole point of this app) can go weeks without a
+    // relaunch. The heartbeat's catalog_version handles the common case within
+    // five minutes; this is the fallback for when the server has not set one.
+    const SIX_HOURS = 6 * 60 * 60 * 1000;
+    const id = setInterval(() => { refreshCatalog().catch(() => {}); }, SIX_HOURS);
+
+    // Also check when the machine wakes or the network returns — a laptop shut
+    // for three days comes back with a stale catalog and no reason to notice.
+    const onWake = () => { refreshCatalog().catch(() => {}); };
+    window.addEventListener('online', onWake);
+
+    return () => {
+      window.removeEventListener('si-catalog-updated', onUpdated);
+      window.removeEventListener('online', onWake);
+      clearInterval(id);
+    };
+  }, []);
 
   // Initialize catalog and the P2P (BitTorrent) node on mount
   useEffect(() => {

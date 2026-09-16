@@ -334,8 +334,25 @@ export async function initCatalog() {
     console.warn('[Catalog] Could not validate download state:', e);
   }
 
-  // Try API update in background (for new sermons added after app was built)
-  fetchCatalogUpdate().catch(() => {});
+  // New sermons published since this build was cut.
+  //
+  // 0.0.332 — this used to be `fetchCatalogUpdate().catch(() => {})`, fired and
+  // forgotten, and that was a race the app usually LOST. `fetchCatalogUpdate`
+  // mutates the module-level `catalog` array asynchronously and fires no event.
+  // App.jsx called `setCatalog(getCatalog())` the instant `initCatalog()`
+  // returned — so for any response big enough to take a moment (which is all of
+  // them), the new sermons landed in memory AFTER that render and React never
+  // showed them. They were downloadable and seedable the whole time; they just
+  // could not be FOUND in Search until something else happened to re-render.
+  //
+  // Awaited now, so `initCatalog()` does not resolve until the catalog is
+  // actually complete. It is also bounded: a slow or dead API must not hold the
+  // app on its splash screen, so after the timeout we carry on with the
+  // built-in catalog and let the event below deliver the rest when it arrives.
+  await Promise.race([
+    fetchCatalogUpdate().catch(() => 0),
+    new Promise(r => setTimeout(r, 6000)),
+  ]);
 
   // Canonical torrent MASTER LIST — the trust anchor: sermons gain
   // magnet/infoHash/torrentUrl fields and the app only ever joins those official
@@ -761,11 +778,56 @@ async function fetchCatalogUpdate() {
       catalog.push(sermon);
       added++;
     }
-    if (added > 0) console.log(`[Catalog] Added ${added} new sermons from API`);
+    if (added > 0) {
+      console.log(`[Catalog] Added ${added} new sermons from API`);
+      // Tell whoever is rendering. Without this the array grows and nothing on
+      // screen changes — the exact bug described in initCatalog() above. An
+      // event rather than a callback so no module has to own a subscriber list,
+      // and so this stays safe to call from a timer as well as from startup.
+      try {
+        window.dispatchEvent(new CustomEvent('si-catalog-updated', { detail: { added } }));
+      } catch { /* non-browser context (tests) — the count is still returned */ }
+    }
     if (rejected > 0) console.warn(`[Catalog] Dropped ${rejected} malformed sermon(s) from the API update`);
+    return added;
   } catch {
-    // Silently fail — use built-in catalog
+    // Network down, API moved, malformed payload. The built-in catalog is a
+    // complete, working library — this only ever ADDS to it, so failing here
+    // costs the newest sermons and nothing else.
+    return 0;
   }
+}
+
+/**
+ * Re-check the API for sermons published since the last look.
+ *
+ * Exported so App.jsx can poll it and so the heartbeat can trigger it the
+ * moment the server says there is something new. Safe to call as often as you
+ * like: it merges by id and returns 0 when nothing changed.
+ */
+export async function refreshCatalog() {
+  return fetchCatalogUpdate();
+}
+
+// Server-pushed catalog version, mirroring reconcileMasterListVersion. The
+// heartbeat already happens every 5 minutes, so acting on a version there turns
+// a 6-hour poll into a 5-minute one at no extra request cost — and gives the
+// admin a switch that pushes a newly published sermon to the whole fleet.
+const CATALOG_VERSION_KEY = 'si_catalog_applied_version';
+
+export async function reconcileCatalogVersion(serverVersion) {
+  const v = String(serverVersion || '').trim();
+  if (!v) return 0;
+  let applied = '';
+  try { applied = localStorage.getItem(CATALOG_VERSION_KEY) || ''; } catch { /* private mode */ }
+  if (v === applied) return 0;
+  const added = await fetchCatalogUpdate();
+  // Record the version even when `added` is 0: the fetch DID happen, and a
+  // publish that only edits existing sermons legitimately adds none. Retrying
+  // it every five minutes for ever would be the wrong reading of that.
+  try { localStorage.setItem(CATALOG_VERSION_KEY, v); } catch { /* non-fatal */ }
+  if (added > 0) console.log(`[Catalog] catalog_version ${v} → ${added} new sermon(s)`);
+  return added;
 }
 
 /**
