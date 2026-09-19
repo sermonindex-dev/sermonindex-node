@@ -6934,3 +6934,80 @@ html[data-theme='dark'] .si-abouthero {
 .nd-trace svg { display: block; width: 100%; }
 
 @media (prefers-reduced-motion: reduce) { .nd-pill i { animation: none; } }
+
+/* ── Listening port ─────────────────────────────────────────────────────────
+   The first version of this panel was a cramped number box, a button and two
+   monospace strips, all sized like incidental controls. But this is the one
+   place in the app where a person is copying an exact value into a router in
+   another browser tab — the figures ARE the content, so they get the weight.  */
+
+.port-set {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0 10px;
+}
+.port-field { display: flex; flex-direction: column; gap: 6px; }
+.port-field > label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.port-field input[type="number"] {
+  width: 170px;
+  font-size: 1.45rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+  padding: 10px 14px;
+  border-radius: 10px;
+  text-align: center;
+}
+/* The spinners shave usable width off a field whose whole job is five digits. */
+.port-field input[type="number"]::-webkit-outer-spin-button,
+.port-field input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.port-field input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+.port-set .btn { height: 46px; padding-inline: 18px; font-size: var(--text-sm); }
+
+/* One rule per row: a label nobody has to decode, the exact text to paste, and
+   the button that takes it. Copy is the primary action here, so it is gold. */
+.rule {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  margin-bottom: 10px;
+}
+.rule + .rule { margin-top: 0; }
+.rule-body { min-width: 0; flex: 1; }
+.rule-kind {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--gold-text);
+  margin-bottom: 4px;
+}
+.rule-what { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: 6px; }
+.rule-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: all;
+}
+.rule .btn { flex-shrink: 0; }
+
+.port-note {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 10px 0 0;
+}

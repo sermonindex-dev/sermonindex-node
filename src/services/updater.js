@@ -46,6 +46,38 @@ let _lastCheck = 0;
  * Fetched natively (fetch_text) to bypass CDN CORS. Defaults to 'prompt' on any
  * failure or unrecognized value.
  */
+/**
+ * The manifest key this install should be updated from.
+ *
+ * Everything except a Debian/Ubuntu install uses Tauri's own default key. A
+ * .deb install asks for `linux-deb-x86_64` instead, because the plugin decides
+ * how to INSTALL from how this binary was installed and would otherwise be
+ * handed an AppImage it correctly refuses. See linux_install_kind() in
+ * src-tauri/src/lib.rs for why the reverse (serving everyone a .deb) is worse
+ * than the bug it would fix.
+ *
+ * Returns undefined for "use the default", which is what `check()` wants when
+ * no override applies.
+ */
+let _targetCache;
+async function updaterTarget() {
+  if (_targetCache !== undefined) return _targetCache || undefined;
+  _targetCache = '';
+  try {
+    if (typeof navigator !== 'undefined' && !/Linux/i.test(navigator.userAgent || '')) {
+      return undefined;
+    }
+    const { invoke } = await import('@tauri-apps/api/core');
+    const kind = await invoke('linux_install_kind');
+    if (kind === 'deb') _targetCache = 'linux-deb-x86_64';
+  } catch {
+    // An older native build has no such command. Falling back to the default
+    // key is the safe direction: a deb user sees "update failed" and can
+    // download, where a wrong override would offer them nothing at all.
+  }
+  return _targetCache || undefined;
+}
+
 async function getUpdateMode() {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -118,7 +150,8 @@ export async function checkForUpdatesNow() {
   }
   try {
     const { check } = await import('@tauri-apps/plugin-updater');
-    const update = await check();
+    const target = await updaterTarget();
+    const update = await check(target ? { target } : undefined);
     if (!update) return { status: 'latest' };
 
     const notes = (update.body || '').trim();
@@ -146,7 +179,8 @@ export async function checkForUpdates() {
     if (import.meta.env.DEV) return;
 
     const { check } = await import('@tauri-apps/plugin-updater');
-    const update = await check();
+    const target = await updaterTarget();
+    const update = await check(target ? { target } : undefined);
     if (!update) {
       console.log('[Updater] App is up to date');
       return;

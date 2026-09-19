@@ -77,6 +77,32 @@ jobs:
           prerelease: false
           args: --target ${{ matrix.target }}
 
+      # Sign the .deb ourselves. tauri-bundler's updater_bundle.rs filters on
+      # `package_type == PackageType::AppImage`, so on Linux ONLY the AppImage
+      # gets a .sig — the .deb ships unsigned and therefore cannot be served as
+      # an update at all. Signing it here with the same key is what lets a
+      # Debian/Ubuntu install auto-update instead of dying on "update is not a
+      # valid deb package". `tauri signer sign <file>` writes <file>.sig beside
+      # the input and reads the key from these two env vars.
+      - name: Sign the .deb for the updater
+        if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "No signing key — skipping (the deb simply won't be offered as an update)."
+            exit 0
+          fi
+          shopt -s nullglob
+          found=0
+          for deb in src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb; do
+            found=1
+            echo "signing $deb"
+            npx tauri signer sign "$deb"
+          done
+          [ "$found" = 1 ] || echo "No .deb produced for this target."
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -107,6 +133,8 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.sig
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.sig
+            # Produced by the "Sign the .deb" step above, not by the bundler.
+            src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb.sig
             # v1Compatible layout — only produced if createUpdaterArtifacts is
             # ever switched to "v1Compatible"; ignored when absent.
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip

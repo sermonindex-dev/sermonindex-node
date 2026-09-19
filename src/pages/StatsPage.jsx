@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import PageHead, { Panel } from '../components/PageHead.jsx';
 import { CoverageMeter, MixBars, TrendArea, DailyColumns, ChartTable } from '../components/charts.jsx';
-import { openNodeDisplay, nodeDisplayUrl } from '../services/nodeDisplay.js';
+import { openNodeDisplay, nodeDisplayUrl, ensureNodeDisplay } from '../services/nodeDisplay.js';
 import { readSeedGranted } from '../utils/nodeStatus.js';
 import { getSeedProgress } from '../services/catalog.js';
 import { getIpv6Observation } from '../services/torrent.js';
@@ -529,7 +529,11 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
   // making the user press the button to find out.
   useEffect(() => {
     let alive = true;
-    nodeDisplayUrl().then(u => { if (alive && u) setDisplayUrl(u); }).catch(() => {});
+    // Start it if nothing has yet, so the address is live without the user
+    // having to ask for it first.
+    ensureNodeDisplay()
+      .then(u => { if (alive && u) setDisplayUrl(u); })
+      .catch(() => nodeDisplayUrl().then(u => { if (alive && u) setDisplayUrl(u); }).catch(() => {}));
     return () => { alive = false; };
   }, []);
 
@@ -553,52 +557,57 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
         icon={iconStats}
         title="Your Stats"
         sub="What you have contributed to preserving God's Word for the world."
-        aside={
-          <button
-            type="button"
-            className="btn btn-on-brand"
-            onClick={launchDisplay}
-            title="Opens the same display the command-line node serves, in your browser"
-          >
-            {iconDisplay} Node display
-          </button>
-        }
       />
 
-      {(displayUrl || displayErr) && (
-        <div className="page-header-wide" style={{ marginBottom: 'var(--space-4)' }}>
-          <div className="verdict plain quiet" style={{ marginBottom: 0 }}>
-            <span className="verdict-mark" aria-hidden="true">{iconDisplay}</span>
-            <div className="verdict-copy">
-              <div className="verdict-title">
-                {displayErr ? 'The node display could not start' : 'Node display is running'}
-              </div>
-              <p>
-                {displayErr || (
-                  <>
-                    It opened in your browser, where full screen is the browser&rsquo;s own
-                    (<strong>F11</strong> on Windows and Linux, <strong>⌃⌘F</strong> on a Mac).
-                    It keeps updating while this app is open — and because it is a real
-                    server, you can open the same display on a phone or tablet on this
-                    network.
-                  </>
-                )}
-              </p>
-              {displayUrl && !displayErr && (
-                <div className="credential" style={{ maxWidth: '380px' }}>
-                  <span className="credential-value" style={{ fontSize: 'var(--text-base)' }}>{displayUrl}</span>
-                  <button
-                    className="btn btn-outline"
-                    onClick={() => { try { navigator.clipboard.writeText(displayUrl); } catch {} }}
-                  >
-                    Copy
-                  </button>
-                </div>
-              )}
+      {/* ── Node display ───────────────────────────────────────────────────
+          This used to be a button in the masthead that did nothing visible
+          until you pressed it, which buried the most useful thing on the page.
+          The server now starts with the page, so the card can simply state the
+          address: on a machine left running in a cupboard, the point is that
+          somebody can open it from a phone WITHOUT first walking over to the
+          app and pressing a button. */}
+      <div className="page-header-wide" style={{ marginBottom: 'var(--space-4)' }}>
+        <div className="verdict plain quiet" style={{ marginBottom: 0 }}>
+          <span className="verdict-mark" aria-hidden="true">{iconDisplay}</span>
+          <div className="verdict-copy">
+            <div className="verdict-title">
+              {displayErr ? 'The node display could not start' : 'Node display'}
             </div>
+            <p>
+              {displayErr || (
+                <>
+                  The same screen the command-line node serves — coverage, peers, the map
+                  and what this node is giving back. It is a real server on this machine,
+                  so the address below also works from a phone or tablet on this network,
+                  and full screen there is the browser&rsquo;s own (<strong>F11</strong>, or{' '}
+                  <strong>⌃⌘F</strong> on a Mac).
+                </>
+              )}
+            </p>
+            {displayUrl && !displayErr && (
+              <div className="credential" style={{ maxWidth: '460px' }}>
+                <span className="credential-value" style={{ fontSize: 'var(--text-base)' }}>{displayUrl}</span>
+                <button
+                  className="btn btn-outline"
+                  onClick={() => { try { navigator.clipboard.writeText(displayUrl); } catch {} }}
+                >
+                  Copy
+                </button>
+                <button
+                  className="btn btn-gold"
+                  onClick={launchDisplay}
+                  title="Open the node display in your browser"
+                >
+                  Open
+                </button>
+              </div>
+            )}
+            {!displayUrl && !displayErr && (
+              <button className="btn btn-gold" onClick={launchDisplay}>Open the display</button>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
       {/* Hero — encouraging framing, the live stat tiles, and the one-click invite */}
       <div

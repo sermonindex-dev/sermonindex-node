@@ -388,13 +388,38 @@ export default function NetworkPage({ nodeStats }) {
       const seeds = nodes.filter(n => catOf(n) === 'seed');
       const peers = nodes.filter(n => catOf(n) !== 'seed'); // nodes + peers, for backbone lines
       const dashOff = (now / 60) % 24;
+      // Connection lines are GOLD, not seed-blue. Two reasons: the legend
+      // has always shown a gold swatch for "Connection" while the canvas
+      // drew blue, so one of the two was lying; and blue lines between blue
+      // dots read as smear rather than structure, where a warm thread over
+      // a cold map reads as exactly what it is — the network holding
+      // together. Kept very faint: this is context behind the nodes, never
+      // the thing the eye lands on first.
+      const LINK = '212,175,55';
 
       // Seed-to-seed backbone connections
       for (let i = 0; i < seeds.length; i++) {
         for (let j = i + 1; j < seeds.length; j++) {
           const [x1, y1] = project(seeds[i].lat, seeds[i].lon);
           const [x2, y2] = project(seeds[j].lat, seeds[j].lon);
-          drawArc(x1, y1, x2, y2, `rgba(${NODE_COLORS.seed.rgb},0.16)`, 0.7, dashOff);
+          drawArc(x1, y1, x2, y2, `rgba(${LINK},0.30)`, 0.8, dashOff);
+        }
+      }
+
+      // No seeds on the map yet? Then the two rules above draw NOTHING, and a
+      // small network — which is most of them, most of the time — looks like a
+      // scatter of unrelated dots rather than something joined up. Fall back to
+      // the rule the kiosk display uses: thread every node back to THIS one, so
+      // both maps show a connected network from the very first peer.
+      if (seeds.length === 0) {
+        const me = nodes.find(n => n.id === myId) || nodes.find(n => n.self);
+        if (me && me.lat != null && me.lon != null) {
+          const [mx, my] = project(me.lat, me.lon);
+          nodes.forEach(n => {
+            if (n === me || n.lat == null || n.lon == null) return;
+            const [nx, ny] = project(n.lat, n.lon);
+            drawArc(mx, my, nx, ny, `rgba(${LINK},0.30)`, 0.8, dashOff);
+          });
         }
       }
 
@@ -409,7 +434,7 @@ export default function NetworkPage({ nodeStats }) {
           if (d < minDist) { minDist = d; nearestCoords = [sx, sy]; }
         });
         if (nearestCoords) {
-          drawArc(px, py, nearestCoords[0], nearestCoords[1], `rgba(${NODE_COLORS.seed.rgb},0.11)`, 0.4, dashOff);
+          drawArc(px, py, nearestCoords[0], nearestCoords[1], `rgba(${LINK},0.18)`, 0.5, dashOff);
         }
       });
 

@@ -155,6 +155,21 @@ function inferPlatformKey(name, rel) {
   if (n.endsWith('.exe') || n.endsWith('.msi')) return 'windows-x86_64';
   // Linux. v1Compatible → .AppImage.tar.gz; v2 → the .AppImage itself.
   if (n.endsWith('.appimage.tar.gz') || n.endsWith('.appimage')) return 'linux-x86_64';
+  // Debian/Ubuntu installs under a KEY OF THEIR OWN.
+  //
+  // tauri-plugin-updater decides how to install from how the RUNNING binary was
+  // installed — `is_deb_package()` checks the path is under /usr, that dpkg and
+  // apt exist, and that `dpkg -S` knows the binary — never from the payload. A
+  // deb install therefore rejects an AppImage ("update is not a valid deb
+  // package") and an AppImage install would have a .deb written straight over
+  // it, which does not merely fail, it bricks the app.
+  //
+  // One artifact cannot serve both. But `UpdaterBuilder::target()` uses a
+  // supplied target VERBATIM as the manifest key, and the JS `check()` exposes
+  // it as `CheckOptions.target`, so a second key costs nothing: the app detects
+  // its own install kind and asks for the right one. See linuxInstallKind() in
+  // services/updater.js.
+  if (n.endsWith('.deb')) return 'linux-deb-x86_64';
   return null;
 }
 
@@ -174,9 +189,17 @@ const KEY_LABEL = {
   'darwin-aarch64': 'macOS (Apple Silicon)',
   'darwin-x86_64': 'macOS (Intel)',
   'windows-x86_64': 'Windows',
-  'linux-x86_64': 'Linux',
+  'linux-x86_64': 'Linux (AppImage)',
+  'linux-deb-x86_64': 'Linux (deb)',
 };
-const ORDER = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64', 'linux-x86_64'];
+// The four every release must carry. A missing one means a whole platform is
+// silently never offered the update, which is what --require-all exists to stop.
+const REQUIRED = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64', 'linux-x86_64'];
+// Published when present, never required: the .deb is signed by an extra CI
+// step rather than the bundler (which signs only the AppImage), so its absence
+// should not hold back a release that is otherwise complete.
+const OPTIONAL = ['linux-deb-x86_64'];
+const ORDER = [...REQUIRED, ...OPTIONAL];
 
 const sigFiles = walkSigs(SCAN_DIR).sort();
 const chosen = new Map(); // key → { name, artifactPath, signature, remotePath }
@@ -281,12 +304,12 @@ async function main() {
   // ── Completeness gate ──────────────────────────────────────────────────────
   // Refuse to overwrite a good multi-platform latest.json with a partial one.
   // Checked BEFORE any upload so a bad run leaves the previous manifest intact.
-  const missingUp = ORDER.filter((k) => !keys.includes(k));
+  const missingUp = REQUIRED.filter((k) => !keys.includes(k));
   if (missingUp.length) {
     const lines = [
       '',
       '════════════════════════════════════════════════════════════════════',
-      `  INCOMPLETE UPDATE: ${missingUp.length} of ${ORDER.length} platforms have NO signed artifact`,
+      `  INCOMPLETE UPDATE: ${missingUp.length} of ${REQUIRED.length} required platforms have NO signed artifact`,
       '════════════════════════════════════════════════════════════════════',
       ...missingUp.map((k) => `    MISSING  ${k.padEnd(15)} ${KEY_LABEL[k] || ''}`),
       '',

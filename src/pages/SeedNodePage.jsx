@@ -738,6 +738,45 @@ export default function SeedNodePage({
     runSeedBatch(toDownload);
   }, [catalog, scope, runSeedBatch]);
 
+  // ── Catch up now ──────────────────────────────────────────────────────────
+  // The CLI sweeps hourly: it re-reads the master list, recomputes what is
+  // missing FROM WHAT IS ON DISK, and fetches that — which is also how it
+  // retries anything that failed earlier, since a file that never landed is
+  // simply missing again. The app has no such loop, so this is the button that
+  // does the same thing on demand.
+  //
+  // Refreshing the list first is the part that matters: without it this would
+  // only re-fetch known gaps, and the common case — "a new batch was published,
+  // am I still a complete seed?" — would silently answer yes.
+  const [catchingUp, setCatchingUp] = useState(false);
+  const [catchUpNote, setCatchUpNote] = useState('');
+  const catchUp = useCallback(async () => {
+    if (downloading || catchingUp) return;
+    setCatchingUp(true);
+    setCatchUpNote('Checking for new sermons…');
+    let list = catalog;
+    try {
+      const cat = await import('../services/catalog.js');
+      await cat.forceRefreshMasterList();
+      list = cat.getCatalog();
+    } catch (e) {
+      console.warn('[SeedNode] list refresh failed:', e?.message || e);
+      // A failed refresh is not a reason to skip the sweep — the gaps we
+      // already know about are still worth filling.
+    }
+    const want = scope === 'audio'
+      ? list.filter(s => s.type === 'audio' && !s.downloaded)
+      : list.filter(s => !s.downloaded);
+    setCatchingUp(false);
+    if (want.length === 0) {
+      setCatchUpNote('Nothing missing — this node holds its whole scope.');
+      setTimeout(() => setCatchUpNote(''), 6000);
+      return;
+    }
+    setCatchUpNote(`${want.length.toLocaleString()} file${want.length === 1 ? '' : 's'} to fetch.`);
+    runSeedBatch(want);
+  }, [catalog, scope, downloading, catchingUp, runSeedBatch]);
+
   const retryFailed = useCallback(() => {
     const sermons = failedItems.map(f => f.sermon).filter(Boolean);
     runSeedBatch(sermons);
@@ -1081,6 +1120,23 @@ export default function SeedNodePage({
               {isPaused ? 'Paused' : downloading ? 'Active' : 'Idle'}
             </b>
             <small>Downloading</small>
+          </div>
+
+          {/* The app has no hourly sweep the way the CLI does, so completeness
+              is not self-maintaining here — this is the button that closes that
+              gap, and the one to press when a download failed earlier. */}
+          <div className="control-read" style={{ alignItems: 'stretch', justifyContent: 'center', minWidth: 150 }}>
+            <button
+              className="btn btn-gold btn-sm"
+              onClick={catchUp}
+              disabled={catchingUp || downloading}
+              title="Check for newly published sermons and fetch anything missing, including files that failed before"
+            >
+              {catchingUp ? 'Checking…' : 'Check for new'}
+            </button>
+            <small style={{ marginTop: 6, textAlign: 'center' }}>
+              {catchUpNote || 'New + failed files'}
+            </small>
           </div>
         </div>
       </div>

@@ -943,6 +943,59 @@ fn persisted_upload_limit_bps() -> Option<std::num::NonZeroU32> {
     std::num::NonZeroU32::new(bps.min(u32::MAX as u64) as u32)
 }
 
+/// How this build was installed on Linux: "deb" | "appimage" | "other".
+///
+/// WHY THE APP HAS TO KNOW. tauri-plugin-updater picks its install path from
+/// how the RUNNING binary was installed, never from what it downloads
+/// (`is_deb_package()` in updater.rs: the executable sits under /usr, dpkg and
+/// apt exist, and `dpkg -S` knows the file). Those two choices have to agree:
+///   • a deb install handed an AppImage refuses it — "update is not a valid
+///     deb package" — which is what Ubuntu users hit on 0.0.335/0.0.336;
+///   • an AppImage install handed a .deb does NOT refuse it. `install_appimage`
+///     writes the bytes straight over the running AppImage, so the app is
+///     replaced by a Debian archive and stops launching.
+///
+/// The second is why we never simply switched the published artifact over. The
+/// app instead reports its own install kind, and the frontend asks for the
+/// matching manifest key (`linux-deb-x86_64` vs `linux-x86_64`).
+///
+/// The checks mirror Tauri's own deliberately — if this said "deb" where Tauri
+/// says "appimage" we would have swapped one mismatch for another.
+#[tauri::command]
+fn linux_install_kind() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(_) => return "other".to_string(),
+        };
+        // An AppImage says so itself, and says it first: an AppImage mounted
+        // under /usr would otherwise look like a system install.
+        if std::env::var_os("APPIMAGE").is_some() {
+            return "appimage".to_string();
+        }
+        let in_system_path = exe.to_str().map(|p| p.starts_with("/usr")).unwrap_or(false);
+        if !in_system_path {
+            return "other".to_string();
+        }
+        let dpkg = std::path::Path::new("/var/lib/dpkg").exists();
+        let apt = std::path::Path::new("/etc/apt").exists();
+        let tracked = std::process::Command::new("dpkg")
+            .args(["-S", &exe.to_string_lossy()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if dpkg && apt && tracked {
+            return "deb".to_string();
+        }
+        "other".to_string()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        "other".to_string()
+    }
+}
+
 // ── Listening port ──────────────────────────────────────────────────────────
 //
 // The node used to take the first free port in LISTEN_PORT_RANGE, which is fine
@@ -2268,6 +2321,7 @@ pub fn run() {
             torrent_session_stats,
             set_upload_limit,
             set_listen_port,
+            linux_install_kind,
             // ── Node display ──────────────────────────────────────────────
             // The CLI's dashboard, served by the GUI. See src/nodedisplay.rs —
             // the server is the CLI's own `dashboard.rs` and the page it serves

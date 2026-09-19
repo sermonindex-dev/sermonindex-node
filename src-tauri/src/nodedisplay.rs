@@ -188,6 +188,13 @@ pub fn node_display_push(stats: String) {
         v.as_object_mut()?.insert("system".to_string(), system);
         serde_json::to_string(&v).ok()
     })()
+    // The closure returns None only if the payload could not be parsed at all.
+    // Falling back to the RAW frontend payload used to be quietly fatal: it has
+    // no `system` block, and the dashboard used to reject any payload without
+    // one, so a single bad merge froze the display on its last good frame until
+    // the app restarted. The page no longer demands `system`, and this no longer
+    // silently drops it either — belt and braces, because a kiosk screen that
+    // stops updating looks identical to a node that has stopped working.
     .unwrap_or(stats);
 
     *payload().lock().unwrap_or_else(|e| e.into_inner()) = merged;

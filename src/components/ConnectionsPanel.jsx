@@ -839,126 +839,120 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
             </span>
           }
         >
-          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            <p style={{ marginTop: 0, marginBottom: '10px' }}>
-              By default the node takes the first free port in {TORRENT_PORT_RANGE}, which is fine
-              when UPnP or NAT-PMP opens it for you. If you're adding a rule in your router yourself,
-              pin the port here first — a rule names one port, and a port that moves is a rule that
-              quietly stops working.
-            </p>
+          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+            By default the node takes the first free port in {TORRENT_PORT_RANGE}, which is fine when
+            UPnP or NAT-PMP opens it for you. A router rule you write yourself names <em>one</em> port —
+            so pin it first, or the rule stops matching the day something else takes that port.
+          </p>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+          <div className="port-set">
+            <div className="port-field">
+              <label htmlFor="si-port">Port</label>
               <input
+                id="si-port"
                 type="number"
                 value={portDraft}
                 min={PORT_MIN}
                 max={PORT_MAX}
-                placeholder="Automatic"
+                placeholder="auto"
                 onChange={(e) => { portTouched.current = true; setPortDraft(e.target.value); setPortErr(''); }}
-                style={{ width: '130px', fontVariantNumeric: 'tabular-nums' }}
-                aria-label="Listening port"
               />
+            </div>
+            <button
+              className="btn btn-gold"
+              onClick={() => handleSavePort(false)}
+              disabled={portSaving || !portDraft.trim()}
+            >
+              {portSaving ? 'Applying…' : 'Pin this port'}
+            </button>
+            {status?.configured_port && (
+              <button
+                className="btn btn-outline"
+                onClick={() => { portTouched.current = false; handleSavePort(true); }}
+                disabled={portSaving}
+                style={{ height: 46 }}
+              >
+                Back to automatic
+              </button>
+            )}
+          </div>
+
+          {portErr && (
+            <div style={{ color: 'var(--red)', fontSize: 'var(--text-sm)', marginBottom: '10px' }}>{portErr}</div>
+          )}
+
+          {/* Below 1024 is a real OS rule, not a preference of ours, so it is
+              stated as such — and as a warning, not a refusal. */}
+          {Number(portDraft) > 0 && Number(portDraft) <= PORT_PRIVILEGED_MAX && (
+            <div className="verdict quiet" style={{ marginBottom: '10px' }}>
+              <div className="verdict-copy">
+                Ports below {PORT_PRIVILEGED_MAX + 1} are reserved by the operating system on macOS and
+                Linux, and this app doesn't run as an administrator — so {portDraft} will almost
+                certainly fall back to the automatic range. Anything from {PORT_PRIVILEGED_MAX + 1} to{' '}
+                {PORT_MAX.toLocaleString()} is safe.
+              </div>
+            </div>
+          )}
+
+          {portDrifted && (
+            <div className="verdict" style={{ marginBottom: '10px' }}>
+              <div className="verdict-title">
+                Port <span className="verdict-flag">{status.configured_port}</span> wasn't available
+              </div>
+              <div className="verdict-copy">
+                Something else on this machine is using it, so the node is listening on{' '}
+                <strong>{status.tcp_listen_port}</strong> instead — and a router rule naming{' '}
+                {status.configured_port} won't match. Either free that port and restart, or pin{' '}
+                {status.tcp_listen_port} and point the rule there.
+              </div>
+            </div>
+          )}
+
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)', margin: '16px 0 10px' }}>
+            What to put in your router
+          </div>
+
+          <div className="rule">
+            <div className="rule-body">
+              <div className="rule-kind">IPv4</div>
+              <div className="rule-what">A port forward, pointed at this computer</div>
+              <div className="rule-value">Forward TCP {effectivePort} to this computer</div>
+            </div>
+            <button
+              className="btn btn-gold btn-sm"
+              onClick={() => copyText(`Forward TCP ${effectivePort} to this computer`, 'v4')}
+            >
+              {portCopied === 'v4' ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+
+          {ownV6 ? (
+            <div className="rule">
+              <div className="rule-body">
+                <div className="rule-kind">IPv6</div>
+                <div className="rule-what">A firewall pinhole — nothing to forward, just "allow in"</div>
+                <div className="rule-value">Allow inbound TCP to [{ownV6}]:{effectivePort}</div>
+              </div>
               <button
                 className="btn btn-gold btn-sm"
-                onClick={() => handleSavePort(false)}
-                disabled={portSaving || !portDraft.trim()}
+                onClick={() => copyText(`Allow inbound TCP to [${ownV6}]:${effectivePort}`, 'v6')}
               >
-                {portSaving ? 'Applying…' : 'Pin this port'}
+                {portCopied === 'v6' ? 'Copied' : 'Copy'}
               </button>
-              {status?.configured_port && (
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => { portTouched.current = false; handleSavePort(true); }}
-                  disabled={portSaving}
-                >
-                  Back to automatic
-                </button>
-              )}
             </div>
+          ) : (
+            <p className="port-note" style={{ marginTop: 0 }}>
+              This machine has no global IPv6 address, so there's no pinhole to add — the IPv4 forward
+              above is the one that matters here.
+            </p>
+          )}
 
-            {portErr && (
-              <div style={{ color: 'var(--red)', fontSize: 'var(--text-xs)', marginBottom: '8px' }}>{portErr}</div>
-            )}
-
-            {/* Below 1024 is a real OS rule, not a preference of ours, so it is
-                stated as such — and as a warning, not a refusal. */}
-            {Number(portDraft) > 0 && Number(portDraft) <= PORT_PRIVILEGED_MAX && (
-              <div className="verdict quiet" style={{ marginBottom: '8px' }}>
-                <div className="verdict-copy">
-                  Ports below {PORT_PRIVILEGED_MAX + 1} are reserved by the operating system on macOS and
-                  Linux. This app doesn't run as an administrator, so it will almost certainly fail to
-                  claim {portDraft} and fall back to the automatic range. On Windows it will work if
-                  nothing else holds the port. Anything from {PORT_PRIVILEGED_MAX + 1} to {PORT_MAX.toLocaleString()} is
-                  safe to use.
-                </div>
-              </div>
-            )}
-
-            {portDrifted && (
-              <div className="verdict" style={{ marginBottom: '8px' }}>
-                <div className="verdict-title">
-                  Port <span className="verdict-flag">{status.configured_port}</span> wasn't available
-                </div>
-                <div className="verdict-copy">
-                  Something else on this machine is already using it, so the node is listening on{' '}
-                  <strong>{status.tcp_listen_port}</strong> instead. Any router rule pointing at{' '}
-                  {status.configured_port} won't match. Either free that port and restart, or pin{' '}
-                  {status.tcp_listen_port} and point the rule there.
-                </div>
-              </div>
-            )}
-
-            {/* The rule text itself. Nobody can write an IPv6 pinhole without
-                the machine's own global address, and it is not something a
-                person can be expected to find on their own. */}
-            <div style={{ marginTop: '12px' }}>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                What to put in your router
-              </div>
-
-              <div className="credential" style={{ marginBottom: '8px' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>IPv4 — port forward</div>
-                  <code style={{ wordBreak: 'break-all' }}>Forward TCP {effectivePort} to this computer</code>
-                </div>
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => copyText(`Forward TCP ${effectivePort} to this computer`, 'v4')}
-                >
-                  {portCopied === 'v4' ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-
-              {ownV6 ? (
-                <div className="credential">
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                      IPv6 — firewall pinhole (no forwarding needed, just "allow in")
-                    </div>
-                    <code style={{ wordBreak: 'break-all' }}>Allow inbound TCP to [{ownV6}]:{effectivePort}</code>
-                  </div>
-                  <button
-                    className="btn btn-outline btn-sm"
-                    onClick={() => copyText(`Allow inbound TCP to [${ownV6}]:${effectivePort}`, 'v6')}
-                  >
-                    {portCopied === 'v6' ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                  This machine has no global IPv6 address, so there's no pinhole to add — the IPv4
-                  forward above is the one that matters here.
-                </div>
-              )}
-
-              <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '10px', marginBottom: 0 }}>
-                IPv6 has no NAT, so there is nothing to "forward" — your router simply blocks
-                unsolicited connections in, and a pinhole tells it not to for this one address and
-                port. Routers call it different things: <em>IPv6 Firewall</em>, <em>Pinhole</em>,{' '}
-                <em>Allow Inbound IPv6</em>, or <em>IPv6 Simple Security</em>.
-              </p>
-            </div>
-          </div>
+          <p className="port-note">
+            IPv6 has no NAT, so there is nothing to "forward" — your router simply blocks unsolicited
+            connections in, and a pinhole tells it not to for this one address and port. Routers call it{' '}
+            <em>IPv6 Firewall</em>, <em>Pinhole</em>, <em>Allow Inbound IPv6</em>, or{' '}
+            <em>IPv6 Simple Security</em>.
+          </p>
         </Panel>
 
         <Panel

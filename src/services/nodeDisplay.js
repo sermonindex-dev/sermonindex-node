@@ -387,6 +387,30 @@ async function tick() {
 }
 
 /**
+ * Start the server and begin feeding it, WITHOUT opening a browser.
+ *
+ * Called once as the app starts. The display's whole value is that it can be
+ * read from somewhere other than this window — a phone, a tablet, a monitor
+ * wired to the machine in the cupboard — and none of that works if the server
+ * only exists after somebody walks over to this app and presses a button.
+ *
+ * Never throws and never retries: on a machine where the port is taken, the app
+ * itself must carry on regardless, and the card simply offers the button.
+ */
+export async function ensureNodeDisplay() {
+  if (currentUrl) return currentUrl;
+  try {
+    currentUrl = await invoke('node_display_start');
+    startFeeding();
+    tick().catch(() => {});
+    return currentUrl;
+  } catch (e) {
+    console.warn('[nodeDisplay] autostart failed:', e);
+    return null;
+  }
+}
+
+/**
  * Start the server if needed, keep it fed, and open a browser at it.
  *
  * Takes nothing: the display reads its own sources, so it keeps updating after
