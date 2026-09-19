@@ -32,3 +32,6 @@ ipfs_debug.log
 # Bundled speaker portraits — fetched locally via scripts/fetch-speaker-images.mjs
 # (run before building a release; the app falls back to the CDN if absent)
 public/images/speakers/
+
+# Throwaway UI screenshots from design rounds — never part of a build.
+gui-changes-*.png

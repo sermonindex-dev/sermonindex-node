@@ -5243,7 +5243,7 @@ dependencies = [
 
 [[package]]
 name = "sermonindex-app"
-version = "0.0.336"
+version = "0.0.337"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
