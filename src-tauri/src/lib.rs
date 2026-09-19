@@ -9,7 +9,10 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tokio::sync::Mutex;
 
+mod appmenu;
 mod natpmp;
+mod nodedisplay;
+mod system;
 mod torrent_node;
 
 /// Global state for the BitTorrent session handle.
@@ -242,14 +245,20 @@ fn get_storage_path() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
-/// Persist the chosen storage directory into settings.json (key "storage_dir"),
-/// preserving any other settings. Reuses the same settings.json file the
-/// frontend save_settings/load_settings commands read and write.
-fn persist_storage_dir_setting(path: &str) -> Result<(), String> {
+/// Merge ONE key into settings.json, preserving everything else.
+///
+/// Read-modify-write on the same file the frontend's save_settings/load_settings
+/// commands use. Passing `Value::Null` removes the key, which is how a setting
+/// returns to "unset" rather than being stored as a zero that later readers have
+/// to special-case.
+///
+/// The write is atomic (`atomic_write_str`), so a crash mid-save cannot leave a
+/// truncated settings.json — which would silently reset every setting at once,
+/// including the storage directory a seed node depends on.
+fn persist_setting(key: &str, value_to_set: serde_json::Value) -> Result<(), String> {
     let settings_path = get_app_data_dir().join("settings.json");
     fs::create_dir_all(settings_path.parent().unwrap())
         .map_err(|e| format!("Failed to create dir: {}", e))?;
-    // Read the current settings (default to an empty object) and set the key.
     let mut value: serde_json::Value = if settings_path.exists() {
         let text = fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read settings: {}", e))?;
@@ -261,13 +270,22 @@ fn persist_storage_dir_setting(path: &str) -> Result<(), String> {
         value = serde_json::json!({});
     }
     if let Some(obj) = value.as_object_mut() {
-        obj.insert("storage_dir".to_string(), serde_json::Value::String(path.to_string()));
+        if value_to_set.is_null() {
+            obj.remove(key);
+        } else {
+            obj.insert(key.to_string(), value_to_set);
+        }
     }
     let serialized = serde_json::to_string_pretty(&value)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
     atomic_write_str(&settings_path, &serialized)
         .map_err(|e| format!("Failed to write settings: {}", e))?;
     Ok(())
+}
+
+/// Persist the chosen storage directory into settings.json (key "storage_dir").
+fn persist_storage_dir_setting(path: &str) -> Result<(), String> {
+    persist_setting("storage_dir", serde_json::Value::String(path.to_string()))
 }
 
 /// Set the storage directory downloads are written to. Validates the path,
@@ -925,6 +943,64 @@ fn persisted_upload_limit_bps() -> Option<std::num::NonZeroU32> {
     std::num::NonZeroU32::new(bps.min(u32::MAX as u64) as u32)
 }
 
+// ── Listening port ──────────────────────────────────────────────────────────
+//
+// The node used to take the first free port in LISTEN_PORT_RANGE, which is fine
+// when something opens the port automatically (UPnP or NAT-PMP) and useless
+// when nothing does. A hand-written router rule — an IPv4 port forward, or an
+// IPv6 firewall pinhole, which is the ONLY way inbound IPv6 works on most
+// consumer routers — names one specific port. If the app can land on any of
+// forty, that rule matches by luck, and stops matching the first time something
+// else holds the port at startup.
+//
+// So the port is a setting. `listen_port` in settings.json, `None` = the old
+// behaviour.
+//
+// WHAT IS ACTUALLY ALLOWED. TCP ports are 1–65535, and this accepts that whole
+// range bar zero, but two limits are real and neither is ours:
+//
+//   • Below 1024 is privileged on macOS and Linux. The app does not run as
+//     root and will not ask to, so binding 80 or 443 fails with EACCES. We
+//     still store such a port rather than refusing it — Windows has no such
+//     rule, and a user who knows their setup should not be argued with — but
+//     `configured_port` will visibly differ from `tcp_listen_port` when it
+//     does not take, and the UI says why.
+//   • Anything already in use fails, whoever holds it.
+//
+// There is no limit on how many ports a node "may" use in any protocol sense;
+// it uses exactly one TCP port for BitTorrent. The question only has an answer
+// in terms of what the OS will let this process bind.
+const LISTEN_PORT_SETTING: &str = "listen_port";
+
+/// Read the user's chosen listening port from settings.json.
+/// `None` (unset, zero, or malformed) keeps the automatic range.
+fn persisted_listen_port() -> Option<u16> {
+    let settings_path = get_app_data_dir().join("settings.json");
+    let text = fs::read_to_string(&settings_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let n = value.get(LISTEN_PORT_SETTING).and_then(|v| v.as_u64())?;
+    if n == 0 || n > u16::MAX as u64 {
+        return None;
+    }
+    Some(n as u16)
+}
+
+/// Persist (or clear) the chosen listening port.
+///
+/// Takes effect on the next session start; the caller restarts the session so
+/// the change is visible immediately. Returns the stored value so the frontend
+/// does not have to guess what was accepted.
+#[tauri::command]
+fn set_listen_port(port: Option<u16>) -> Result<Option<u16>, String> {
+    let port = port.filter(|p| *p != 0);
+    match port {
+        Some(p) => persist_setting(LISTEN_PORT_SETTING, serde_json::json!(p))?,
+        None => persist_setting(LISTEN_PORT_SETTING, serde_json::Value::Null)?,
+    }
+    log::info!("[Torrent] Listening port set to {:?}", port);
+    Ok(port)
+}
+
 // ============================================================
 // Liveness ping — keeps the dashboard from showing us OFFLINE
 // ============================================================
@@ -1297,6 +1373,84 @@ fn verify_master_list(data: String, signature_b64: String) -> Result<bool, Strin
 }
 
 /// Open a URL in the system default browser (used by the Donate banner)
+/// Open one of the app's own folders in the system file manager.
+///
+/// `which` is "data" (settings, node id, download state) or "logs". The paths
+/// come from Tauri's own resolver rather than being rebuilt here, because they
+/// differ per platform and a hand-assembled path that is subtly wrong opens a
+/// folder that does not exist and looks like nothing happened.
+/// Dial one address once, to tell another node whether the world can reach it.
+///
+/// See services/peercheck.js and the CLI's src/peercheck.rs for why this
+/// exists and why it is this narrow. The short version: our reachability probe
+/// has no outbound IPv6, so it cannot confirm the households that most need
+/// confirming — but other nodes can, and asking them costs nothing.
+///
+/// Refuses every private, loopback, link-local, unique-local, multicast and
+/// carrier-NAT range. That check is duplicated in JavaScript on purpose: two
+/// independent guards is the only version of this that stays true after
+/// somebody edits one of them.
+///
+/// Connects and closes. Nothing is written, nothing is read — the question is
+/// yes or no, and reading a byte would make this a different tool.
+#[tauri::command]
+async fn peer_check_dial(ip: String, port: u16) -> Result<bool, String> {
+    use std::net::IpAddr;
+    let parsed: IpAddr = ip.trim().parse().map_err(|_| "not an IP address".to_string())?;
+    let ok = match parsed {
+        IpAddr::V6(v6) => {
+            !v6.is_loopback()
+                && !v6.is_unspecified()
+                && !v6.is_multicast()
+                && v6.to_ipv4_mapped().is_none()
+                && (v6.segments()[0] & 0xe000) == 0x2000
+        }
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+                || (o[0] == 100 && (o[1] & 0xc0) == 0x40))
+        }
+    };
+    if !ok || port == 0 {
+        return Err(format!("refusing to dial {ip}: not a public address"));
+    }
+    let addr = std::net::SocketAddr::new(parsed, port);
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::TcpStream::connect(addr),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => {
+            drop(stream);
+            Ok(true)
+        }
+        // Refused, unreachable, or timed out — all the same answer to the only
+        // question being asked.
+        _ => Ok(false),
+    }
+}
+
+#[tauri::command]
+fn open_app_folder(app: tauri::AppHandle, which: String) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = match which.as_str() {
+        "logs" => app.path().app_log_dir(),
+        _ => app.path().app_data_dir(),
+    }
+    .map_err(|e| format!("could not resolve the {which} folder: {e}"))?;
+    // The log folder is created lazily by the log plugin, so it may not exist
+    // yet on a fresh install. Creating it is friendlier than an error nobody
+    // can act on.
+    std::fs::create_dir_all(&dir).ok();
+    open_folder(dir.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
@@ -1751,7 +1905,8 @@ async fn torrent_start(
     let download_dir = downloads_dir();
     // Apply the user's opt-in upload cap at creation (None = unlimited).
     let upload_bps = persisted_upload_limit_bps();
-    let handle = torrent_node::start(data_dir, download_dir, upload_bps).await?;
+    let handle =
+        torrent_node::start(data_dir, download_dir, upload_bps, persisted_listen_port()).await?;
     let info = handle.info();
     ts.handle = Some(Arc::new(handle));
     log::info!("[Torrent] Session started (upload cap: {:?} bytes/s)", upload_bps);
@@ -1811,6 +1966,9 @@ async fn torrent_status(
             uptime_secs: 0,
             torrent_count: 0,
             natpmp: "inactive".to_string(),
+            // Still worth reporting while stopped: the Settings UI shows the
+            // chosen port whether or not a session happens to be running.
+            configured_port: persisted_listen_port(),
         }),
     }
 }
@@ -1974,6 +2132,9 @@ pub fn run() {
                     .build(),
             )?;
 
+            // Application menu bar. Non-fatal by design — see appmenu::install.
+            appmenu::install(app.handle());
+
             // System tray — app keeps running in background when window is closed
             let node_status_item = MenuItemBuilder::with_id("node_status", "🟢 Node Running")
                 .enabled(false)
@@ -2074,6 +2235,8 @@ pub fn run() {
             open_downloaded_file,
             open_url_in_player,
             open_url,
+            open_app_folder,
+            peer_check_dial,
             fetch_text,
             local_ipv6,
             verify_master_list,
@@ -2104,6 +2267,16 @@ pub fn run() {
             torrent_prune_missing,
             torrent_session_stats,
             set_upload_limit,
+            set_listen_port,
+            // ── Node display ──────────────────────────────────────────────
+            // The CLI's dashboard, served by the GUI. See src/nodedisplay.rs —
+            // the server is the CLI's own `dashboard.rs` and the page it serves
+            // is a byte-for-byte copy of the CLI's `assets/dashboard.html`, so
+            // the two displays are the same display rather than two designs
+            // that resemble each other.
+            nodedisplay::node_display_start,
+            nodedisplay::node_display_push,
+            nodedisplay::node_display_url,
         ])
         // Build (not run) so we can observe process-level RunEvents below.
         .build(tauri::generate_context!())

@@ -59,6 +59,8 @@ const BLOCKING_THREADS: usize = 8;
 pub struct TorrentHandle {
     pub session: Arc<Session>,
     started_at: Instant,
+    /// The port requested in Settings (see `SessionInfo::configured_port`).
+    configured_port: Option<u16>,
     /// NAT-PMP/PCP mapping status: "trying" | "mapped via <gw>" | "unavailable"
     natpmp_status: Arc<std::sync::Mutex<String>>,
     /// librqbit 9 requires an explicit blocking-thread spawner for
@@ -95,6 +97,15 @@ pub struct SessionInfo {
     pub torrent_count: usize,
     /// "trying" | "mapped via <gateway>" | "unavailable"
     pub natpmp: String,
+    /// The port the USER asked for in Settings, if any.
+    ///
+    /// Reported alongside `tcp_listen_port` so the UI can tell the two apart.
+    /// They differ when the chosen port was already in use and we fell back to
+    /// the default range — which matters, because the entire reason to pin a
+    /// port is that a hand-written router rule keeps matching it. A silent
+    /// drift would leave that rule pointing at nothing, and the node would look
+    /// unreachable for no visible reason.
+    pub configured_port: Option<u16>,
 }
 
 #[derive(Serialize)]
@@ -372,6 +383,7 @@ pub async fn start(
     data_dir: PathBuf,
     download_dir: PathBuf,
     upload_bps: Option<NonZeroU32>,
+    preferred_port: Option<u16>,
 ) -> Result<TorrentHandle, String> {
     std::fs::create_dir_all(&download_dir)
         .map_err(|e| format!("Failed to create download dir: {e}"))?;
@@ -379,13 +391,27 @@ pub async fn start(
     // is disabled (see below), so it would just be an empty unused folder.
     let _ = &data_dir;
 
-    // librqbit 9 binds exactly one port, so we walk LISTEN_PORT_RANGE ourselves
-    // and retry when the port is taken (second instance, lingering TIME_WAIT
-    // socket, unrelated app). librqbit 8 did this internally.
+    // librqbit 9 binds exactly one port, so we walk the candidates ourselves and
+    // retry when the port is taken (second instance, lingering TIME_WAIT socket,
+    // unrelated app). librqbit 8 did this internally.
+    //
+    // A port chosen in Settings is tried FIRST and the default range is kept as
+    // the fallback. Trying only the chosen port would be the purer reading of
+    // "I want this port", but it would also mean a node that stops seeding
+    // entirely because something transient grabbed the port first — a worse
+    // outcome than seeding on a different one. `configured_port` is reported
+    // back either way, so the UI can say plainly that the choice did not stick
+    // instead of leaving the user with a router rule that quietly matches
+    // nothing.
+    let candidates: Vec<u16> = preferred_port
+        .into_iter()
+        .chain(LISTEN_PORT_RANGE.filter(|p| Some(*p) != preferred_port))
+        .collect();
+
     let mut last_err: Option<String> = None;
     let mut session: Option<Arc<Session>> = None;
 
-    for port in LISTEN_PORT_RANGE {
+    for port in candidates {
         match Session::new_with_opts(download_dir.clone(), build_session_options(port, upload_bps))
             .await
         {
@@ -410,7 +436,10 @@ pub async fn start(
 
     let session = session.ok_or_else(|| {
         format!(
-            "Failed to start torrent session: no free port in {}..{} (last error: {})",
+            "Failed to start torrent session: no free port ({}{}..{}) (last error: {})",
+            preferred_port
+                .map(|p| format!("{p}, then "))
+                .unwrap_or_default(),
             LISTEN_PORT_RANGE.start,
             LISTEN_PORT_RANGE.end,
             last_err.as_deref().unwrap_or("none")
@@ -452,6 +481,7 @@ pub async fn start(
     Ok(TorrentHandle {
         session,
         started_at: Instant::now(),
+        configured_port: preferred_port,
         natpmp_status,
         // Must be constructed inside the tokio runtime (it inspects the current
         // runtime flavor to decide whether block_in_place is legal).
@@ -476,6 +506,7 @@ impl TorrentHandle {
             uptime_secs: self.started_at.elapsed().as_secs(),
             torrent_count,
             natpmp: self.natpmp_status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            configured_port: self.configured_port,
         }
     }
 

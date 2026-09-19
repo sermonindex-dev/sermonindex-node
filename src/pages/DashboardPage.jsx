@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useWidth } from '../components/charts.jsx';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 import { getNodeId } from '../services/heartbeat.js';
 import { subscribe as subscribeNodeMap } from '../services/nodeMapStore.js';
@@ -55,16 +56,23 @@ function CoverageDonut({ pct }) {
         </g>
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ fontSize: '1.7rem', fontWeight: 700, color: 'var(--gold-text)', lineHeight: 1 }}>{pct.toFixed(pct >= 10 ? 0 : 1)}%</div>
-        <div style={{ fontSize: '0.58rem', color: 'var(--text-muted)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '0.6px' }}>of library</div>
+        <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: 'var(--gold-text)', lineHeight: 1 }}>{pct.toFixed(pct >= 10 ? 0 : 1)}%</div>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '0.6px' }}>of library</div>
       </div>
     </div>
   );
 }
 
 // ── live-peers area sparkline ────────────────────────────────────────────────
+// Measured rather than stretched: the old version drew into a fixed 340-unit
+// viewBox scaled to the container with `preserveAspectRatio="none"`, so the
+// curve's slope changed with the window width — the same data looked urgent in
+// a narrow window and flat in a wide one. The area fill also drops from a 38%
+// gradient to a flat ~10% wash: an area is context for its line, and at 38% it
+// was competing with it.
 function AreaSparkline({ data, height = 96 }) {
-  const w = 340, h = height, pad = 6;
+  const [ref, w] = useWidth(340);
+  const h = height, pad = 6;
   const arr = data && data.length ? data : [0];
   const max = Math.max(1, ...arr);
   const n = arr.length;
@@ -74,18 +82,20 @@ function AreaSparkline({ data, height = 96 }) {
     return [x, y];
   });
   const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
-  const area = `${line} L ${w - pad} ${h - pad} L ${pad} ${h - pad} Z`;
+  const area = `${line} L ${(w - pad).toFixed(1)} ${h - pad} L ${pad} ${h - pad} Z`;
+  const last = pts[pts.length - 1];
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="dash-spark-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--gold-text)" stopOpacity="0.38" />
-          <stop offset="100%" stopColor="var(--gold-text)" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#dash-spark-grad)" />
-      <path d={line} fill="none" stroke="var(--gold-text)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div ref={ref} style={{ width: '100%' }}>
+      <svg width={w} height={h} style={{ display: 'block' }}>
+        <path d={area} fill="var(--gold-text)" fillOpacity="0.10" />
+        <path d={line} fill="none" stroke="var(--gold-text)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {/* End marker with a 2px ring in the surface colour, so it stays
+            legible where it sits on the line. */}
+        {last && (
+          <circle cx={last[0]} cy={last[1]} r="4" fill="var(--gold-text)" stroke="var(--bg-secondary)" strokeWidth="2" />
+        )}
+      </svg>
+    </div>
   );
 }
 
@@ -100,7 +110,7 @@ function BreakdownBars({ audio, video }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {rows.map((r) => (
         <div key={r.label}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: 4, color: 'var(--text-secondary)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-xs)', marginBottom: 4, color: 'var(--text-secondary)' }}>
             <span>{r.label}</span><span style={{ fontWeight: 700 }}>{r.val.toLocaleString()}</span>
           </div>
           <div style={{ height: 8, background: 'var(--bg-tertiary)', borderRadius: 5, overflow: 'hidden' }}>
@@ -341,7 +351,7 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
             <CoverageDonut pct={coveragePct} />
             <div style={{ flex: 1, minWidth: 160 }}>
               <BreakdownBars audio={breakdown.audio} video={breakdown.video} />
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '12px 0 14px', lineHeight: 1.5 }}>
+              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', margin: '12px 0 14px', lineHeight: 1.5 }}>
                 {coverage.downloaded.toLocaleString()} of {coverage.total.toLocaleString()} sermons
               </p>
               <button className="btn btn-gold" onClick={() => go('seed')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
@@ -402,7 +412,7 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
             {featured.map((s) => <DashSermon key={s.id} s={s} onOpen={onOpenSermon} />)}
           </div>
         ) : (
-          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Your library is loading&hellip;</p>
+          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>Your library is loading&hellip;</p>
         )}
       </div>
 

@@ -56,20 +56,21 @@ class ErrorBoundary extends Component {
           <p style={{ color: 'var(--text-secondary)', marginBottom: '24px', maxWidth: '400px' }}>
             The app encountered an unexpected error. This has been logged.
           </p>
-          <p style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '500px', wordBreak: 'break-all' }}>
+          <p style={{ fontFamily: 'monospace', fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '500px', wordBreak: 'break-all' }}>
             {this.state.error?.message || 'Unknown error'}
           </p>
           <div style={{ display: 'flex', gap: '12px' }}>
             <button
               onClick={this.handleRetry}
               className="btn btn-gold"
-              style={{ padding: '10px 24px', fontSize: '0.9rem' }}
+              style={{ padding: '10px 24px', fontSize: 'var(--text-base)' }}
             >
               Try Again
             </button>
             <button
               onClick={() => window.location.reload()}
-              style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', padding: '10px 24px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}
+              className="btn btn-outline"
+              style={{ padding: '10px 24px', fontSize: 'var(--text-base)' }}
             >
               Reload app
             </button>
@@ -299,6 +300,82 @@ export default function App() {
 
   // The active media type: 'audio' or 'video'
   const mediaType = currentSermon?.type === 'video' ? 'video' : 'audio';
+
+  // ── Menu bar actions ───────────────────────────────────────────────────────
+  //
+  // The native menu (src-tauri/src/appmenu.rs) is deliberately a thin shell: it
+  // emits an id and this decides what the id means. Routing lives here because
+  // this file already owns navigation and the updater — splitting it across
+  // Rust and React would mean every new menu item touching two languages.
+  useEffect(() => {
+    let unlisten = null;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen('menu-action', async ({ payload }) => {
+          const id = String(payload || '');
+          if (id.startsWith('nav:')) { navigateTo(id.slice(4)); return; }
+          switch (id) {
+            case 'toggle_theme': {
+              const el = document.documentElement;
+              const next = el.dataset.theme === 'dark' ? 'light' : 'dark';
+              el.dataset.theme = next;
+              try { localStorage.setItem('si-theme', next); } catch { /* private mode */ }
+              break;
+            }
+            case 'check_update': {
+              const m = await import('./services/updater.js');
+              const r = await m.checkForUpdatesNow();
+              // checkForUpdatesNow returns a result rather than only firing an
+              // event, precisely so a user-initiated check can say "you are up
+              // to date" instead of appearing to do nothing.
+              if (r && r.message) console.log('[menu] update check:', r.message);
+              break;
+            }
+            case 'retest_reach':
+              navigateTo('connections');
+              window.dispatchEvent(new CustomEvent('si-retest-reach'));
+              break;
+            case 'verify_library':
+              navigateTo('settings');
+              window.dispatchEvent(new CustomEvent('si-verify-library'));
+              break;
+            case 'open_dashboard':
+            case 'help_guide': {
+              const { invoke } = await import('@tauri-apps/api/core');
+              const url = id === 'open_dashboard'
+                ? 'http://localhost:8137/'
+                : 'https://www.sermonindex.net/node-software/';
+              await invoke('open_url', { url }).catch((e) =>
+                console.warn('[menu] could not open', url, e)
+              );
+              break;
+            }
+            case 'open_library': {
+              // The sermon folder is wherever the user pointed it, so ask
+              // rather than assume — an external drive is the common case.
+              const { invoke } = await import('@tauri-apps/api/core');
+              const dir = await invoke('get_storage_dir').catch(() => null);
+              if (dir) await invoke('open_folder', { path: dir }).catch(() => {});
+              break;
+            }
+            case 'open_data':
+            case 'open_logs': {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('open_app_folder', { which: id === 'open_logs' ? 'logs' : 'data' })
+                .catch((e) => console.warn('[menu] could not open folder:', e));
+              break;
+            }
+            default: console.warn('[menu] unhandled action:', id);
+          }
+        });
+      } catch {
+        // Not running under Tauri (a browser dev server) — no menu bar exists,
+        // so there is nothing to listen to and nothing is wrong.
+      }
+    })();
+    return () => { if (unlisten) unlisten(); };
+  }, []);
 
   // ── One owner for "the catalog changed" ────────────────────────────────────
   //
@@ -1725,12 +1802,12 @@ export default function App() {
                 <line x1="12" y1="9" x2="12" y2="13" />
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
-              <div style={{ fontSize: '0.8rem', marginBottom: '8px', textAlign: 'center', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 'var(--text-sm)', marginBottom: '8px', textAlign: 'center', lineHeight: 1.4 }}>
                 This video can't preview inline. Open it in your Mac's player instead.
               </div>
               <button
                 className="btn btn-gold"
-                style={{ fontSize: '0.75rem', padding: '4px 12px' }}
+                style={{ fontSize: 'var(--text-xs)', padding: '4px 12px' }}
                 onClick={() => openInDefaultPlayer(currentSermon)}
               >
                 Open in default player

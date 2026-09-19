@@ -215,7 +215,12 @@ export function recordIpv6Observation(obs) {
   const next = { ...prev };
   const now = Date.now();
 
-  if (obs && obs.inbound_ipv6 === true && !prev.v6_inbound_seen) {
+  if (obs && obs.inbound_ipv6 === true) {
+    // 0.0.334 — refresh the DATE on every sighting, not only the first. The
+    // flag was never the claim; the date is. Without this a node that has been
+    // serving people all week still reports the timestamp of its very first
+    // connection, and the freshness window below would eventually expire on a
+    // node that is busier than it has ever been.
     next.v6_inbound_seen = true;
     next.v6_inbound_ts = now;
   }
@@ -225,8 +230,14 @@ export function recordIpv6Observation(obs) {
   }
 
   // Nothing new — don't touch storage (keeps `ts` meaning "last probed").
+  // The date counts as news, but only once a day: this is polled every 30s and
+  // localStorage writes are not free.
+  const dayChanged =
+    Math.floor((Number(next.v6_inbound_ts) || 0) / 86400000)
+      !== Math.floor((Number(prev.v6_inbound_ts) || 0) / 86400000);
   if (next.v6_inbound_seen === prev.v6_inbound_seen
-      && next.v6_egress_seen === prev.v6_egress_seen) {
+      && next.v6_egress_seen === prev.v6_egress_seen
+      && !dayChanged) {
     return pickSticky(prev);
   }
 
@@ -234,6 +245,47 @@ export function recordIpv6Observation(obs) {
     localStorage.setItem(REACH_KEY, JSON.stringify({ ...rawReach(), ...pickSticky(next) }));
   } catch { /* private mode / quota — the observation just won't survive a restart */ }
   return pickSticky(next);
+}
+
+/**
+ * How recently an inbound IPv6 connection must have arrived for this node to
+ * still count as reachable. Matches config::reach_confirm_days in the CLI.
+ *
+ * Before 0.0.334, one inbound connection made a node "reachable" for ever. That
+ * was the right fix for the previous problem — a badge that flickered every
+ * time the last peer disconnected was worse than one that lied — but it
+ * overshot. A node could show a confident green "full node" on the strength of
+ * a single connection a month earlier with nothing since, which is not a claim
+ * about the present tense and was being read as one.
+ *
+ * A recency window rather than a per-day quota, deliberately: inbound RATE
+ * measures swarm demand, not reachability. A perfectly reachable node in a
+ * quiet fortnight can legitimately receive nothing, and demoting it would
+ * punish exactly the households we most want to keep.
+ */
+export const REACH_CONFIRM_DAYS = 14;
+
+/**
+ * Is the stored IPv6 proof still current?
+ *
+ * The FACT that it happened is kept for ever — it is true, and the UI still
+ * shows the date. What expires is the licence to state it in the present tense.
+ */
+export function v6ConfirmedRecently(obs = readIpv6Observation()) {
+  if (!obs || obs.v6_inbound_seen !== true) return false;
+  const at = Number(obs.v6_inbound_ts) || 0;
+  // Seen but undated (a record written before 0.0.334) counts as current rather
+  // than silently demoting somebody on upgrade; the next observation dates it.
+  if (!at) return true;
+  return Date.now() - at <= REACH_CONFIRM_DAYS * 86400000;
+}
+
+/** Whole days since the last inbound IPv6 connection, or null if never. */
+export function v6AgeDays(obs = readIpv6Observation()) {
+  if (!obs || obs.v6_inbound_seen !== true) return null;
+  const at = Number(obs.v6_inbound_ts) || 0;
+  if (!at) return null;
+  return Math.floor((Date.now() - at) / 86400000);
 }
 
 function pickSticky(o) {

@@ -44,69 +44,55 @@ function catOf(n) {
 // theme-aware token used on the (light OR dark) node lists, stat row and
 // country table — a raw #f8d355 yellow is unreadable on a light surface, so the
 // peer text there maps to the readable gold/yellow token instead.
-// ── Node map palette (re-stepped 0.0.332) ───────────────────────────────────
+// ── Node map palette ────────────────────────────────────────────────────────
 //
-// These dots are the most important picture in the app, and the old trio
-// (#2d6cb5 / #4caf50 / #f8d355) had two problems on the map's dark canvas: the
-// green and the yellow both sat outside the lightness band for a dark surface,
-// and gold↔green separated by only ΔE 15.5 under protanopia — passable, but the
-// thinnest margin of any pair in the app, on the one view where getting it
-// wrong means a volunteer cannot tell whether they are a node or a peer.
+// 0.0.334 — the peer colour is back to the pale bright yellow (#f8d355) that
+// the CLI kiosk dashboard has always used, so the two displays match. 0.0.332
+// had darkened it to #c98500, and that was my mistake: the palette validator
+// failed #f8d355 on its dark-mode LIGHTNESS BAND (L 0.876 against 0.48–0.67),
+// and I took the band at face value.
 //
-// The values below are validated against BOTH surfaces: every check passes in
-// light and in dark — lightness band, chroma floor, CVD separation across all
-// pairs, the normal-vision floor, and contrast.
+// The band is there to stop a mark washing out against a CHART SURFACE — a
+// light or near-white panel. This map is not that. It is a near-black canvas
+// (#0c1824 → #060c14) with glowing dots, where L 0.876 is not washed out, it is
+// the highest-contrast thing on screen. Applying a rule outside the context it
+// was written for cost the brand its colour and split the two displays apart.
 //
-// SHAPE CARRIES THE SAME MEANING, deliberately. Dark-mode gold↔aqua separate by
-// ΔE 4.0 under tritanopia, which is below the floor where colour alone may be
-// trusted; and colour alone is a bad idea here regardless, because this is the
-// screen where someone decides whether their router needs changing. So:
+// What IS checked here, on the map's own dark canvas, and what passes:
+//   CVD separation   worst pair #f8d355↔#3fbf6a  ΔE 11.5 protan · 8.0 tritan
+//   Normal vision    worst pair                  ΔE 22.2
+//   Contrast         all three ≥ 3:1
+// The green moved a shade (#4caf50 → #3fbf6a) purely to lift the tritan margin
+// from 4.9 to 8.0; it is visually the same green. The CLI dashboard gets the
+// identical three values in the same release.
+//
+// SHAPE CARRIES THE SAME MEANING — which is what makes relaxing the band safe,
+// and is the right call regardless. This is the screen where someone decides
+// whether their router needs changing:
 //
 //   seed  filled dot + outer ring   "a backbone machine"
 //   node  filled dot                "reachable — people can come to you"
 //   peer  hollow ring               "still sharing; not a meeting point"
 //
-// A hollow ring for `peer` is the right metaphor rather than an arbitrary
-// distinction: the middle is literally open, and it is the shape you can still
-// read at 3px on a phone when the colours have washed out.
+// A hollow ring is the honest metaphor rather than an arbitrary distinction:
+// the middle is literally open, and it is the shape that still reads at 3px on
+// a phone after the colours have washed out.
+//
+// Note for whoever reads this next: the comment directly above was already
+// right, and had been since before 0.0.332. It says plainly that `hex`/`rgb`
+// are for the always-dark map canvas and `cssVar` is the theme-aware token for
+// the lists. I overrode a correct design with a rule from a different context.
 const NODE_COLORS = {
-  seed: {
-    hex: '#2a78d6', hexDark: '#3987e5',
-    rgb: '42,120,214', rgbDark: '57,135,229',
-    cssVar: 'var(--seed-blue)', shape: 'ringed',
-  },
-  node: {
-    hex: '#1baf7a', hexDark: '#199e70',
-    rgb: '27,175,122', rgbDark: '25,158,112',
-    cssVar: 'var(--green)', shape: 'filled',
-  },
-  peer: {
-    hex: '#a97400', hexDark: '#c98500',
-    rgb: '169,116,0', rgbDark: '201,133,0',
-    cssVar: 'var(--gold-text)', shape: 'hollow',
-  },
+  seed: { hex: '#4f8fe0', rgb: '79,143,224', cssVar: 'var(--seed-blue)', shape: 'ringed' },
+  node: { hex: '#3fbf6a', rgb: '63,191,106', cssVar: 'var(--green)',     shape: 'filled' },
+  peer: { hex: '#f8d355', rgb: '248,211,85', cssVar: 'var(--gold-text)', shape: 'hollow' },
 };
 
-/** True when the app is showing its dark theme right now. */
-function isDarkTheme() {
-  try {
-    const attr = document.documentElement.getAttribute('data-theme');
-    if (attr === 'dark' || attr === 'light') return attr === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-  } catch { return false; }
-}
-
 function nodeColor(n) {
-  const base = NODE_COLORS[catOf(n)] || NODE_COLORS.peer;
-  // Both modes are separately stepped for their own surface — not an automatic
-  // flip of one another, which is how a palette ends up unreadable on one of
-  // the two themes nobody tested.
-  const dark = isDarkTheme();
-  return {
-    ...base,
-    hex: dark ? base.hexDark : base.hex,
-    rgb: dark ? base.rgbDark : base.rgb,
-  };
+  // One set of values: the map canvas is always dark, so there is nothing to
+  // switch. (0.0.332 carried a light/dark pair here; it existed only to satisfy
+  // the lightness band that no longer applies.)
+  return NODE_COLORS[catOf(n)] || NODE_COLORS.peer;
 }
 
 // ISO-3166 alpha-2 → full country name, for the country-name hover tooltip.
@@ -626,12 +612,12 @@ export default function NetworkPage({ nodeStats }) {
               /* Overlay on the always-dark map canvas — fixed dark-friendly colors */
               position: 'absolute', bottom: '16px', left: '16px',
               background: 'rgba(15,25,35,0.92)', border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: '8px', padding: '10px 14px', fontSize: '0.8rem',
+              borderRadius: '8px', padding: '10px 14px', fontSize: 'var(--text-sm)',
               lineHeight: '1.5', backdropFilter: 'blur(8px)',
             }}>
               <div style={{ fontWeight: 600, color: nodeColor(hoveredNode).hex }}>
                 {fmtLoc(hoveredNode)}
-                {hoveredNode.id === getNodeId() && <span style={{ fontSize: '0.68rem', opacity: 0.7, marginLeft: '6px' }}>(You)</span>}
+                {hoveredNode.id === getNodeId() && <span style={{ fontSize: 'var(--text-xs)', opacity: 0.7, marginLeft: '6px' }}>(You)</span>}
               </div>
               <div style={{ color: '#9aa3ad', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <span style={{ display: 'inline-flex', color: nodeColor(hoveredNode).hex }}>{catOf(hoveredNode) === 'seed' ? iconSeed : iconUser}</span>
@@ -645,7 +631,7 @@ export default function NetworkPage({ nodeStats }) {
             /* Legend over the always-dark map canvas — fixed dark-friendly colors */
             position: 'absolute', top: '12px', left: '12px',
             background: 'rgba(15,25,35,0.85)', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '6px', padding: '8px 12px', fontSize: '0.7rem',
+            borderRadius: '6px', padding: '8px 12px', fontSize: 'var(--text-xs)',
             backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', gap: '4px',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -674,7 +660,7 @@ export default function NetworkPage({ nodeStats }) {
             position: 'absolute', left: 0, top: 0, pointerEvents: 'none', zIndex: 6,
             display: hoveredCountry ? 'block' : 'none',
             background: 'rgba(15,25,35,0.92)', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '6px', padding: '4px 9px', fontSize: '0.72rem',
+            borderRadius: '6px', padding: '4px 9px', fontSize: 'var(--text-xs)',
             color: '#e4e4da', backdropFilter: 'blur(8px)', whiteSpace: 'nowrap',
           }}>
             {hoveredCountry}
@@ -706,7 +692,7 @@ export default function NetworkPage({ nodeStats }) {
                     <td>{c.seeds > 0 ? <span style={{ color: NODE_COLORS.seed.cssVar }}>{c.seeds}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td>{c.nodes > 0 ? <span style={{ color: NODE_COLORS.node.cssVar }}>{c.nodes}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td>{c.peers > 0 ? <span style={{ color: NODE_COLORS.peer.cssVar }}>{c.peers}</span> : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
-                    <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{[...c.cities].join(', ') || '-'}</td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>{[...c.cities].join(', ') || '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -733,7 +719,7 @@ export default function NetworkPage({ nodeStats }) {
                 <div className="node-list-info">
                   <div className="node-list-name" style={{ color: nodeColor(node).cssVar }}>
                     {fmtLoc(node)}
-                    {node.id === getNodeId() && <span style={{ fontSize: '0.68rem', color: 'var(--green)', marginLeft: '6px' }}>(You)</span>}
+                    {node.id === getNodeId() && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', marginLeft: '6px' }}>(You)</span>}
                   </div>
                   <div className="node-list-detail">Node · port open · {node.coverage}% coverage</div>
                 </div>
@@ -746,7 +732,7 @@ export default function NetworkPage({ nodeStats }) {
                 <div className="node-list-info">
                   <div className="node-list-name" style={{ color: nodeColor(node).cssVar }}>
                     {fmtLoc(node)}
-                    {node.id === getNodeId() && <span style={{ fontSize: '0.68rem', color: 'var(--green)', marginLeft: '6px' }}>(You)</span>}
+                    {node.id === getNodeId() && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', marginLeft: '6px' }}>(You)</span>}
                   </div>
                   <div className="node-list-detail">Peer · port closed · {node.coverage}% coverage</div>
                 </div>

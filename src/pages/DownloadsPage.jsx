@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import PageHead from '../components/PageHead.jsx';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 import DownloadFailureBanner, {
   DownloadFailureNote,
@@ -179,21 +180,21 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
     <div className="seed-card" style={{ marginBottom: '12px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
       <span style={{ display: 'inline-flex', color: 'var(--text-muted)', flexShrink: 0 }}>{iconFolder}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '1px' }}>Download location</div>
-        <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={storageDir || undefined}>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '1px' }}>Download location</div>
+        <div style={{ fontSize: 'var(--text-xs)', fontFamily: 'monospace', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={storageDir || undefined}>
           {storageDir || 'Not set'}
         </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '2px' }}>
           New downloads go here, auto-sorted into folders. Existing files stay where they are.
         </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.5 }}>
           Downloaded files are stored locally and seeded to the P2P network (and should not be renamed). Use Export on any sermon — or By Speaker → Export — to save readable copies into a Desktop folder named for the speaker.
         </div>
       </div>
       <button
-        className="btn"
+        className="btn btn-outline btn-sm"
         onClick={changeStorageDir}
-        style={{ whiteSpace: 'nowrap', padding: '6px 12px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', flexShrink: 0 }}
+        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
       >
         Change…
       </button>
@@ -203,14 +204,15 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
   if (sermons.length === 0) {
     return (
       <>
-        <div className="page-header">
-          <h2>My Downloads</h2>
-          <p>Sermons you've downloaded are stored locally and shared with the peer network</p>
-        </div>
+        <PageHead
+          kicker="Library"
+          title="My Downloads"
+          sub="Sermons you download are stored here and shared back to the peer network."
+        />
         {failureBanner}
         {locationBar}
         <div className="seed-card" style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '16px', opacity: 0.4 }}>
+          <div style={{ fontSize: 'var(--text-2xl)', marginBottom: '16px', opacity: 0.4 }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
           </div>
           <h3 style={{ marginBottom: '8px' }}>No downloads yet</h3>
@@ -354,10 +356,10 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         <div className="sermon-actions">
           {sermon.type === 'video' && onOpenExternal ? (
             <button
+              className="btn btn-outline btn-sm"
               onClick={() => onOpenExternal(sermon)}
               data-tooltip="Open in your device's video player"
               disabled={sermon.incomplete}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, opacity: sermon.incomplete ? 0.3 : 1 }}
             >
               {iconExternalPlay} Player
             </button>
@@ -374,10 +376,11 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           )}
           {hasFailed && onRedownload ? (
             <button
+              className="btn btn-outline btn-sm"
               onClick={() => !isRetrying && retryDownload(sermon.id, dlState)}
               disabled={isRetrying}
               data-tooltip="Try this download again"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--orange)', borderRadius: '6px', cursor: isRetrying ? 'default' : 'pointer', fontSize: '0.72rem', fontWeight: 600, opacity: isRetrying ? 0.6 : 1 }}
+              style={{ color: 'var(--orange)' }}
             >
               {iconRetry} {isRetrying ? 'Trying…' : 'Try again'}
             </button>
@@ -392,9 +395,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
             </button>
           ) : onExport ? (
             <button
+              className="btn btn-gold btn-sm"
               onClick={() => onExport(sermon.id)}
               data-tooltip="Export to Desktop"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 }}
             >
               {iconExport} Export
             </button>
@@ -479,10 +482,16 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
 
   return (
     <>
-      <div className="page-header">
-        <h2>My Downloads</h2>
-        <p>{sermons.length} sermons ({audioCount} audio, {videoCount} video) · {formatStorage(totalBytes)} stored</p>
-      </div>
+      <PageHead
+        kicker="Library"
+        title="My Downloads"
+        sub="Stored on this machine and shared back to the peer network."
+        figures={[
+          { value: sermons.length.toLocaleString(), label: 'Sermons' },
+          { value: formatStorage(totalBytes), label: 'On disk' },
+          { value: `${audioCount.toLocaleString()} / ${videoCount.toLocaleString()}`, label: 'Audio / video' },
+        ]}
+      />
 
       {failureBanner}
 
@@ -528,29 +537,23 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
         )}
 
         {/* View toggle — By Speaker (default) vs Cards */}
-        <div className="view-toggle" style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-          {[['cards', 'Cards'], ['speaker', 'By Speaker']].map(([key, label]) => {
-            const active = view === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => { setViewPersisted(key); setOpenSpeaker(null); }}
-                style={{
-                  padding: '6px 12px',
-                  fontSize: '0.75rem',
-                  fontFamily: 'var(--font)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  background: active ? 'var(--gold)' : 'var(--bg-tertiary)',
-                  color: active ? '#1a1a1a' : 'var(--text-secondary)',
-                  fontWeight: active ? 600 : 500,
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
+        {/* A segmented control, not two buttons in a box. The selected segment
+            is RAISED inside an inset track, which is how every native platform
+            draws this control and the only treatment that makes the selection
+            read as a position rather than as a highlight. `aria-pressed` does
+            double duty: it is what a screen reader announces AND what the CSS
+            styles on, so the two can never disagree. */}
+        <div className="segmented" role="group" aria-label="View">
+          {[['cards', 'Cards'], ['speaker', 'By Speaker']].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={view === key}
+              onClick={() => { setViewPersisted(key); setOpenSpeaker(null); }}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         <span className="filter-count">
@@ -569,9 +572,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
           {hasMore && (
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <button
-                className="btn btn-outline"
+                className="btn btn-gold"
                 onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-                style={{ padding: '10px 32px', fontSize: '0.85rem' }}
+                style={{ padding: '10px 32px', fontSize: 'var(--text-sm)' }}
               >
                 Load More ({filtered.length - visibleCount} remaining)
               </button>
@@ -594,9 +597,10 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                   onClick={() => setOpenSpeaker(isOpen ? null : speaker.name)}
                   style={{ cursor: 'pointer' }}
                 >
-                  <span style={{ display: 'inline-flex', color: 'var(--text-muted)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease', flexShrink: 0 }}>
-                    {iconChevron}
-                  </span>
+                  {/* The rotation now lives in CSS, keyed off `.active` on the
+                      row, so the chevron, the avatar ring and the row's own
+                      lift all ease on the same curve instead of three. */}
+                  <span className="bulk-speaker-chev">{iconChevron}</span>
                   <SpeakerAvatar speaker={speaker.name} image={speaker.image} className="bulk-speaker-avatar" />
                   <div className="bulk-speaker-info">
                     <div className="bulk-speaker-name">{speaker.name}</div>
@@ -607,27 +611,26 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                         light-theme green that stayed exactly as dark on the dark
                         theme, where it sat close to unreadable. */}
                     {exp?.state === 'done' && (
-                      <span style={{ fontSize: '0.72rem', color: 'var(--green)', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', whiteSpace: 'nowrap' }}>
                         Exported {exp.exported}{exp.failed ? ` · ${exp.failed} skipped` : ''}
                       </span>
                     )}
                     {exp?.state === 'error' && (
-                      <span style={{ fontSize: '0.72rem', color: 'var(--orange)' }}>Export failed</span>
+                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--orange)' }}>Export failed</span>
                     )}
                     {tauriReady && (
                       <button
                         type="button"
+                        className="btn btn-gold btn-sm"
                         onClick={(e) => { e.stopPropagation(); exportSpeaker(speaker); }}
                         disabled={exp?.state === 'working'}
                         data-tooltip="Copy all this speaker's downloads to Desktop, named properly"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: exp?.state === 'working' ? 'default' : 'pointer', fontSize: '0.72rem', opacity: exp?.state === 'working' ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                        style={{ whiteSpace: 'nowrap' }}
                       >
                         {exp?.state === 'working' ? 'Exporting…' : <>{iconExport} Export</>}
                       </button>
                     )}
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {isOpen ? 'Hide' : 'View'}
-                    </span>
+                    <span className="bulk-speaker-toggle">{isOpen ? 'Hide' : 'View'}</span>
                   </div>
                 </div>
 
@@ -635,9 +638,9 @@ export default function DownloadsPage({ sermons, currentSermon, isPlaying, onPla
                   <div style={{ padding: '12px 0 4px' }}>
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btn-outline btn-sm"
                       onClick={() => setOpenSpeaker(null)}
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', padding: '0 0 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      style={{ marginBottom: '10px' }}
                     >
                       ← All speakers
                     </button>

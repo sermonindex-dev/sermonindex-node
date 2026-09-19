@@ -47,7 +47,22 @@ export default function TopBar({ contentMode, announcement, onNavigate, networkH
 
   return (
     <div className="topbar">
-      <div style={{ flex: 1 }} />
+      {/* The verse, where the header's empty left third used to be.
+          It lived at the very bottom of the sidebar, under the node stats, in
+          11px grey — the lowest-priority position in the window, for the one
+          line in the app that is not about software at all.
+
+          Set in the serif, which is the only serif anywhere in the interface.
+          That marks it as a different kind of text without needing a label or
+          a box drawn around it. */}
+      {announcement ? (
+        <div className="topbar-verse" title={announcement}>
+          <span className="verse-mark" aria-hidden="true">&ldquo;</span>
+          <blockquote>{announcement}</blockquote>
+        </div>
+      ) : (
+        <div style={{ flex: 1 }} />
+      )}
       <div className="topbar-right">
         {/* Network Health — clickable, links to connections tab */}
         <div

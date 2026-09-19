@@ -190,23 +190,23 @@ export default function DownloadFailureBanner({ failures, onRetryAll, onDismiss,
         <span style={{ display: 'inline-flex', color: 'var(--red)' }}>{iconAlert}</span>
         {n === 1 ? '1 download did not finish' : `${n} downloads did not finish`}
       </h3>
-      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginBottom: '12px' }}>
         Nothing you already have was lost — your other sermons are untouched. Here is what happened:
       </p>
 
       <div style={{ maxHeight: '260px', overflowY: 'auto', marginBottom: '12px' }}>
         {groups.map(g => (
           <div key={g.key} style={{ marginBottom: '12px' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
               {g.title}
               <span style={{ fontWeight: 500, color: 'var(--text-muted)', marginLeft: '6px' }}>
                 ({g.items.length === 1 ? '1 sermon' : `${g.items.length} sermons`})
               </span>
             </div>
-            <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: '2px' }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: '2px' }}>
               {g.detail}
             </div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '5px', lineHeight: 1.6 }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '5px', lineHeight: 1.6 }}>
               {g.items.slice(0, 5).map(f => (
                 <div key={f.id}>· {f.title}</div>
               ))}
@@ -226,7 +226,7 @@ export default function DownloadFailureBanner({ failures, onRetryAll, onDismiss,
           <button
             className="btn"
             onClick={() => onDismiss(failures)}
-            style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem' }}
+            style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: 'var(--text-sm)' }}
           >
             Hide this
           </button>
@@ -250,7 +250,7 @@ export function DownloadFailureNote({ reason, compact }) {
       >
         {iconAlert} <span style={{ marginLeft: '4px' }}>{reason.title}</span>
       </span>
-      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: '5px' }}>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: '5px' }}>
         {reason.detail}
       </div>
     </div>

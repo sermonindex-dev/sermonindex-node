@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Panel } from './PageHead.jsx';
 import { getCatalog } from '../services/catalog.js';
 import ReachabilityBanner from './ReachabilityBanner';
 import ReachabilityHelp from './ReachabilityHelp.jsx';
@@ -40,7 +39,7 @@ import {
   probeReachability, saveReachability, readReachability,
   recordIpv6Observation, readIpv6Observation,
 } from '../services/network.js';
-import { TORRENT_PORT_MIN, TORRENT_PORT_RANGE, PORT_MIN, PORT_MAX, PORT_PRIVILEGED_MAX } from '../services/constants.js';
+import { TORRENT_PORT_MIN, TORRENT_PORT_RANGE } from '../services/constants.js';
 import { timeAgo } from '../utils/time.js';
 import { deriveNodeState, isReachable, readSeedGranted } from '../utils/nodeStatus.js';
 import CgnatNotice from './CgnatNotice.jsx';
@@ -57,11 +56,6 @@ function formatBytes(bytes) {
 }
 
 const icons = {
-  port: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="8" width="18" height="10" rx="2" /><path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /><line x1="8" y1="13" x2="8" y2="13" /><line x1="12" y1="13" x2="12" y2="13" /><line x1="16" y1="13" x2="16" y2="13" />
-    </svg>
-  ),
   discovery: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
@@ -75,17 +69,6 @@ const icons = {
   seeding: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
-    </svg>
-  ),
-  log: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-    </svg>
-  ),
-  actions: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   ),
 };
@@ -109,13 +92,6 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
   // so a node that has never been tested can still know it is IPv6-reachable.
   // Loaded synchronously on mount from the same si-reach blob (sticky keys).
   const [v6obs, setV6obs] = useState(() => readIpv6Observation());
-  // The native observation, UNMERGED. `v6obs` above is the sticky localStorage
-  // blob and survives restarts; this one is sticky for the current session only.
-  // Keeping them apart is the whole point: it is the only way to tell "an IPv6
-  // peer has dialled in" from "an IPv6 peer dialled in once, some time before
-  // you last quit the app", and the banner was reporting the second as the
-  // first. Starts null — no information, never a negative answer.
-  const [v6live, setV6live] = useState(null);
   // This machine's own global IPv6 address, for the self-help panel. The probe
   // result carries one too, but only after a test has been run — and the whole
   // point of the panel is to be useful BEFORE anyone has pressed anything.
@@ -127,18 +103,6 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
       .catch(() => {});
     return () => { alive = false; };
   }, []);
-  // ── Listening port ────────────────────────────────────────────────────────
-  // `status.tcp_listen_port` is what we ACTUALLY bound; `status.configured_port`
-  // is what the user asked for. Keeping both lets the panel say "your chosen
-  // port was taken, you're on X" instead of silently drifting — which is the
-  // failure that makes a hand-written router rule stop matching with nothing on
-  // screen to explain it.
-  const [portDraft, setPortDraft] = useState('');
-  const [portSaving, setPortSaving] = useState(false);
-  const [portErr, setPortErr] = useState('');
-  const [portCopied, setPortCopied] = useState(null);
-  const portTouched = useRef(false);
-
   // In-flight flag kept OUT of `reach` on purpose: a test in progress (or a
   // failed one) must not blank the result already on screen.
   const [testing, setTesting] = useState(false);
@@ -241,7 +205,6 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         if (st?.running && torrent.getIpv6Observation) {
           const obs = await torrent.getIpv6Observation().catch(() => null);
           if (obs) {
-            setV6live(obs);
             const before = v6SeenRef.current;
             const merged = recordIpv6Observation(obs);
             v6SeenRef.current = merged;
@@ -399,73 +362,6 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
     } catch {}
   }, [status, addLog]);
 
-  // Seed the input from whatever is stored, but ONLY until the user types.
-  // Re-seeding on every status poll would wipe a half-typed port every 2s.
-  useEffect(() => {
-    if (portTouched.current) return;
-    const v = status?.configured_port;
-    setPortDraft(v ? String(v) : '');
-  }, [status?.configured_port]);
-
-  const effectivePort = status?.tcp_listen_port || status?.configured_port || TORRENT_PORT_MIN;
-  // The chosen port did not stick. Worth saying out loud — see the state comment.
-  const portDrifted = !!(status?.running && status?.configured_port
-    && status?.tcp_listen_port && status.configured_port !== status.tcp_listen_port);
-
-  const copyText = useCallback(async (text, which) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setPortCopied(which);
-      setTimeout(() => setPortCopied(null), 1800);
-    } catch { /* clipboard blocked — the text is on screen to read anyway */ }
-  }, []);
-
-  /**
-   * Save the port and restart the session so it takes effect now.
-   *
-   * `null` clears the pin and goes back to the automatic range. Validation is
-   * deliberately permissive about privileged ports: we WARN that binding below
-   * 1024 needs root on macOS and Linux, but we store it, because Windows has no
-   * such rule and someone who knows their own machine should not be overruled
-   * by a guess about their OS. If it does not bind, `portDrifted` says so
-   * plainly rather than the app pretending it worked.
-   */
-  const handleSavePort = useCallback(async (clear = false) => {
-    setPortErr('');
-    let port = null;
-    if (!clear) {
-      const n = Number(portDraft.trim());
-      if (!Number.isInteger(n) || n < PORT_MIN || n > PORT_MAX) {
-        setPortErr(`Enter a port between ${PORT_MIN} and ${PORT_MAX}.`);
-        return;
-      }
-      port = n;
-    }
-    setPortSaving(true);
-    try {
-      const torrent = await getTorrent();
-      if (!torrent) throw new Error('P2P module unavailable');
-      await torrent.setListenPort(port);
-      portTouched.current = false;
-      addLog(port ? `Listening port set to ${port}` : 'Listening port set to automatic', 'info');
-      if (status?.running) {
-        addLog('Restarting session to apply the port…', 'warn');
-        await torrent.stopSession();
-        await new Promise(r => setTimeout(r, 1500));
-        const st = await torrent.startSession();
-        addLog(`Session restarted on port ${st?.tcp_listen_port ?? '?'}`, 'success');
-        // A new port invalidates the old reachability answer — it was measured
-        // against a port nobody is listening on any more.
-        setReach(null);
-      }
-    } catch (e) {
-      setPortErr(String(e?.message || e));
-      addLog(`Could not set the port: ${e?.message || e}`, 'error');
-    } finally {
-      setPortSaving(false);
-    }
-  }, [portDraft, status?.running, addLog]);
-
   // Restart handler
   const handleReconnect = useCallback(async () => {
     setIsReconnecting(true);
@@ -559,11 +455,6 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
         v6InboundSeen={!!v6obs?.v6_inbound_seen}
         v6InboundAt={v6obs?.v6_inbound_ts || null}
         v6EgressSeen={!!v6obs?.v6_egress_seen}
-        // …and the same question asked of THIS session only.
-        v6ThisSession={v6live?.inbound_ipv6 === true}
-        inboundPeersPeak={
-          typeof v6live?.inbound_peers_peak === 'number' ? v6live.inbound_peers_peak : null
-        }
       />
 
       {/* The self-help half. The banner says WHERE you stand; this says what,
@@ -584,21 +475,18 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
       {/* ── LEFT COLUMN: Health + Status + Active Torrents ── */}
       <div className="connections-left">
         {/* Health overview */}
-        <Panel
-          mark={icons.discovery}
-          title="Network Health"
-          sub="What your node is doing right now"
-          aside={
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{
-                width: 9, height: 9, borderRadius: '50%',
+        <div className="seed-card">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <h3 style={{ margin: 0 }}>Network Health</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                width: 10, height: 10, borderRadius: '50%',
                 background: nodeState.color,
                 boxShadow: nodeState.key !== 'offline' ? `0 0 8px ${nodeState.color}` : 'none',
               }} />
-              <span style={{ color: nodeState.color, fontWeight: 700, fontSize: 'var(--text-sm)' }}>{nodeState.label}</span>
-            </span>
-          }
-        >
+              <span style={{ color: nodeState.color, fontWeight: 600, fontSize: 'var(--text-sm)' }}>{nodeState.label}</span>
+            </div>
+          </div>
 
           {/* Status band. Deliberately NOT a progress bar any more — there is no
               score to fill it with, and showing a Peer as a half-empty bar told
@@ -619,32 +507,46 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
             {nodeState.blurb}
           </div>
 
-          {/* Five figures as one instrument panel rather than five divs in a
-              flex row, each styling its own label. Wells, hairline-separated,
-              tabular numerals — so the values line up and read as one reading
-              of one machine. */}
-          <div className="statstrip">
-            <div><b style={{ color: 'var(--gold-text)' }}>{livePeers}</b><small>Peers</small></div>
-            <div><b>{status?.torrent_count ?? torrents.length}</b><small>Torrents</small></div>
-            <div><b style={seededCount > 0 ? { color: 'var(--green)' } : undefined}>{seededCount}</b><small>Seeding</small></div>
-            <div><b>{formatBytes(uploadedTotal)}</b><small>Uploaded</small></div>
-            <div><b>{status?.uptime_secs ? formatUptime(status.uptime_secs) : '—'}</b><small>Uptime</small></div>
+          {/* Quick stats */}
+          <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Peers</div>
+              <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--gold-text)' }}>{livePeers}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Torrents</div>
+              <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>{status?.torrent_count ?? torrents.length}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Seeding</div>
+              <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: seededCount > 0 ? 'var(--green)' : 'var(--text-primary)' }}>{seededCount}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Uploaded</div>
+              <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>{formatBytes(uploadedTotal)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Uptime</div>
+              <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {status?.uptime_secs ? formatUptime(status.uptime_secs) : '—'}
+              </div>
+            </div>
           </div>
 
           {status?.running && (
-            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '12px', marginBottom: 0 }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '12px' }}>
               Listening on port <strong style={{ color: 'var(--text-primary)' }}>{status.tcp_listen_port || '…'}</strong>.
               Seeded sermons are downloadable with any torrent client (qBittorrent, Transmission).
             </div>
           )}
-        </Panel>
+        </div>
 
         {/* Status — three things that matter */}
-        <Panel
-          mark={icons.seeding}
-          title="Node Status"
-          sub="All automatic — nothing here needs configuring"
-        >
+        <div className="seed-card">
+          <h3>Node Status</h3>
+          <p style={{ marginBottom: '8px', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+            Everything is automatic — nothing here needs configuring to use SermonIndex.
+          </p>
 
           {rows.map((row, i) => (
             <div key={row.id} className="settings-row" style={i === rows.length - 1 ? { border: 'none' } : {}}>
@@ -737,20 +639,16 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               </p>
               <p style={{ marginBottom: 0 }}>
                 1. In your router's settings, turn on <strong>UPnP</strong>, then restart this app.<br />
-                2. Or write the rule yourself — pin the port in <strong>Listening port</strong> below, then
-                copy the forward (IPv4) or pinhole (IPv6) text it gives you into your router.
+                2. Or add a port forward: <strong>TCP {status?.tcp_listen_port || TORRENT_PORT_MIN}</strong> (or the
+                range {TORRENT_PORT_RANGE}) to this computer.
               </p>
             </div>
           </details>
-        </Panel>
+        </div>
 
         {/* Active Torrents */}
-        <Panel
-          mark={icons.reach}
-          title="Active Torrents"
-          sub="Every swarm this node is currently in"
-          aside={<span className="pill">{torrents.length}</span>}
-        >
+        <div className="seed-card">
+          <h3>Active Torrents ({torrents.length})</h3>
           {torrents.length > 0 ? (
             <div style={{
               maxHeight: '260px',
@@ -809,165 +707,17 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               No torrents yet — download a sermon and it will be seeded here
             </div>
           )}
-        </Panel>
+        </div>
       </div>
 
       {/* ── RIGHT COLUMN: Logs + Actions ── */}
       <div className="connections-right">
         {/* Live Log — newest at bottom, auto-scrolls */}
-        {/* The log is the one thing in the app you read INTO rather than act
-            on, and it was cream monospace on a cream card — the typeface was
-            the only thing telling you it was machine output. It is now the
-            deepest well in the product, dark in BOTH themes, because a log that
-            flips to cream is a log you have to re-learn to read each time you
-            change theme. */}
-        {/* ── Listening port ─────────────────────────────────────────────────
-            Everything else on this page is automatic and says so. This panel is
-            the opposite, and it exists for the people the automatic path never
-            reaches: no UPnP, no NAT-PMP, and — the case that matters most now —
-            IPv6, where there is no NAT to traverse and the router's inbound
-            firewall is the only thing in the way. The fix there is a pinhole
-            rule, and a pinhole rule needs two things this panel supplies: an
-            address and a port that will still be the same tomorrow. */}
-        <Panel
-          mark={icons.port}
-          title="Listening port"
-          sub="Pin it if you're writing a router rule by hand"
-          aside={
-            <span className="pill" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {status?.running ? effectivePort : '—'}
-            </span>
-          }
-        >
-          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            <p style={{ marginTop: 0, marginBottom: '10px' }}>
-              By default the node takes the first free port in {TORRENT_PORT_RANGE}, which is fine
-              when UPnP or NAT-PMP opens it for you. If you're adding a rule in your router yourself,
-              pin the port here first — a rule names one port, and a port that moves is a rule that
-              quietly stops working.
-            </p>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-              <input
-                type="number"
-                value={portDraft}
-                min={PORT_MIN}
-                max={PORT_MAX}
-                placeholder="Automatic"
-                onChange={(e) => { portTouched.current = true; setPortDraft(e.target.value); setPortErr(''); }}
-                style={{ width: '130px', fontVariantNumeric: 'tabular-nums' }}
-                aria-label="Listening port"
-              />
-              <button
-                className="btn btn-gold btn-sm"
-                onClick={() => handleSavePort(false)}
-                disabled={portSaving || !portDraft.trim()}
-              >
-                {portSaving ? 'Applying…' : 'Pin this port'}
-              </button>
-              {status?.configured_port && (
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => { portTouched.current = false; handleSavePort(true); }}
-                  disabled={portSaving}
-                >
-                  Back to automatic
-                </button>
-              )}
-            </div>
-
-            {portErr && (
-              <div style={{ color: 'var(--red)', fontSize: 'var(--text-xs)', marginBottom: '8px' }}>{portErr}</div>
-            )}
-
-            {/* Below 1024 is a real OS rule, not a preference of ours, so it is
-                stated as such — and as a warning, not a refusal. */}
-            {Number(portDraft) > 0 && Number(portDraft) <= PORT_PRIVILEGED_MAX && (
-              <div className="verdict quiet" style={{ marginBottom: '8px' }}>
-                <div className="verdict-copy">
-                  Ports below {PORT_PRIVILEGED_MAX + 1} are reserved by the operating system on macOS and
-                  Linux. This app doesn't run as an administrator, so it will almost certainly fail to
-                  claim {portDraft} and fall back to the automatic range. On Windows it will work if
-                  nothing else holds the port. Anything from {PORT_PRIVILEGED_MAX + 1} to {PORT_MAX.toLocaleString()} is
-                  safe to use.
-                </div>
-              </div>
-            )}
-
-            {portDrifted && (
-              <div className="verdict" style={{ marginBottom: '8px' }}>
-                <div className="verdict-title">
-                  Port <span className="verdict-flag">{status.configured_port}</span> wasn't available
-                </div>
-                <div className="verdict-copy">
-                  Something else on this machine is already using it, so the node is listening on{' '}
-                  <strong>{status.tcp_listen_port}</strong> instead. Any router rule pointing at{' '}
-                  {status.configured_port} won't match. Either free that port and restart, or pin{' '}
-                  {status.tcp_listen_port} and point the rule there.
-                </div>
-              </div>
-            )}
-
-            {/* The rule text itself. Nobody can write an IPv6 pinhole without
-                the machine's own global address, and it is not something a
-                person can be expected to find on their own. */}
-            <div style={{ marginTop: '12px' }}>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                What to put in your router
-              </div>
-
-              <div className="credential" style={{ marginBottom: '8px' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>IPv4 — port forward</div>
-                  <code style={{ wordBreak: 'break-all' }}>Forward TCP {effectivePort} to this computer</code>
-                </div>
-                <button
-                  className="btn btn-outline btn-sm"
-                  onClick={() => copyText(`Forward TCP ${effectivePort} to this computer`, 'v4')}
-                >
-                  {portCopied === 'v4' ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-
-              {ownV6 ? (
-                <div className="credential">
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                      IPv6 — firewall pinhole (no forwarding needed, just "allow in")
-                    </div>
-                    <code style={{ wordBreak: 'break-all' }}>Allow inbound TCP to [{ownV6}]:{effectivePort}</code>
-                  </div>
-                  <button
-                    className="btn btn-outline btn-sm"
-                    onClick={() => copyText(`Allow inbound TCP to [${ownV6}]:${effectivePort}`, 'v6')}
-                  >
-                    {portCopied === 'v6' ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                  This machine has no global IPv6 address, so there's no pinhole to add — the IPv4
-                  forward above is the one that matters here.
-                </div>
-              )}
-
-              <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '10px', marginBottom: 0 }}>
-                IPv6 has no NAT, so there is nothing to "forward" — your router simply blocks
-                unsolicited connections in, and a pinhole tells it not to for this one address and
-                port. Routers call it different things: <em>IPv6 Firewall</em>, <em>Pinhole</em>,{' '}
-                <em>Allow Inbound IPv6</em>, or <em>IPv6 Simple Security</em>.
-              </p>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel
-          mark={icons.log}
-          title="Live Log"
-          sub="Newest at the bottom"
-          aside={
-            <>
-              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+        <div className="seed-card" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <h3 style={{ margin: 0 }}>Live Log</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                 {connectionLog.length}/{MAX_LOG_ENTRIES}
               </span>
               {connectionLog.length > 0 && (
@@ -1000,34 +750,30 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                   </button>
                 </>
               )}
-            </>
-          }
-        >
-          <div className="terminal">
-            <div className="terminal-head">
-              <span className="terminal-count">
-                {status?.running ? 'session running' : 'session stopped'}
-              </span>
-              <span className="grow" />
-              <span className="terminal-count">
-                port {status?.tcp_listen_port || '—'}
-              </span>
             </div>
-            <div
-              className="terminal-body"
-              ref={logContainerRef}
-              onScroll={handleLogScroll}
-            >
-              {connectionLog.length === 0 ? (
-                <div className="terminal-empty">Waiting for events…</div>
-              ) : connectionLog.map((entry, i) => (
-                <div key={i} className={`terminal-line ${entry.type || ''}`}>
-                  <span className="t-time">{entry.time}</span>
-                  {entry.msg}
-                </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
+          </div>
+          <div
+            className="connections-log-container"
+            ref={logContainerRef}
+            onScroll={handleLogScroll}
+          >
+            {connectionLog.length === 0 ? (
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontStyle: 'italic', padding: '12px' }}>
+                Waiting for events...
+              </div>
+            ) : connectionLog.map((entry, i) => (
+              <div key={i} style={{
+                fontSize: 'var(--text-xs)',
+                fontFamily: 'monospace',
+                lineHeight: 1.7,
+                padding: '1px 0',
+                color: entry.type === 'error' ? 'var(--red)' : entry.type === 'success' ? 'var(--green)' : entry.type === 'warn' ? 'var(--orange)' : 'var(--text-muted)',
+              }}>
+                <span style={{ color: 'var(--border-light)', marginRight: '8px' }}>{entry.time}</span>
+                {entry.msg}
+              </div>
+            ))}
+            <div ref={logEndRef} />
           </div>
           {!autoScroll && connectionLog.length > 0 && (
             <button
@@ -1038,15 +784,16 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
                 }
               }}
               className="btn btn-outline btn-sm"
-              style={{ marginTop: '8px', alignSelf: 'center', color: 'var(--gold-text)', display: 'flex', marginLeft: 'auto', marginRight: 'auto' }}
+              style={{ marginTop: '6px', alignSelf: 'center', color: 'var(--gold-text)' }}
             >
               Jump to latest
             </button>
           )}
-        </Panel>
+        </div>
 
         {/* Actions */}
-        <Panel mark={icons.actions} title="Actions" sub="Things you can do by hand">
+        <div className="seed-card">
+          <h3>Actions</h3>
 
           {/* Test reachability */}
           <div className="settings-row">
@@ -1109,7 +856,7 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
               Copy Magnets
             </button>
           </div>
-        </Panel>
+        </div>
       </div>
     </div>
     </>

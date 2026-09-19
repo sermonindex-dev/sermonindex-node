@@ -18,6 +18,11 @@ const API_BASE = 'https://app.sermonindex.net';
 const HEARTBEAT_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const HEARTBEAT_RETRY_MS = 30 * 1000;     // retry once ~30s after a failed beat
 
+// A peer-check result waiting to ride along on the next beat. Module-level
+// rather than passed around: the check is started by the heartbeat RESPONSE and
+// reported on the NEXT heartbeat request, so it has to outlive both calls.
+let _pendingCheck = null;
+
 let intervalId = null;
 let _retrying = false;         // guards a single pending retry
 let _listenersAttached = false; // wake/online listeners attached once
@@ -317,6 +322,12 @@ async function sendHeartbeat() {
       // figure drops to 0 whenever the rotation window moves off the torrents
       // those peers were on, and a momentary 0 was being shown as "0 peers
       // helped".
+      // Ask to be confirmed when we have a global IPv6 address and nothing has
+      // vouched for us recently. A node already confirmed does not need the
+      // favour; one without IPv6 cannot be helped this way.
+      wants_check: !!(stats.hasGlobalIpv6 && !stats.v6Confirmed),
+      // Report a check performed for someone else on the previous beat.
+      ...(_pendingCheck ? { check_result: _pendingCheck } : {}),
       peers_in: stats.peersIn || 0,
       peers_out: stats.peersOut || 0,
       peers_in_peak: stats.peersInPeak || 0,
@@ -362,7 +373,15 @@ async function sendHeartbeat() {
       reachable: (() => {
         try {
           const r = JSON.parse(localStorage.getItem('si-reach') || 'null');
-          if (r && r.v6_inbound_seen === true) return true;
+          // 0.0.334 — the proof must be RECENT, not merely to have happened
+          // once. A single connection a month ago was holding nodes green for
+          // ever. See v6ConfirmedRecently in network.js. Inlined rather than
+          // imported because this module deliberately has no imports; the key
+          // and the 14-day window are a shared contract with that file.
+          if (r && r.v6_inbound_seen === true) {
+            const at = Number(r.v6_inbound_ts) || 0;
+            if (!at || Date.now() - at <= 14 * 86400000) return true;
+          }
           if (!r || typeof r.open !== 'boolean') return null;
           return r.open === true;
         } catch { return null; }
@@ -375,6 +394,10 @@ async function sendHeartbeat() {
       seeded_torrents: seededTorrents, // info_hashes replace the old per-sermon CID map
       p2p_status: p2pStatus, // Full session diagnostics for admin
     };
+
+    // Cleared as it goes out: a result reported twice would have the server
+    // counting one check as two.
+    if (payload.check_result) _pendingCheck = null;
 
     const res = await fetch(`${API_BASE}/api/node/heartbeat`, {
       method: 'POST',
@@ -415,6 +438,22 @@ async function sendHeartbeat() {
       if (data.config && typeof data.config.catalog_version === 'string') {
         import('./catalog.js')
           .then(m => m.reconcileCatalogVersion(data.config.catalog_version))
+          .catch(() => {});
+      }
+
+      // Peer-assisted reachability. The server may ask this node to dial
+      // another one, because a node with IPv6 can reach places our probe edge
+      // cannot. The result rides out on the next beat, so the whole exchange
+      // costs no extra requests. peercheck refuses anything that is not a
+      // public address whatever the server said.
+      if (data.config && data.config.check_peer) {
+        import('./peercheck.js')
+          .then(async (pc) => {
+            const req = pc.requestFrom(data.config);
+            if (!req) return;
+            const open = await pc.performCheck(req.ip, req.port);
+            if (open !== null) _pendingCheck = { token: req.token, open };
+          })
           .catch(() => {});
       }
 

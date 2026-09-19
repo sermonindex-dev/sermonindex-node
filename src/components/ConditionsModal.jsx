@@ -62,10 +62,10 @@ export default function ConditionsModal({ mode = 'agree', onAgree, onClose }) {
         }}>
           <span style={{ display: 'flex' }}>{seedMark}</span>
           <div>
-            <div style={{ fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>
               SermonIndex — Node Software
             </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               Copying Permissions &amp; Conditions
             </div>
           </div>
@@ -88,7 +88,7 @@ export default function ConditionsModal({ mode = 'agree', onAgree, onClose }) {
         }}>
           {isAgree ? (
             <>
-              <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                 {atBottom
                   ? 'By continuing you agree to these conditions.'
                   : 'Please scroll to the end to continue.'}
@@ -108,7 +108,7 @@ export default function ConditionsModal({ mode = 'agree', onAgree, onClose }) {
             </>
           ) : (
             <>
-              <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                 sermonindex.net · Copying Permissions
               </span>
               <button className="btn btn-gold" onClick={onClose} style={{ whiteSpace: 'nowrap' }}>

@@ -9,7 +9,8 @@
  * ever joined by the app, which makes injecting false content impossible.
  *
  * Output (in --out, default ./canonical-output):
- *   torrents/<sermonId>.torrent   — canonical torrent (with CDN webseeds)
+ *   torrents/<sermonId>.torrent   — canonical torrent (Archive.org webseed,
+ *                                   CDN only where no Archive copy exists)
  *   master-list.json              — the master list
  *   master-list.json.sig          — detached ed25519 signature over its raw bytes
  *                                   (written only if scripts/masterlist.key exists)
@@ -77,6 +78,7 @@ const LIMIT = parseInt(getArg('limit', '0'), 10);
 const ONLY = getArg('only', null);
 const OUT_DIR = getArg('out', join(__dirname, '..', 'canonical-output'));
 const CONCURRENCY = Math.max(1, parseInt(getArg('concurrency', '4'), 10));
+const CATALOG_PATH = getArg('catalog', null);
 
 // ─── Bencode (minimal, spec-exact) ──────────────────────────────────────────
 
@@ -112,7 +114,22 @@ function bencode(value) {
 // ─── Catalog loading (compact format from the app) ─────────────────────────
 
 function loadCatalog() {
-  const raw = JSON.parse(readFileSync(join(__dirname, '..', 'src', 'data', 'catalog.json'), 'utf8'));
+  // src/data/catalog.json is a snapshot the app ships, and nothing in this
+  // repo writes it — it was last written 2026-03-25, so anything added since
+  // is invisible here. --catalog points at a file built from the database
+  // instead (build_torrent_catalog.py writes one in this exact shape), which
+  // is how a run can see every sermon rather than a frozen subset.
+  //
+  // The shape is identical either way, so nothing downstream changes: the
+  // info dictionary is {length, name, piece length, pieces}, and `name` is
+  // entry.filename = `<id>.<ext>`. Same id, same extension, same bytes means
+  // the same info_hash — a sermon already in a swarm keeps its hash whichever
+  // catalog it came from.
+  const catalogPath = CATALOG_PATH
+    ? (CATALOG_PATH.startsWith('/') ? CATALOG_PATH : join(process.cwd(), CATALOG_PATH))
+    : join(__dirname, '..', 'src', 'data', 'catalog.json');
+  console.log(`Catalog source: ${catalogPath}`);
+  const raw = JSON.parse(readFileSync(catalogPath, 'utf8'));
   const { s: speakers, c: compact } = raw;
   return compact.map((e) => {
     const [id, title, spkIdx, , , , sizeKB, archiveCode, cdnCode, type] = e;
@@ -132,7 +149,19 @@ function loadCatalog() {
       speaker: speakers[spkIdx]?.[0] || 'Unknown',
       filename: `${id}.${ext}`, // MUST match the app's download filename
       expectedSize: sizeKB * 1024,
-      sources: [cdnUrl, archiveUrl].filter(Boolean),
+      // Archive.org FIRST, the CDN second. The worker hashes from the first
+      // source that answers and writes exactly that URL as the torrent's
+      // webseed, so this one line decides where every seed node pulls from.
+      // With the CDN first it was serving the whole swarm — 5 TB in a month on
+      // the video zone alone. Archive's bandwidth is donated; ours is billed.
+      //
+      // Safe to regenerate: info_hash is computed from the `info` dictionary,
+      // and url-list sits outside it. Existing swarms keep their hash, nobody
+      // re-downloads, and there is no split swarm. The two copies are
+      // byte-identical because ia_mirror.py streamed them from the CDN.
+      //
+      // Sermons with no Archive copy keep [cdnUrl] and are unaffected.
+      sources: [archiveUrl, cdnUrl].filter(Boolean),
     };
   });
 }
@@ -222,6 +251,45 @@ async function main() {
   }
 
   let catalog = loadCatalog().filter((e) => e.sources.length > 0);
+
+  // ── the one rule that is not negotiable ──────────────────────────────────
+  // A video sermon on this site carries its mp3 on the same row: media_type
+  // stays VIDEO, audio_url is filled, and the page offers "Download MP3"
+  // beside the player. That mp3 is a convenience copy of a video we host, and
+  // it must never be seeded.
+  //
+  // Until now nothing enforced that. This builder reads catalog.json and
+  // nothing else, and its filters were "has a source", "--only", "not already
+  // done". What kept video-derived audio out of the swarm was an accident of
+  // format: the catalog is a frozen snapshot and each record yields exactly
+  // one file, so a video record yields the mp4 and its mp3 cannot be
+  // expressed. Regenerate that catalog and the accident is gone.
+  //
+  // So the rule is data now. build_torrent_denylist.py writes the ids from
+  // the database; re-run it whenever video sermons gain audio.
+  const denyPath = join(__dirname, '..', 'src', 'data', 'video-derived-audio.json');
+  let deny = new Set();
+  if (existsSync(denyPath)) {
+    const d = JSON.parse(readFileSync(denyPath, 'utf8'));
+    deny = new Set(d.ids || []);
+    console.log(`Denylist: ${deny.size} video-derived mp3s that must not be seeded`);
+  } else {
+    // Refusing to build is the safe failure. A missing denylist looks exactly
+    // like an empty one, and an empty one seeds everything.
+    console.error(`\nREFUSING TO BUILD: ${denyPath} is missing.`);
+    console.error('It names every mp3 that is a copy of a video we host.');
+    console.error('Run:  python3 build_torrent_denylist.py --write\n');
+    process.exit(1);
+  }
+
+  const refused = catalog.filter((e) => deny.has(e.id) && e.filename.endsWith('.mp3'));
+  if (refused.length) {
+    console.log(`Refused ${refused.length} video-derived mp3(s) — not seeding a copy of our own video`);
+    for (const e of refused.slice(0, 5)) console.log(`   ${e.filename}  ${e.title}`);
+    if (refused.length > 5) console.log(`   … and ${refused.length - 5} more`);
+    catalog = catalog.filter((e) => !(deny.has(e.id) && e.filename.endsWith('.mp3')));
+  }
+
   if (ONLY) catalog = catalog.filter((e) => e.id === ONLY);
   const todo = catalog.filter((e) => !master.entries[e.id]);
   const queue = LIMIT > 0 ? todo.slice(0, LIMIT) : todo;

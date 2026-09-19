@@ -1,6 +1,6 @@
 [package]
 name = "sermonindex-app"
-version = "0.0.333"
+version = "0.0.336"
 description = "SermonIndex Sermon Library — Decentralized P2P sermon sharing"
 authors = ["SermonIndex"]
 license = ""
@@ -20,6 +20,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
+# Borrowed from the CLI along with src/system.rs, so the node display can report
+# the same host metrics (CPU, memory, disk, throughput) the CLI's dashboard does.
+# Same version the CLI pins, so the two behave identically.
+sysinfo = "0.32"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
@@ -52,3 +56,15 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
 tokio = { version = "1", features = ["full"] }
+
+# ── Unix-only ────────────────────────────────────────────────────────────────
+# `src/system.rs` (borrowed from the CLI) calls `libc::statvfs` to read free
+# space on the mount the library lives on, inside a `#[cfg(unix)]` block — the
+# Windows arm of that function uses a different call and never touches libc.
+# Gated to unix for the same reason: an unconditional dependency would pull it
+# into the Windows build for code that cannot run there.
+#
+# MUST STAY AT THE END OF THIS FILE. A `[target....]` table inserted into the
+# middle of `[dependencies]` silently swallows every dependency listed after it.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

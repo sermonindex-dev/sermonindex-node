@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import PageHead from '../components/PageHead.jsx';
 import { getNodeId } from '../services/heartbeat.js';
 import { getLastRead, setLastRead } from '../services/chatNotify.js';
 import { CHAT_API } from '../services/constants.js';
@@ -174,24 +175,24 @@ export default function CommunityPage() {
     }
   };
 
-  const muted = { color: 'var(--text-muted)', fontSize: '0.7rem' };
+  const muted = { color: 'var(--text-muted)', fontSize: 'var(--text-xs)' };
 
   return (
     /* 1100px matches .connections-layout / .page-header-wide, so Community is
        the same width as Your Stats, Settings, Connections and the rest. */
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-      <div className="page-header">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconChat}</span> Community
-        </h2>
-        <p>Fellowship with others keeping the SermonIndex Node network alive</p>
-      </div>
+      <PageHead
+        kicker="Network"
+        icon={iconChat}
+        title="Community"
+        sub="Fellowship with the others keeping this network alive."
+      />
 
       {/* Identity — set once, shown as  #nodeid · Name  */}
       {(!savedName || editingName) ? (
         <div className="seed-card" style={{ padding: '14px 16px', marginBottom: '14px' }}>
-          <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Choose your display name</div>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+          <div style={{ fontWeight: 600, fontSize: 'var(--text-base)', marginBottom: '4px' }}>Choose your display name</div>
+          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: '10px' }}>
             A first name is perfect. It appears next to your node ID, like{' '}
             <span style={{ fontFamily: 'monospace' }}>#{nodeShort()}</span> · <span style={{ color: 'var(--gold-text)', fontWeight: 700 }}>{nameDraft.trim() || 'Greg'}</span>.
             You set this once.
@@ -213,13 +214,13 @@ export default function CommunityPage() {
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', fontSize: '0.82rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', fontSize: 'var(--text-sm)' }}>
           <span style={{ color: 'var(--text-muted)' }}>Chatting as</span>
           <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{nodeShort()}</span>
           <span style={{ color: 'var(--gold-text)', fontWeight: 700 }}>· {savedName}</span>
           <button
             onClick={() => { setNameDraft(savedName); setEditingName(true); }}
-            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.72rem', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'var(--font)' }}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 'var(--text-xs)', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'var(--font)' }}
           >
             change
           </button>
@@ -229,7 +230,7 @@ export default function CommunityPage() {
       {/* Message list */}
       <div className="seed-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column' }}>
         {offline && messages.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: 1.6 }}>
+          <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: 'var(--text-sm)', lineHeight: 1.6 }}>
             Community chat isn't online yet — check back soon.
           </div>
         ) : (
@@ -244,7 +245,7 @@ export default function CommunityPage() {
               style={{ overflowY: 'auto', height: '62vh', minHeight: 480, display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px' }}
             >
               {messages.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                <div style={{ textAlign: 'center', padding: '36px 12px', color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>
                   {loadedOnce ? 'No messages yet — be the first to say hello.' : 'Loading messages…'}
                 </div>
               ) : messages.map((m, mi) => {
@@ -312,7 +313,7 @@ export default function CommunityPage() {
                         {!sameAsPrev && (
                           <>
                             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-                              <span style={{ fontWeight: 700, fontSize: '0.92rem', color: nameColor, lineHeight: 1.25, wordBreak: 'break-word' }}>
+                              <span style={{ fontWeight: 700, fontSize: 'var(--text-base)', color: nameColor, lineHeight: 1.25, wordBreak: 'break-word' }}>
                                 {m.name}
                                 {isMod && (
                                   <span title="Verified moderator" aria-label="Verified moderator" style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: 5, position: 'relative', top: '-1px' }}>
@@ -323,17 +324,17 @@ export default function CommunityPage() {
                                   </span>
                                 )}
                               </span>
-                              <span title={`node ${m.node}`} style={{ fontFamily: 'monospace', fontSize: '0.64rem', color: idColor, opacity: 0.75 }}>
+                              <span title={`node ${m.node}`} style={{ fontFamily: 'monospace', fontSize: 'var(--text-xs)', color: idColor, opacity: 0.75 }}>
                                 #{m.node}
                               </span>
-                              <span style={{ marginLeft: 'auto', color: idColor, opacity: 0.8, fontSize: '0.68rem', flexShrink: 0 }}>
+                              <span style={{ marginLeft: 'auto', color: idColor, opacity: 0.8, fontSize: 'var(--text-xs)', flexShrink: 0 }}>
                                 {fmtTime(m.ts)}
                               </span>
                             </div>
                             <div style={{ height: '4px' }} />
                           </>
                         )}
-                        <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', color: textColor, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                        <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--text-base)', color: textColor, lineHeight: 1.5, wordBreak: 'break-word' }}>
                           {m.text}
                         </div>
                       </div>
@@ -344,11 +345,12 @@ export default function CommunityPage() {
             </div>
             {!autoScroll && messages.length > 0 && (
               <button
+                className="btn btn-outline btn-sm"
                 onClick={() => {
                   setAutoScroll(true);
                   if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
                 }}
-                style={{ marginTop: '8px', fontSize: '0.7rem', color: 'var(--gold-text)', background: 'var(--gold-dim)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '4px 10px', cursor: 'pointer', alignSelf: 'center', fontFamily: 'var(--font)' }}
+                style={{ marginTop: '8px', alignSelf: 'center', color: 'var(--gold-text)' }}
               >
                 Jump to latest ↓
               </button>
@@ -358,7 +360,7 @@ export default function CommunityPage() {
       </div>
 
       {/* House rules */}
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 2px 8px' }}>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', margin: '4px 2px 8px' }}>
         Be kind. This chat is for encouragement and coordination around preserving these sermons.
       </div>
 
@@ -377,7 +379,7 @@ export default function CommunityPage() {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', alignSelf: 'center', flexShrink: 0,
+        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', alignSelf: 'center', flexShrink: 0,
                        opacity: draft.length > 400 ? 1 : 0 , transition: 'opacity 0.2s' }}>
           {500 - draft.length}
         </span>
@@ -388,11 +390,11 @@ export default function CommunityPage() {
       </div>
 
       {notice && (
-        <div style={{ fontSize: '0.78rem', color: 'var(--orange)', marginTop: '8px' }}>{notice}</div>
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--orange)', marginTop: '8px' }}>{notice}</div>
       )}
 
       {/* Scripture touch */}
-      <div style={{ textAlign: 'center', margin: '28px 0 12px', color: 'var(--text-muted)', fontSize: '0.78rem', fontStyle: 'italic' }}>
+      <div style={{ textAlign: 'center', margin: '28px 0 12px', color: 'var(--text-muted)', fontSize: 'var(--text-sm)', fontStyle: 'italic' }}>
         "Let your speech always be with grace" — Colossians 4:6
       </div>
     </div>

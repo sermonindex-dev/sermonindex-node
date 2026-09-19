@@ -2,10 +2,25 @@
    Palette matches sermonindex.net (light default + dark via html[data-theme='dark']) */
 :root {
   color-scheme: light;
-  --bg-primary: #F8F8F2;
-  --bg-secondary: #fff;
-  --bg-tertiary: #F1F1E8;
-  --bg-hover: #EDEDE0;
+  /* ── Surfaces ─────────────────────────────────────────────────────────────
+     0.0.334 — the cards were pure #fff sitting on an off-white #F8F8F2 page,
+     which is backwards. A card that is BRIGHTER than the page it rests on
+     inverts the paper metaphor: instead of a sheet lying on a desk you get a
+     light box cut into it, and across a grid of forty sermon cards that reads
+     as glare. It is the single most tiring thing about a long session in the
+     app, and no amount of typography fixes it.
+
+     The ladder now runs the way paper does — the page is the deepest tone, the
+     card sits just above it, and inset things (fields, wells, meters) sit just
+     below. Every step is small; the point is the ORDER, not the contrast.
+
+     All four are warm. This is an olive-and-gold product, and a neutral grey
+     surface under gold reads as dirty rather than as restrained. */
+  --bg-primary: #F2F1EA;    /* the page — a warm paper, not a near-white       */
+  --bg-secondary: #FBFAF5;  /* cards — just above the page, never pure white   */
+  --bg-tertiary: #EAE9DF;   /* inset: fields, wells, meter tracks              */
+  --bg-hover: #E3E2D6;
+  --bg-raised: #FFFEFA;     /* the one step above a card: menus, popovers      */
   --border: #DEE2E6;
   --border-light: #c9cdb9;
   --text-primary: #242424;
@@ -30,28 +45,113 @@
   --tooltip-border: #4a4a2e;
   --tooltip-text: #F5F5EC;
   /* Sidebar = brand surface, olive in both modes like the site header */
-  --sidebar-bg: #707035;
-  --sidebar-text: #F8F8F2;
-  --sidebar-text-dim: rgba(248, 248, 242, 0.75);
-  --sidebar-muted: rgba(248, 248, 242, 0.55);
-  --sidebar-hover: rgba(255, 255, 255, 0.1);
-  --sidebar-border: rgba(255, 255, 255, 0.14);
+  /* ── Sidebar ──────────────────────────────────────────────────────────────
+     #707035 was a mid-tone olive, and a mid-tone is the hardest value to build
+     an interface on: too light to sit back as a frame, too dark to be a
+     surface, and with nowhere to go for its own states — a hover has to be
+     lighter and an active has to be darker, and at #707035 both land in the
+     same muddy band. That is why the selected row read as a washed yellow
+     block rather than a selection.
+
+     Deep olive gives the column somewhere to stand: it recedes as a frame, the
+     gold reads as gold against it rather than as another olive, and every
+     state has room. A soft vertical gradient keeps it from looking like a flat
+     swatch. */
+  --sidebar-bg: #343824;
+  --sidebar-bg-top: #3C4129;
+  --sidebar-bg-bottom: #2C301E;
+  --sidebar-text: #F4F3E4;
+  --sidebar-text-dim: rgba(244, 243, 228, 0.66);
+  --sidebar-muted: rgba(244, 243, 228, 0.45);
+  --sidebar-hover: rgba(255, 255, 255, 0.075);
+  --sidebar-border: rgba(0, 0, 0, 0.30);
   --sidebar-active-bg: rgba(212, 175, 55, 0.18);
   --sidebar-active-text: #fff;
   --banner-bg: #3a3a20;
   --banner-text: #e9e9dc;
-  --font: Verdana, Geneva, sans-serif;
+  /* ── Typeface ─────────────────────────────────────────────────────────────
+     Verdana was the single largest thing making this app look dated. It was
+     drawn in 1996 for low-resolution CRTs: very wide, very open, almost no
+     stroke contrast. It does its job on sermonindex.net, where it is the
+     brand — but on a retina desktop app it reads as a web page from twenty
+     years ago no matter how good everything around it is.
+
+     The stack below is what every native app on each platform already uses, so
+     the app stops looking like a website in a window and starts looking like
+     software. -apple-system on macOS, Segoe UI on Windows, the GNOME/KDE
+     defaults on Linux, and Verdana kept as the final fallback so nothing
+     regresses on a machine with none of them.
+
+     To go back to the brand face, change this ONE line — everything else is
+     expressed in tokens and will follow. */
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto,
+          'Helvetica Neue', 'Noto Sans', Arial, Verdana, sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+               'Liberation Mono', monospace;
+
+  /* ── Type scale ───────────────────────────────────────────────────────────
+     A fixed ratio, not arbitrary values. Before this, font sizes were written
+     inline per component — 0.66, 0.68, 0.7, 0.72, 0.75, 0.78, 0.8, 0.82, 0.84,
+     0.85, 0.9, 0.92, 0.95rem all appear in the source — which is why nothing
+     quite lined up: fourteen sizes doing the work of six.
+
+     Line heights are bound to the size rather than left to each caller,
+     because that pairing is what actually makes a block of text look set
+     rather than typed. */
+  /* Raised across the board in 0.0.334. The first pass set a correct RATIO on
+     sizes that were already too small — 11px captions and 13px body are fine
+     in a dense professional tool that someone uses all day at a desk, and
+     wrong for an app whose users are volunteers reading it occasionally, often
+     on a laptop, often not young. The smallest text in the app is now 12px and
+     nothing that carries meaning is below 13px.
+
+     `--text-xs` is for captions and unit labels ONLY. Anything a person has to
+     read and act on — a form, an instruction, an error — takes --text-sm at
+     the very least. That rule is what the request-access panel was breaking. */
+  --text-xs:   0.75rem;    /* 12px — captions, unit labels, timestamps        */
+  --text-sm:   0.875rem;   /* 14px — secondary body, table cells, form labels */
+  --text-base: 1rem;       /* 16px — body                                     */
+  --text-lg:   1.125rem;   /* 18px — card titles                              */
+  --text-xl:   1.5rem;     /* 24px — page titles                              */
+  --text-2xl:  2rem;       /* 32px — hero figures                             */
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.7;
+
+  /* Optical letter-spacing: tighten as text grows, open it up for small caps.
+     Headings set at default tracking always look loose; labels set at default
+     tracking always look cramped. */
+  --tracking-tight: -0.011em;
+  --tracking-label: 0.06em;
+
+  /* ── Spacing ──────────────────────────────────────────────────────────────
+     A 4px rhythm. Same problem as type: the source contains 3, 4, 5, 6, 7, 8,
+     9, 10, 12, 14, 16, 18, 20, 22, 26px paddings, so nothing shares an edge
+     with anything else. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
   --radius: 8px;
   --radius-lg: 12px;
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #1e1e1e;
-  --bg-tertiary: #262620;
-  --bg-hover: #30302a;
+  /* Dark mode keeps the same ORDER — page deepest, card above it, inset
+     below — rather than flipping the values, which is how a dark theme ends up
+     with cards that look like holes. Warmed very slightly toward the olive so
+     the gold sits on it rather than against it. */
+  --bg-primary: #17171A;
+  --bg-secondary: #1F1F21;
+  --bg-tertiary: #141416;
+  --bg-hover: #2A2A2C;
+  --bg-raised: #27272A;
   --border: #3a3a3a;
   --border-light: #444;
   --text-primary: #e4e4da;
@@ -68,8 +168,10 @@ html[data-theme='dark'] {
   --tooltip-bg: #33332a;
   --tooltip-border: #4a4a3c;
   --tooltip-text: #e4e4da;
-  --sidebar-bg: #2c2c14;
-  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-bg: #22251A;
+  --sidebar-bg-top: #282C1E;
+  --sidebar-bg-bottom: #1B1E14;
+  --sidebar-border: rgba(0, 0, 0, 0.45);
   --banner-bg: #262620;
   --banner-text: #e4e4da;
 }
@@ -1993,16 +2095,11 @@ html[data-theme='dark'] .si-abouthero {
   mask-image: linear-gradient(to bottom, transparent 0%, #000 20%, #000 78%, transparent 100%);
 }
 
-/* Wordmark, top-left over the portrait area */
-.si-abouthero-logo {
-  position: absolute;
-  top: 24px;
-  left: 32px;
-  z-index: 2;
-  height: 42px;
-  width: auto;
-  display: block;
-}
+/* The wordmark rule that used to live here is gone with its element: the
+   sidebar already carries the mark at all times, so a second copy pinned over
+   the portrait and a third in the eyebrow row made it wallpaper rather than a
+   mark — and it sat on top of the one image on the page that is saying
+   something. */
 
 .si-abouthero-wrap {
   position: relative;
@@ -2053,11 +2150,6 @@ html[data-theme='dark'] .si-abouthero {
   .si-abouthero-portrait { display: none; }
   .si-abouthero-copy { max-width: none; margin-left: 0; }
   .si-abouthero-wrap { padding: 0 20px; }
-  .si-abouthero-logo {
-    position: static;
-    height: 34px;
-    margin: 0 20px 18px;
-  }
 }
 
 /* ── Sidebar announcement box ── */
@@ -2349,30 +2441,28 @@ html[data-theme='dark'] .si-abouthero {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* One grain definition, reused. 45° to cut across the app's strong
-     horizontal rhythm of rows and cards. */
-  --grain: repeating-linear-gradient(
-    45deg,
-    rgba(0, 0, 0, 0.022) 0px,
-    rgba(0, 0, 0, 0.022) 1px,
-    rgba(255, 255, 255, 0.016) 1px,
-    rgba(255, 255, 255, 0.016) 3px
-  );
+  /* ── Grain: removed in 0.0.334 ────────────────────────────────────────────
+     This was a 45° repeating gradient applied to buttons, cards, chat bubbles,
+     pills and meter fills. On one button it reads as a woven surface. Applied
+     to every surface in the app at once it reads as a screen-door texture laid
+     over the whole interface — visible diagonal striping behind text, and the
+     first thing the eye finds on any screen instead of the last.
+
+     Kept as an empty value rather than deleted so nothing referencing it
+     breaks, and so this note stays where someone would look for it. Surfaces
+     now carry their material through TONE and a single hairline of light,
+     which is what the texture was reaching for and does not need stripes to
+     achieve. */
+  --grain: none;
   /* The top-edge highlight and the bottom seat. */
-  --face-lit: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
+  --face-lit: inset 0 1px 0 rgba(255, 255, 255, 0.65);
   --face-lit-press: inset 0 2px 3px rgba(0, 0, 0, 0.14);
 }
 
 :root[data-theme="dark"] {
   /* Dark surfaces need a dimmer highlight or the top edge looks chalked on. */
-  --grain: repeating-linear-gradient(
-    45deg,
-    rgba(0, 0, 0, 0.10) 0px,
-    rgba(0, 0, 0, 0.10) 1px,
-    rgba(255, 255, 255, 0.022) 1px,
-    rgba(255, 255, 255, 0.022) 3px
-  );
-  --face-lit: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  --grain: none;
+  --face-lit: inset 0 1px 0 rgba(255, 255, 255, 0.055);
   --face-lit-press: inset 0 2px 4px rgba(0, 0, 0, 0.42);
 }
 
@@ -2479,7 +2569,7 @@ html[data-theme='dark'] .si-abouthero {
 
 :root {
   --face-inset: inset 0 1px 2px rgba(0, 0, 0, 0.07), inset 0 0 0 1px rgba(0, 0, 0, 0.012);
-  --face-raise: 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.045);
+  --face-raise: 0 1px 1px rgba(60, 56, 40, 0.04), 0 2px 6px rgba(60, 56, 40, 0.05);
 }
 :root[data-theme="dark"] {
   --face-inset: inset 0 1px 3px rgba(0, 0, 0, 0.40), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
@@ -2557,11 +2647,10 @@ input[type="search"]:focus, input[type="email"]:focus, textarea:focus, select:fo
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .si-chat-scroll {
-  /* Fade the top edge so messages dissolve into the header instead of being
-     guillotined by it. mask-image is progressive: browsers without it simply
-     get a hard edge, which is what we had before. */
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 100%);
-  mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 100%);
+  /* The top fade is gone with the grain. Both were doing the same job — making
+     a surface feel like a material — and both turned out to be noise once the
+     tone ladder was doing it properly. A hard edge under a header is correct;
+     a message half-dissolved into it is just harder to read. */
   scrollbar-width: thin;
 }
 
@@ -2698,3 +2787,4150 @@ input[type="search"]:focus, input[type="email"]:focus, textarea:focus, select:fo
     --mod-text: #efe6c8;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334 — THE PART THAT MAKES IT LOOK LIKE SOFTWARE
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Texture (0.0.331/332) gave surfaces a material. This gives the app a
+   TYPOGRAPHIC SYSTEM, which is the thing people actually read as "professional"
+   without being able to name it. Three ideas:
+
+   1. One scale, applied everywhere. Fourteen ad-hoc font sizes become six.
+   2. Optical corrections. Headings tracked slightly tighter, small-caps labels
+      tracked wider, tabular numerals wherever figures sit in a column.
+   3. Hierarchy by weight and colour rather than by size alone — the reason a
+      dense screen can still feel calm.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body, button, input, textarea, select {
+  font-family: var(--font);
+  /* Let the OS do proper optical sizing and kerning. On macOS this alone
+     visibly tightens every label in the app. */
+  font-feature-settings: 'kern' 1, 'liga' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+
+/* ── Headings ─────────────────────────────────────────────────────────────
+   Tracked slightly tight and set on a short leading. Default tracking on a
+   22px heading reads as loose and unfinished; this is the correction every
+   type system makes and almost no app does. */
+h1, h2, h3, h4 {
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  font-weight: 650;
+  margin: 0;
+}
+h2 { font-size: var(--text-xl); }
+h3 { font-size: var(--text-lg); }
+h4 { font-size: var(--text-base); }
+
+/* ── Small-caps labels ────────────────────────────────────────────────────
+   The opposite correction: at 11px uppercase, default tracking is cramped and
+   nearly illegible. These are the section headers, table headings and stat
+   captions throughout the app. */
+.nav-section-label,
+.lbl,
+.mini,
+.stat-label,
+.page-header p.eyebrow {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── Numerals ─────────────────────────────────────────────────────────────
+   Tabular figures wherever numbers sit in a column or tick upward. Without
+   this a live peer count visibly jitters as 1s and 7s change width, which is
+   the sort of small wrongness that makes an interface feel cheap. */
+.big, .stat-value, .clock, td, th,
+.node-list-meta, .si-chat-composer span {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'kern' 1;
+}
+
+/* ── Page headers ─────────────────────────────────────────────────────────
+   Consistent vertical rhythm at the top of every page. Previously each page
+   set its own margins inline, so no two pages started at the same height. */
+.page-header {
+  margin-bottom: var(--space-6);
+}
+.page-header h2 {
+  margin-bottom: var(--space-2);
+}
+.page-header p {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  max-width: 62ch;   /* a measure, so long intros stay readable */
+  margin: 0;
+}
+
+/* ── Cards ────────────────────────────────────────────────────────────────
+   One padding value, one title treatment, one gap between a title and its
+   body. This is most of what "consistent" means visually. */
+.seed-card {
+  padding: var(--space-5) var(--space-5) var(--space-5);
+  border-radius: var(--radius-lg);
+}
+.seed-card h3 {
+  margin-bottom: var(--space-1);
+}
+.seed-card p {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+  max-width: 68ch;
+}
+
+/* ── Focus ────────────────────────────────────────────────────────────────
+   :focus-visible only, so a mouse click never paints a ring but a Tab key
+   always does. The app had no visible keyboard focus at all, which makes it
+   unusable without a mouse and is the most commonly skipped accessibility
+   basic in a desktop app. */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── Motion ───────────────────────────────────────────────────────────────
+   Honour the system setting. Someone who has asked their OS to stop animating
+   things has usually asked for a reason. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Selection ────────────────────────────────────────────────────────────── */
+::selection {
+  background: var(--gold-dim);
+  color: var(--text-primary);
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────────────────
+   Thin and in-palette rather than the browser default, which on Windows and
+   Linux is a wide grey slab that dominates any panel it appears in. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-light) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--text-muted); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334 — SIDEBAR
+   Rows are <button> now (see Sidebar.jsx), so these rules have to undo the
+   browser's button defaults before doing anything else.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.nav-item {
+  /* These rows became <button> in 0.0.334 so they can be reached with a Tab
+     key. A <button> brings UA defaults with it, and the ones that matter are
+     background-color: ButtonFace and color: ButtonText — which is why every row
+     rendered as a light grey slab with black text the moment they stopped being
+     <div>s. The old rule only ever set a background on :hover and .active, so
+     there was nothing to override the default at rest.
+
+     Resetting a button means resetting ALL of it. Anything left out here comes
+     back as a platform default. */
+  width: 100%;
+  background: transparent;
+  background-color: transparent;
+  color: inherit;
+  border: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  gap: var(--space-2);
+  padding: 7px var(--space-3);
+  /* Was `all 0.15s`, which animates the background-image and the box-shadow
+     added by the texture pass and makes every hover feel slightly sticky. */
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.nav-item .nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item.active {
+  font-weight: 600;
+}
+
+/* Online counts. Were `[12]` in square brackets in the markup — a pill reads
+   as data rather than as punctuation someone forgot to remove. */
+.nav-count {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--sidebar-text-dim);
+}
+.nav-item.active .nav-count,
+.nav-item:hover .nav-count { color: var(--sidebar-text); }
+
+/* Unread chat. Gold, because it is the one count that is asking for attention
+   rather than merely reporting. */
+.nav-badge {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--gold);
+  color: var(--text-on-gold);
+}
+
+/* Shortcut hint — hidden at rest, shown on hover or keyboard focus. A sidebar
+   crowded with grey key caps is noisy; one that reveals them as you explore
+   teaches the shortcuts without ever being in the way. */
+.nav-kbd {
+  flex-shrink: 0;
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--sidebar-text-dim);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.nav-item:hover .nav-kbd,
+.nav-item:focus-visible .nav-kbd { opacity: 0.55; }
+/* This used to be `display: none` on hover, to stop a count and a key cap
+   fighting for the same corner. It was a layout bug: the <kbd> sits in the flex
+   row at rest (invisible, but occupying its width), so removing it on hover
+   made the count JUMP sideways — which is exactly the sort of small wrongness
+   that makes an interface feel unfinished, and on Node Map and Seed Node it
+   happened every single time the pointer crossed the row.
+   
+   Opacity never changes layout. Both can show; the row is wide enough, and
+   "3  ⌘4" reads perfectly well. Nothing moves, ever. */
+.nav-item .nav-kbd { min-width: 22px; text-align: right; }
+
+/* Section labels sit closer to their group than to the one above, so the
+   grouping is carried by space rather than only by the label itself. */
+.nav-section { margin-bottom: var(--space-5); }
+.nav-section-label {
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-2);
+  color: var(--sidebar-text-dim);
+  opacity: 0.75;
+}
+
+/* Focus ring inside the olive sidebar: the gold outline is nearly invisible
+   against it, so use the sidebar's own light text instead. */
+.sidebar .nav-item:focus-visible {
+  outline: 2px solid var(--sidebar-text);
+  outline-offset: -2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334 — SERMON CARD, REBUILT
+   ═══════════════════════════════════════════════════════════════════════════
+
+   What was wrong was structural, not decorative:
+
+   1. THE TITLE WAS TRUNCATED TO ONE LINE. `white-space: nowrap` with an
+      ellipsis on the single most important thing on the card, in a library of
+      33,000 sermons. Every card read "Are You A Member o…". A person scanning
+      for something to listen to was being shown everything except the part
+      they were scanning for.
+
+   2. THE META ROW WRAPPED. A flex row with a topic chip that could be
+      "Spiritual Warfare" pushed duration, size and scripture onto a second
+      line — but only on SOME cards, so the grid came out ragged and no two
+      rows lined up.
+
+   3. THE DOWNLOAD BUTTON HAD NO HOME. It floated at the bottom left with
+      nothing beside it and no relationship to anything.
+
+   4. HOVER MADE THE CARD DARKER (`background: var(--bg-tertiary)`), which
+      reads as pressed-in. A card you are about to click should come toward
+      you, not sink.
+
+   The fix is a three-part card — header, body, footer — with the footer pinned
+   to the bottom so every card in a row is the same height whatever its
+   content. That single change is most of what makes a grid look composed.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sermon-grid {
+  /* 320 rather than 300: the title needs the room now that it is allowed two
+     lines, and a card narrower than this cannot hold a long speaker name and a
+     type badge on the same row without collision. */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+  align-items: stretch;   /* every card fills its row's height */
+}
+
+.sermon-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  background: var(--bg-secondary);
+  box-shadow: var(--face-raise);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.sermon-card:hover {
+  /* Lift. Was `background: var(--bg-tertiary)`, which pushed it in. */
+  background: var(--bg-secondary);
+  border-color: var(--gold);
+  box-shadow: 0 2px 4px rgba(60, 56, 40, 0.06), 0 8px 20px rgba(60, 56, 40, 0.10);
+  transform: translateY(-1px);
+}
+
+.sermon-card.playing {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold), var(--face-raise);
+}
+
+.sermon-card-header {
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.sermon-card-info { min-width: 0; flex: 1; }
+
+/* THE HEADLINE. Two lines, clamped — long enough for almost every real sermon
+   title, and a hard stop so the card cannot grow without limit. */
+.sermon-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+  margin-bottom: 2px;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sermon-card.expanded .sermon-title {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  display: block;
+}
+
+.sermon-speaker {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Type badge — quieter. It was 10px, competing with the title for attention
+   while carrying far less information. */
+.type-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  letter-spacing: 0.01em;
+}
+
+/* ── Footer: metadata and the action, on one line, pinned to the bottom ──── */
+.sermon-meta {
+  margin-top: auto;              /* this is what equalises the card heights */
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  flex-wrap: nowrap;             /* never wrap — a ragged grid is the result */
+  min-width: 0;
+}
+
+.sermon-meta > span {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* The topic chip. It gets real room now that scripture has moved up into the
+   byline — the first attempt capped it at 11ch and turned "Self-Control" into
+   "Self-Co…", which is worse than the truncation it was meant to fix. */
+.sermon-meta .tag {
+  font-size: var(--text-xs);
+  padding: 3px 9px;
+  border-radius: 5px;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 20ch;
+}
+
+/* ── Byline: who said it, and where from ────────────────────────────────────
+   Speaker and scripture sit together under the title because both answer
+   "what is this", while duration and size answer "what will it cost me". That
+   split is the whole reason the footer has room to breathe. */
+.sermon-byline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.sermon-byline .sermon-speaker { flex-shrink: 0; }
+.sermon-byline .sermon-scripture {
+  font-size: var(--text-xs);
+  font-style: italic;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* A hairline separator, drawn rather than typed, so it never becomes a stray
+   character when the scripture is missing. */
+.sermon-byline .sermon-scripture::before {
+  content: '';
+  display: inline-block;
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+  margin-right: 7px;
+  vertical-align: middle;
+}
+
+/* ── The download control ────────────────────────────────────────────────── */
+.sermon-card .btn-icon {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334 — DEPTH: ONE LIGHT SOURCE, ONE ELEVATION LADDER
+   ═══════════════════════════════════════════════════════════════════════════
+
+   What separates "3D and professional" from "dated skeuomorphism" is not the
+   amount of shadow. It is consistency. Three rules, applied everywhere:
+
+   1. ONE LIGHT SOURCE, from above. Every raised thing gets a 1px highlight on
+      its TOP edge and a shadow BELOW it. Nothing is lit from two directions,
+      and nothing casts a shadow upward. Get this wrong on a single component
+      and the whole screen stops reading as a physical surface.
+
+   2. SHADOWS ARE TWO LAYERS, NEVER ONE. A tight contact shadow (1-2px, barely
+      blurred) that says the object is touching the surface, plus a wide soft
+      ambient one that says how far above it sits. A single blurred shadow is
+      the tell of every amateur interface — real objects cast both.
+
+   3. SHADOWS ARE WARM, NOT BLACK. This is an olive-and-gold product on warm
+      paper. rgba(0,0,0,…) over #F2F1EA turns grey and reads as dirt. These are
+      tinted toward the brand's own brown-olive, which is what the paper would
+      actually do.
+
+   ── THE STATE MODEL ─────────────────────────────────────────────────────────
+
+   The specific thing asked for: hover and pressed must not look alike. They
+   are opposite movements on the Z axis, and the shadow has to agree with the
+   movement or the illusion collapses.
+
+     REST      sits on the surface        contact + small ambient
+     HOVER     RISES toward the cursor    lifts 1px, shadow grows AND drops
+     ACTIVE    PRESSES INTO the surface   sinks 1px, shadow becomes INSET
+     FOCUS     unchanged height, ringed   never competes with hover
+     DISABLED  flat, no light at all      it cannot be pressed, so it is not lit
+
+   A pressed button whose shadow still points downward looks like it jumped.
+   Inverting to an inset shadow is the whole trick, and it costs one line.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* The brand's shadow colour. Every elevation below is this at varying alpha,
+     so nothing in the app casts a differently-coloured shadow. */
+  --shadow-hue: 58, 52, 34;      /* warm brown-olive */
+
+  /* The ladder. Each step = contact shadow + ambient shadow. */
+  --elev-1:
+    0 1px 1px rgba(var(--shadow-hue), 0.05),
+    0 1px 3px rgba(var(--shadow-hue), 0.06);
+  --elev-2:
+    0 1px 2px rgba(var(--shadow-hue), 0.06),
+    0 3px 8px rgba(var(--shadow-hue), 0.09);
+  --elev-3:
+    0 2px 4px rgba(var(--shadow-hue), 0.07),
+    0 8px 20px rgba(var(--shadow-hue), 0.13);
+  --elev-4:
+    0 4px 8px rgba(var(--shadow-hue), 0.09),
+    0 16px 40px rgba(var(--shadow-hue), 0.17);
+
+  /* Pressed. Inset, and tighter than the shadow it replaces, so the object
+     reads as sitting BELOW the surface rather than hovering under it. */
+  --elev-press:
+    inset 0 2px 4px rgba(var(--shadow-hue), 0.16),
+    inset 0 1px 1px rgba(var(--shadow-hue), 0.12);
+
+  /* The top-edge highlight. This single hairline does more for the sense of a
+     lit surface than any shadow — it is the light catching the edge nearest
+     the source. */
+  --edge-lit: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  --edge-lit-strong: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+
+  /* Face sheen: a gradient, not a pattern. Texture that repeats reads as a
+     screen door (see the grain note above); texture that varies smoothly top to
+     bottom reads as a curved, lit surface, which is what we actually want. */
+  --sheen: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.10) 45%,
+    rgba(var(--shadow-hue), 0.035) 100%);
+  --sheen-strong: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0.06) 42%,
+    rgba(var(--shadow-hue), 0.13) 100%);
+
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+:root[data-theme="dark"] {
+  /* Dark surfaces need deeper, blacker shadows — a warm shadow on a dark
+     surface is invisible — and a far subtler highlight, because a bright top
+     edge on a dark button looks like chalk rather than light. */
+  --shadow-hue: 0, 0, 0;
+  --elev-1: 0 1px 1px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.30);
+  --elev-2: 0 1px 2px rgba(0,0,0,0.40), 0 3px 8px rgba(0,0,0,0.36);
+  --elev-3: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.44);
+  --elev-4: 0 4px 8px rgba(0,0,0,0.50), 0 16px 40px rgba(0,0,0,0.55);
+  --elev-press: inset 0 2px 5px rgba(0,0,0,0.55), inset 0 1px 1px rgba(0,0,0,0.45);
+  --edge-lit: inset 0 1px 0 rgba(255,255,255,0.07);
+  --edge-lit-strong: inset 0 1px 0 rgba(255,255,255,0.11);
+  --sheen: linear-gradient(180deg,
+    rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.012) 45%, rgba(0,0,0,0.13) 100%);
+  --sheen-strong: linear-gradient(180deg,
+    rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.02) 42%, rgba(0,0,0,0.22) 100%);
+}
+
+/* ── BUTTONS ──────────────────────────────────────────────────────────────── */
+
+.btn {
+  position: relative;
+  /* inline-flex, not the inline-block a <button> defaults to: several buttons
+     carry an icon beside their label, and inline-block leaves that icon sitting
+     on the text baseline — a one-pixel misalignment that is invisible in
+     isolation and unmistakable once you have seen it. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background-image: var(--sheen);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  /* Only the properties that actually change. Transitioning `all` also
+     animates the border colour, the background image and the text colour,
+     which is what made the old hover feel laggy and smeared. */
+  transition:
+    box-shadow 0.16s var(--ease-out),
+    transform 0.10s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    background-color 0.16s var(--ease-out);
+  will-change: transform;
+}
+
+.btn:hover:not(:disabled) {
+  /* RISES. The shadow grows and drops further below, which is what a real
+     object's shadow does as it lifts away from a surface. */
+  transform: translateY(-1px);
+  box-shadow: var(--edge-lit-strong), var(--elev-3);
+  border-color: var(--gold);
+}
+
+.btn:active:not(:disabled) {
+  /* PRESSES IN. Down 1px past rest, and the shadow inverts — the single change
+     that makes this unmistakably different from hover rather than a smaller
+     version of it. No transition on the way down: a press should feel
+     immediate, and easing it makes the button feel spongy. */
+  transform: translateY(1px);
+  box-shadow: var(--elev-press);
+  background-image: none;
+  transition-duration: 0s;
+}
+
+.btn:disabled,
+.btn[disabled] {
+  /* Unlit and flat. A disabled control that still catches the light is
+     claiming to be pressable. */
+  background-image: none;
+  box-shadow: none;
+  transform: none;
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn:focus-visible {
+  /* Focus does NOT move the button. Height means "can I press this"; the ring
+     means "this is where the keyboard is". Conflating them means a focused
+     button looks permanently hovered. */
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* Primary — gold, with a darker lip at the bottom so it reads as a solid
+   object with a thickness rather than a coloured rectangle. */
+.btn-gold {
+  border-color: var(--gold-hover);
+  background-image: var(--sheen-strong);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(var(--shadow-hue), 0.28),
+    var(--elev-2);
+}
+.btn-gold:hover:not(:disabled) {
+  background-color: var(--gold-hover);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(var(--shadow-hue), 0.30),
+    var(--elev-3);
+}
+.btn-gold:active:not(:disabled) { box-shadow: var(--elev-press); }
+
+.btn-outline { background-color: var(--bg-secondary); }
+.btn-outline:hover:not(:disabled) {
+  background-color: var(--bg-raised);
+  color: var(--gold-text);
+}
+
+/* Icon buttons get the same grammar at a smaller scale. */
+.btn-icon {
+  background-image: var(--sheen);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition: box-shadow 0.16s var(--ease-out), transform 0.10s var(--ease-out),
+              border-color 0.16s var(--ease-out);
+}
+.btn-icon:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--edge-lit-strong), var(--elev-2);
+  border-color: var(--gold);
+}
+.btn-icon:active {
+  transform: translateY(1px);
+  box-shadow: var(--elev-press);
+  background-image: none;
+  transition-duration: 0s;
+}
+
+/* ── CARDS ────────────────────────────────────────────────────────────────── */
+
+.seed-card,
+.sermon-card {
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition: box-shadow 0.18s var(--ease-out), transform 0.18s var(--ease-out),
+              border-color 0.18s var(--ease-out);
+}
+
+.sermon-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--edge-lit-strong), var(--elev-3);
+  border-color: var(--gold);
+}
+
+/* A card IS pressable — the whole thing is a click target — so it gets the
+   press too, or the click has no physical answer. */
+.sermon-card:active {
+  transform: translateY(0);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition-duration: 0.05s;
+}
+
+/* A card that is playing is raised and stays raised: it is the one object on
+   the page that is currently doing something. */
+.sermon-card.playing {
+  box-shadow: 0 0 0 1px var(--gold), var(--edge-lit-strong), var(--elev-2);
+}
+
+/* ── INSET THINGS ─────────────────────────────────────────────────────────── */
+/* Anything you fill or that holds a value goes the other way: pressed into the
+   page, lit from the bottom edge rather than the top. That inversion is the
+   entire difference between a control you push and a well you fill, and
+   getting it backwards is what makes an interface feel plasticky. */
+
+input[type="text"], input[type="password"], input[type="number"],
+input[type="search"], input[type="email"], textarea, select {
+  box-shadow:
+    inset 0 1px 2px rgba(var(--shadow-hue), 0.09),
+    inset 0 0 0 1px rgba(var(--shadow-hue), 0.02),
+    0 1px 0 rgba(255, 255, 255, 0.6);   /* the light catching the LOWER lip */
+  transition: box-shadow 0.16s var(--ease-out), border-color 0.16s var(--ease-out);
+}
+input:focus, textarea:focus, select:focus {
+  box-shadow:
+    inset 0 1px 2px rgba(var(--shadow-hue), 0.09),
+    0 0 0 3px var(--gold-dim);
+}
+
+.bar {
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.14);
+}
+.bar > i {
+  background-image: var(--sheen-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+/* ── SIDEBAR ──────────────────────────────────────────────────────────────── */
+/* The olive sidebar is its own surface with its own light. White highlights
+   read as chalk on it, so the raised feeling comes from the fill alone. */
+
+.nav-item {
+  transition: background-color 0.13s var(--ease-out), color 0.13s var(--ease-out),
+              box-shadow 0.13s var(--ease-out);
+}
+.nav-item:hover:not(.active) {
+  background-color: var(--sidebar-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.nav-item:active:not(.active) {
+  background-color: rgba(0, 0, 0, 0.16);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.22);
+}
+.nav-item.active {
+  /* The gold spine, plus a lit top edge so the active row sits proud of the
+     column rather than being a differently-coloured rectangle in it. */
+  box-shadow:
+    inset 3px 0 0 var(--gold),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* ── CHIPS, PILLS, BADGES ─────────────────────────────────────────────────── */
+
+.pill, .tag, .type-badge, .nav-count, .nav-badge, .si-chat-avatar {
+  box-shadow: var(--edge-lit);
+}
+.nav-badge {
+  /* The one thing in the app actively asking for attention gets real height. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), var(--elev-1);
+}
+
+/* ── FLOATING SURFACES ────────────────────────────────────────────────────── */
+/* Menus, popovers and modals sit clearly above everything. The jump from
+   --elev-1 to --elev-4 is deliberate: an overlay that is only slightly raised
+   reads as part of the page it is covering. */
+
+.si-chat-bubble { box-shadow: var(--edge-lit), var(--elev-1); }
+.si-chat-composer:focus-within { box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.09), 0 0 0 3px var(--gold-dim); }
+
+/* ── OPT-OUTS ─────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .btn, .btn-icon, .sermon-card, .seed-card { transition: none; }
+  .btn:hover, .btn-icon:hover, .sermon-card:hover,
+  .btn:active, .btn-icon:active, .sermon-card:active { transform: none; }
+}
+
+@media (forced-colors: active) {
+  .btn, .btn-gold, .btn-outline, .btn-icon, .seed-card, .sermon-card,
+  .pill, .tag, .type-badge, .nav-count, .nav-badge, .si-chat-bubble,
+  input, textarea, select, .bar, .bar > i {
+    box-shadow: none;
+    background-image: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASELINE FOR UNCLASSED BUTTONS
+   ═══════════════════════════════════════════════════════════════════════════
+
+   69 of the app's 99 buttons carry no className at all — they are styled with
+   inline objects, so none of the work above reaches them. Left alone, the app
+   would have two populations: thirty controls that respond to a press and
+   sixty-nine that do not, which is worse than none of them responding.
+
+   What this rule gives them, and what it deliberately withholds:
+
+   GIVES   cursor, a focus ring, and the press movement. Every button in the
+           app now answers a click physically, which is the single cue that
+           makes an interface feel responsive rather than laggy.
+
+   WITHHOLDS the raised face and the shadow. Many of these are link-like —
+           `background: 'none', border: 'none'` — and a drop shadow around a
+           transparent button draws a floating rectangle in mid-air. A shadow
+           has to be opted into by a control that actually has a face.
+
+   Inline styles beat a stylesheet for any property they set, so a button that
+   declares its own background or padding keeps it; it only gains the
+   properties it never mentioned. That is why this is safe to apply blind.
+
+   THE REAL FIX is to give those 69 call sites `className="btn btn-outline"`
+   (or btn-gold) and delete their inline colours. Worth doing file by file —
+   DownloadsPage (11), SettingsPage (10) and ConnectionsPanel (7) first — but
+   it is 69 hand edits and belongs in its own pass, not bundled into a release
+   that is already this large.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+button:not([class]) {
+  cursor: pointer;
+  font-family: var(--font);
+  transition: transform 0.10s var(--ease-out), opacity 0.12s var(--ease-out);
+}
+button:not([class]):active:not(:disabled) {
+  transform: translateY(1px);
+  transition-duration: 0s;
+}
+button:not([class]):disabled {
+  cursor: default;
+  opacity: 0.5;
+  transform: none;
+}
+button:not([class]):focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Native selects get the same face as a button, since that is what they are. */
+select {
+  cursor: pointer;
+  background-image: var(--sheen);
+  background-color: var(--bg-secondary);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition: box-shadow 0.16s var(--ease-out), border-color 0.16s var(--ease-out),
+              transform 0.10s var(--ease-out);
+}
+select:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--edge-lit-strong), var(--elev-2);
+  border-color: var(--gold);
+}
+select:active {
+  transform: translateY(1px);
+  box-shadow: var(--elev-press);
+  background-image: none;
+  transition-duration: 0s;
+}
+select:focus {
+  box-shadow: var(--edge-lit), var(--elev-1), 0 0 0 3px var(--gold-dim);
+  border-color: var(--gold);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not([class]):active, select:hover, select:active { transform: none; }
+}
+@media (forced-colors: active) {
+  select { box-shadow: none; background-image: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334b — SIDEBAR, MEDIA PLAYER, AND THE GOLD LANGUAGE EVERYWHERE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sidebar {
+  /* A gradient, not a flat fill. Even 8% of variation top to bottom is the
+     difference between a painted column and a lit one, and it costs nothing. */
+  background: linear-gradient(180deg, var(--sidebar-bg-top) 0%, var(--sidebar-bg-bottom) 100%);
+  border-right: 1px solid var(--sidebar-border);
+  /* The column casts onto the page. This is what makes the content area read
+     as sitting BEHIND the navigation rather than beside it. */
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+              4px 0 16px rgba(var(--shadow-hue), 0.10);
+  z-index: 2;
+}
+
+.sidebar-header {
+  border-bottom: 1px solid var(--sidebar-border);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.045);
+  padding: var(--space-5) var(--space-4) var(--space-4);
+}
+.sidebar-logo .logo-pill {
+  /* The one truly bright thing in the column, so it reads as the mark. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+}
+.subtitle, .app-version {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--sidebar-muted);
+}
+
+/* ── Nav rows ─────────────────────────────────────────────────────────────
+   The selected row now wears the gold face from the buttons. It is the one
+   object in the column that says "you are here", and giving it the same
+   material as the primary action ties the two together — press a gold button,
+   land on a gold row. Everything else in the column stays quiet so that one
+   element can carry the accent. */
+
+.nav-item {
+  border-radius: 9px;
+  margin-bottom: 1px;
+}
+
+.nav-item:hover:not(.active) {
+  background-color: var(--sidebar-hover);
+  color: var(--sidebar-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.nav-item:active:not(.active) {
+  background-color: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.30);
+}
+
+.nav-item.active {
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  color: var(--text-on-gold);
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(60, 52, 20, 0.30),
+    0 2px 5px rgba(0, 0, 0, 0.30);
+}
+.nav-item.active:hover { background-color: var(--gold-hover); }
+.nav-item.active .icon,
+.nav-item.active .nav-label { color: var(--text-on-gold); }
+/* The original stylesheet tints the active icon's SVG separately and higher up
+   the file; on a gold face that rule leaves it nearly invisible. Restated here
+   so the icon inverts with the rest of the row. */
+.nav-item.active .icon svg {
+  color: var(--text-on-gold);
+  stroke: var(--text-on-gold);
+  opacity: 1;
+}
+.nav-item.active .nav-count {
+  background: rgba(60, 52, 20, 0.22);
+  color: var(--text-on-gold);
+}
+.nav-item.active .nav-kbd { color: rgba(60, 52, 20, 0.7); }
+
+.nav-section-label { color: var(--sidebar-muted); opacity: 1; }
+
+/* ═══ MEDIA PLAYER ═════════════════════════════════════════════════════════
+   It was a flat strip: a plain bar, a 1px progress line and controls at the
+   same visual weight as everything else. A player is the one component that
+   is running while you look at something else, so it has to read instantly
+   and from the corner of the eye. Three changes:
+
+     · it sits ON TOP of the app, with a real shadow cast upward — the only
+       place in this design where light comes from below, because the bar is
+       above the page rather than on it
+     · play is the hero: a large gold disc with the button material, because
+       it is the only control most people ever touch
+     · the scrubber is a real track — inset, with a gold fill and a knob that
+       appears on hover, so it invites a drag instead of hiding that it can
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.player-bar {
+  background: linear-gradient(180deg, var(--bg-raised) 0%, var(--bg-secondary) 100%);
+  border-top: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 -2px 6px rgba(var(--shadow-hue), 0.07),
+    0 -10px 30px rgba(var(--shadow-hue), 0.09);
+  padding: var(--space-3) var(--space-5);
+  gap: var(--space-5);
+  z-index: 40;
+}
+
+.player-title { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
+.player-speaker { font-size: var(--text-xs); color: var(--text-muted); }
+
+.player-controls { gap: var(--space-2); }
+
+.player-controls .play-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  border: 1px solid var(--gold-hover);
+  color: var(--text-on-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(60, 52, 20, 0.3),
+    var(--elev-2);
+  transition: box-shadow 0.16s var(--ease-out), transform 0.10s var(--ease-out),
+              background-color 0.16s var(--ease-out);
+}
+.player-controls .play-btn:hover {
+  transform: translateY(-1px) scale(1.03);
+  background-color: var(--gold-hover);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.58), var(--elev-3);
+}
+.player-controls .play-btn:active {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: var(--elev-press);
+  background-image: none;
+  transition-duration: 0s;
+}
+
+/* Prev / next — quiet until wanted. */
+.player-controls > button:not(.play-btn) {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.13s var(--ease-out), color 0.13s var(--ease-out);
+}
+.player-controls > button:not(.play-btn):hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Scrubber ──────────────────────────────────────────────────────────── */
+.player-progress { gap: var(--space-3); }
+.player-time {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 42px;
+}
+.progress-bar {
+  height: 7px;
+  border-radius: 99px;
+  background: var(--bg-tertiary);
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.16);
+  cursor: pointer;
+  position: relative;
+  transition: height 0.14s var(--ease-out);
+}
+.player-progress:hover .progress-bar { height: 10px; }
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  position: relative;
+}
+/* The knob. Hidden at rest so the bar stays calm, and it appears the moment
+   the pointer arrives — which is also the moment it becomes draggable. */
+.progress-bar-fill::after {
+  content: '';
+  position: absolute;
+  right: -7px; top: 50%;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  transform: translateY(-50%) scale(0);
+  background: var(--bg-raised);
+  border: 2px solid var(--gold);
+  box-shadow: var(--elev-2);
+  transition: transform 0.14s var(--ease-out);
+}
+.player-progress:hover .progress-bar-fill::after { transform: translateY(-50%) scale(1); }
+
+.player-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.13s var(--ease-out), color 0.13s var(--ease-out);
+}
+.player-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ═══ THE VERSE, IN THE HEADER ═════════════════════════════════════════════
+   It was the last item in the sidebar, below the node stats, in 11px grey —
+   the lowest-priority position in the entire window, for the one line of the
+   app that is not about software at all. In the header it reads as the
+   masthead of a ministry rather than a footnote, and the header's empty left
+   third was doing nothing anyway.
+
+   Set in the serif. The whole interface is one sans-serif voice; giving
+   scripture the only serif in the app marks it as a different kind of text
+   without needing a label or a box around it. */
+
+.topbar-verse {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+  padding-right: var(--space-5);
+}
+.topbar-verse blockquote {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--font-serif);
+  font-size: var(--text-sm);
+  font-style: italic;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar-verse .verse-mark {
+  flex-shrink: 0;
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  line-height: 1;
+  color: var(--gold);
+  opacity: 0.55;
+  transform: translateY(2px);
+}
+.topbar-verse cite {
+  flex-shrink: 0;
+  font-family: var(--font);
+  font-style: normal;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.topbar {
+  background: linear-gradient(180deg, var(--bg-raised) 0%, var(--bg-secondary) 100%);
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 3px rgba(var(--shadow-hue), 0.05);
+  padding: var(--space-3) var(--space-5);
+  gap: var(--space-4);
+}
+
+@media (max-width: 1000px) {
+  /* The verse is the first thing to go when the header is tight — it is the
+     one element here that is not operational. */
+  .topbar-verse { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-controls .play-btn:hover, .player-controls .play-btn:active { transform: none; }
+  .player-progress:hover .progress-bar { height: 7px; }
+  .progress-bar-fill::after { transition: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334 — ROUND THREE
+   Donate bar · segmented controls · dropdowns · speaker rows · Seed Node
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── DONATE BAR ───────────────────────────────────────────────────────────── */
+/* The banner is a dark surface floating over a light page, so it needs its own
+   light model: the warm shadow tint used everywhere else is invisible on
+   #3a3a20, and a white top-edge highlight at the strength the light theme uses
+   reads as chalk. Both are re-derived here rather than inherited. */
+
+.donate-banner {
+  background:
+    linear-gradient(180deg, #43432a 0%, var(--banner-bg) 62%, #32321b 100%);
+  border-top: 1px solid rgba(212, 175, 55, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 -6px 22px rgba(0, 0, 0, 0.30);
+  padding: var(--space-4) var(--space-5);
+}
+
+.donate-banner-heading {
+  font-size: var(--text-sm);
+  letter-spacing: 0.01em;
+  /* A hairline of dark under gold text on a dark field: the letterforms stop
+     bleeding into the background at small sizes. */
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.donate-banner-text p { font-size: var(--text-xs); max-width: 78ch; }
+
+/* The ask. This is the one control in the app that should look like it has
+   weight — so it gets the full gold treatment plus a dark lower lip, which is
+   what separates "a gold rectangle" from "a gold key you can press". */
+.donate-banner .btn-donate {
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  color: var(--text-on-gold);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  letter-spacing: 0.01em;
+  border: 1px solid #b8942b;
+  border-radius: var(--radius);
+  padding: 10px 30px;
+  font-family: var(--font);
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.26),
+    0 2px 4px rgba(0, 0, 0, 0.32),
+    0 6px 16px rgba(0, 0, 0, 0.26);
+  transition:
+    box-shadow 0.16s var(--ease-out),
+    transform 0.10s var(--ease-out),
+    background-color 0.16s var(--ease-out);
+}
+.donate-banner .btn-donate:hover {
+  transform: translateY(-1px);
+  background-color: #dfbb45;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.60),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28),
+    0 4px 8px rgba(0, 0, 0, 0.34),
+    0 12px 28px rgba(0, 0, 0, 0.30);
+}
+.donate-banner .btn-donate:active {
+  transform: translateY(1px);
+  background-image: none;
+  background-color: var(--gold-hover);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.42);
+  transition-duration: 0s;
+}
+.donate-banner .btn-donate:focus-visible {
+  outline: 2px solid #f3e6b4;
+  outline-offset: 2px;
+}
+
+/* Dismiss is deliberately quieter, but it is still an object: a flat
+   transparent word next to a raised gold key doesn't read as a button at all.
+   A faint inset well gives it a face without competing. */
+.donate-banner .btn-dismiss {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--banner-text);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  font-size: var(--text-sm);
+  font-family: var(--font);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    background-color 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    transform 0.10s var(--ease-out);
+}
+.donate-banner .btn-dismiss:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.34);
+  transform: translateY(-1px);
+}
+.donate-banner .btn-dismiss:active {
+  transform: translateY(1px);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.30);
+  transition-duration: 0s;
+}
+.donate-banner .btn-dismiss:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* ── SEGMENTED CONTROL ────────────────────────────────────────────────────── */
+/* Cards / By Speaker, and anywhere else with two or three mutually exclusive
+   views. The track is INSET and the selected segment is RAISED inside it —
+   the same inversion the rest of the app uses to separate a well from an
+   object. Without it, a segmented control is just two differently-coloured
+   rectangles and the selection reads as a highlight rather than a position. */
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 3px);
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.12);
+}
+
+.segmented button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: var(--radius);
+  padding: 5px 14px;
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.14s var(--ease-out),
+    background-color 0.14s var(--ease-out),
+    box-shadow 0.14s var(--ease-out);
+}
+
+.segmented button:hover:not([aria-pressed="true"]) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.segmented button[aria-pressed="true"] {
+  color: var(--text-on-gold);
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  border-color: var(--gold-hover);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(var(--shadow-hue), 0.24),
+    0 1px 2px rgba(var(--shadow-hue), 0.18);
+}
+
+.segmented button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
+:root[data-theme="dark"] .segmented button:hover:not([aria-pressed="true"]) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── DROPDOWNS / MENUS ────────────────────────────────────────────────────── */
+/* A native <select> renders its own caret, in the OS's colour, at the OS's
+   size — which is why these never matched anything around them. Suppressing
+   the native appearance and drawing the caret as a background SVG is the only
+   way to get a chevron that is the same weight as the app's other icons.
+   The SVG is inlined as a data URI because an external file would be a network
+   request for eight pixels of art. */
+
+.filter-select,
+select.filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--bg-secondary);
+  background-image:
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"),
+    var(--sheen);
+  background-repeat: no-repeat, repeat;
+  background-position: right 10px center, 0 0;
+  background-size: 11px, auto;
+  padding: 6px 30px 6px 12px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition:
+    box-shadow 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    transform 0.10s var(--ease-out);
+}
+.filter-select:hover {
+  transform: translateY(-1px);
+  border-color: var(--gold);
+  box-shadow: var(--edge-lit-strong), var(--elev-2);
+}
+.filter-select:active {
+  transform: translateY(1px);
+  box-shadow: var(--elev-press);
+  transition-duration: 0s;
+}
+.filter-select:focus {
+  border-color: var(--gold);
+  box-shadow: var(--edge-lit), var(--elev-1), 0 0 0 3px var(--gold-dim);
+}
+.filter-select:focus-visible { outline: none; }
+
+/* The open list itself is drawn by the OS; only these two properties reach it,
+   and setting them stops the menu inheriting a transparent background on
+   Linux/WebKitGTK, where it otherwise renders unreadable over the page. */
+.filter-select option {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .filter-select,
+:root[data-theme="dark"] select.filter-select {
+  background-image:
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a9a9a0' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"),
+    var(--sheen);
+}
+
+/* The search field sits in the same row as these controls, so it has to match
+   their height and rhythm — but it is a well, not a button, so it keeps the
+   inset treatment. */
+.library-filters { align-items: center; gap: var(--space-2); }
+
+/* ── SPEAKER ROWS ─────────────────────────────────────────────────────────── */
+/* These are the densest repeating object in the app — hundreds of them — so
+   they get height, not colour: a wash of gold across a long list is noise,
+   whereas a row that rises under the pointer is legible at any length. */
+
+.bulk-speaker-list { gap: var(--space-2); }
+
+.bulk-speaker-row {
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background-image: var(--sheen);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition:
+    box-shadow 0.16s var(--ease-out),
+    transform 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out);
+}
+
+.bulk-speaker-row:hover {
+  background-color: var(--bg-secondary);   /* was --bg-tertiary: a row must not
+                                              darken toward the inset tone when
+                                              it is rising toward the viewer */
+  border-color: var(--gold);
+  transform: translateY(-1px);
+  box-shadow: var(--edge-lit-strong), var(--elev-2);
+}
+
+.bulk-speaker-row:active {
+  transform: translateY(0);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition-duration: 0.05s;
+}
+
+/* Open: the row is now a header for the grid beneath it, so it loses its lift
+   and gains a gold spine — it belongs to the content below rather than
+   floating over it. */
+.bulk-speaker-row.active {
+  transform: none;
+  border-color: var(--gold);
+  background-color: var(--bg-raised);
+  box-shadow:
+    inset 3px 0 0 var(--gold),
+    var(--edge-lit-strong),
+    var(--elev-2);
+}
+
+.bulk-speaker-avatar {
+  width: 46px;
+  height: 46px;
+  /* A ring, not a border: it sits outside the 46px box, so the image keeps its
+     full size and the circles stay identical across rows whether the avatar
+     resolved to a photo or to initials. */
+  box-shadow:
+    0 0 0 1px var(--border),
+    inset 0 1px 2px rgba(var(--shadow-hue), 0.10);
+  transition: box-shadow 0.16s var(--ease-out);
+}
+.bulk-speaker-row:hover .bulk-speaker-avatar,
+.bulk-speaker-row.active .bulk-speaker-avatar {
+  box-shadow:
+    0 0 0 2px var(--gold),
+    0 1px 3px rgba(var(--shadow-hue), 0.16);
+}
+
+.bulk-speaker-name {
+  font-size: var(--text-sm);
+  letter-spacing: -0.005em;
+}
+.bulk-speaker-meta { font-size: var(--text-xs); }
+
+/* The chevron gets a well of its own so it reads as an affordance rather than
+   as punctuation in front of the avatar. */
+.bulk-speaker-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.18s var(--ease-out), color 0.16s var(--ease-out),
+              background-color 0.16s var(--ease-out);
+}
+.bulk-speaker-row:hover .bulk-speaker-chev { color: var(--gold-text); }
+.bulk-speaker-row.active .bulk-speaker-chev {
+  transform: rotate(90deg);
+  color: var(--gold-text);
+  background: var(--gold-dim);
+}
+
+/* "View" / "Hide" — a word, but it is the row's primary verb, so it is
+   allowed to look like a small control. */
+.bulk-speaker-toggle {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color 0.16s var(--ease-out);
+}
+.bulk-speaker-row:hover .bulk-speaker-toggle { color: var(--gold-text); }
+
+/* Compact gold button — the Export control lives inside a 46px row, so the
+   standard .btn padding would make the row grow. Same face, smaller. */
+.btn-sm {
+  padding: 5px 12px;
+  font-size: var(--text-xs);
+  border-radius: 6px;
+  gap: 5px;
+}
+.btn-sm svg { width: 13px; height: 13px; }
+
+/* ── SEED NODE: THE STEP SEQUENCE ─────────────────────────────────────────── */
+/* This page is a four-step setup, and it was rendering as four identical cards
+   with the step number buried in an <h3>. Nothing showed which steps were done,
+   which was next, or that they were a sequence at all — so a new seed node
+   operator had to read all four to find out where they were.
+
+   The rail fixes that structurally: every card carries a numbered medallion,
+   the medallions are joined by a line, and each one is filled, ringed or muted
+   according to that step's actual measured state. You can see where you are
+   from across the room. */
+
+.step-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  position: relative;
+}
+
+.step-card { position: relative; }
+
+/* The connector. Drawn on the card rather than as a separate element so it
+   cannot drift out of alignment when a card changes height, and hidden on the
+   last one — a line leaving the final step points at nothing. */
+.step-card:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--space-5) + 17px);
+  top: calc(var(--space-5) + 36px);
+  bottom: calc(var(--space-4) * -1 - 4px);
+  width: 2px;
+  background: linear-gradient(180deg, var(--border) 0%, var(--border) 88%, transparent 100%);
+  pointer-events: none;
+}
+/* A finished step's line runs gold until it hands off, so the rail reads as a
+   progress track — you can see how far down the sequence the gold gets. */
+.step-card.done:not(:last-child)::after {
+  background: linear-gradient(180deg, var(--gold) 0%, var(--gold) 72%, var(--border) 94%, transparent 100%);
+}
+
+.step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.step-num {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background-color: var(--bg-tertiary);
+  border: 2px solid var(--border);
+  box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.10);
+  transition: all 0.2s var(--ease-out);
+}
+
+/* Current step: ringed and raised, the way the active nav row is. */
+.step-card.current .step-num {
+  color: var(--gold-text);
+  background-color: var(--bg-raised);
+  border-color: var(--gold);
+  background-image: var(--sheen);
+  box-shadow: var(--edge-lit), var(--elev-2), 0 0 0 4px var(--gold-dim);
+}
+
+/* Done: filled. A checkmark rather than the number — the number has served its
+   purpose once the step is behind you. */
+.step-card.done .step-num {
+  color: var(--text-on-gold);
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  border-color: var(--gold-hover);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(var(--shadow-hue), 0.24),
+    var(--elev-1);
+}
+
+.step-title { flex: 1; min-width: 0; }
+.step-title h3 { margin: 0 0 2px; }
+
+.step-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit);
+  white-space: nowrap;
+}
+.step-state.done {
+  color: var(--green);
+  background: rgba(61, 138, 65, 0.10);
+  border-color: rgba(61, 138, 65, 0.32);
+}
+.step-state.current {
+  color: var(--gold-text);
+  background: var(--gold-dim);
+  border-color: rgba(212, 175, 55, 0.45);
+}
+
+/* A locked step is dimmed but still readable — it is telling you what is
+   coming, and a step you cannot read is a step you cannot prepare for. This
+   replaces `opacity: 0.4`, which took the text below the contrast floor. */
+.step-card.locked { opacity: 0.68; }
+.step-card.locked .step-body { pointer-events: none; }
+
+/* The body indents to clear the medallion, so the rail stays a straight line
+   down the left edge of the sequence instead of being interrupted by copy. */
+.step-body { padding-left: calc(36px + var(--space-3)); }
+@media (max-width: 720px) {
+  .step-body { padding-left: 0; }
+  .step-card:not(:last-child)::after { display: none; }
+}
+
+/* ── SEED NODE: SCOPE CHOICE ──────────────────────────────────────────────── */
+
+.scope-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.scope-opt {
+  text-align: left;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  background-color: var(--bg-tertiary);
+  background-image: var(--sheen);
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition:
+    box-shadow 0.16s var(--ease-out),
+    transform 0.14s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    background-color 0.16s var(--ease-out);
+}
+.scope-opt:hover {
+  transform: translateY(-1px);
+  border-color: var(--gold);
+  background-color: var(--bg-secondary);
+  box-shadow: var(--edge-lit-strong), var(--elev-2);
+}
+.scope-opt:active {
+  transform: translateY(1px);
+  box-shadow: var(--elev-press);
+  background-image: none;
+  transition-duration: 0s;
+}
+.scope-opt[aria-pressed="true"] {
+  background-color: var(--bg-raised);
+  border-color: var(--gold);
+  box-shadow:
+    0 0 0 1px var(--gold),
+    var(--edge-lit-strong),
+    var(--elev-2);
+}
+.scope-opt:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.scope-opt-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 6px;
+}
+
+/* The radio is drawn, not native: a native radio inside a pressable card
+   creates two hit targets for one choice, and on every platform it is a
+   different size and colour from everything around it. */
+.scope-radio {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border-light);
+  background: var(--bg-secondary);
+  box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.12);
+  transition: border-color 0.16s var(--ease-out);
+}
+.scope-opt[aria-pressed="true"] .scope-radio { border-color: var(--gold); }
+.scope-radio i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 1px rgba(var(--shadow-hue), 0.18);
+}
+
+/* A reserved row for the Recommended flag, present on EVERY option whether or
+   not it carries one. Absolutely positioning the flag in a corner would have
+   needed `padding-right` on the title row, which pushed "Audio Library" into
+   wrapping at the ~250px column this grid actually gets; letting it sit in the
+   title row wrapped it onto a line of its own where it read as a second
+   heading. An always-present row costs 22px and keeps every card's title on
+   the same baseline, flagged or not. */
+.scope-opt-flag {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+  margin-bottom: 6px;
+}
+.scope-opt-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;   /* the label is the choice — it never breaks mid-name */
+}
+.scope-rec { flex-shrink: 0; }
+.scope-opt-desc {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+  padding-left: calc(18px + var(--space-2));
+}
+
+/* Pinned to the card's top-right corner rather than sitting in the title row.
+   In a two-up grid the column is ~250px wide, and "Audio Library" plus
+   "RECOMMENDED" does not fit on one line there — it wrapped, which pushed the
+   flag onto a line of its own where it read as a second heading. In the corner
+   it is a flag on the card, which is what it actually is, and the title row is
+   free to be a title row at any width. */
+.scope-rec {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-on-gold);
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  padding: 2px 8px;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* ── SEED NODE: STATUS ────────────────────────────────────────────────────── */
+/* The status card was six label/value rows — correct, but it read as a form,
+   and the two numbers that actually matter (coverage, files held) were the same
+   size as the storage path. Tiles put the figures first. */
+
+.seed-verdict {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-tertiary);
+  background-image: var(--sheen);
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit), var(--elev-1);
+}
+.seed-verdict.ok {
+  background-color: rgba(61, 138, 65, 0.09);
+  border-color: rgba(61, 138, 65, 0.34);
+}
+.seed-verdict-mark {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  line-height: 1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 2px solid var(--border);
+  box-shadow: var(--edge-lit);
+}
+.seed-verdict-mark svg { width: 20px; height: 20px; }
+.seed-verdict.ok .seed-verdict-mark {
+  color: #fff;
+  background-color: var(--green);
+  background-image: var(--sheen-strong);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), var(--elev-1);
+}
+.seed-verdict-title { font-weight: 700; color: var(--text-primary); }
+.seed-verdict.ok .seed-verdict-title { color: var(--green); }
+.seed-verdict-sub {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+  margin-top: 2px;
+}
+
+.seed-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.seed-stat {
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.07);
+}
+.seed-stat b {
+  display: block;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-text);
+}
+.seed-stat small {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The coverage meter: the one figure worth a picture, because "72%" and "97%"
+   mean very different things for a seed node and a bar shows the gap to 95
+   without the reader doing arithmetic. */
+.seed-coverage { margin-bottom: var(--space-4); }
+.seed-coverage-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.14);
+  overflow: hidden;
+}
+.seed-coverage-fill {
+  height: 100%;
+  border-radius: 999px;
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: width 0.5s var(--ease-out);
+}
+.seed-coverage-fill.ok { background-color: var(--green); }
+/* The 95% threshold, marked on the track. A target you can see is a target you
+   can aim at. */
+.seed-coverage-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 95%;
+  width: 2px;
+  background: rgba(var(--shadow-hue), 0.45);
+}
+.seed-coverage-legend {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ── SEED NODE: DETAIL ROWS ───────────────────────────────────────────────── */
+.seed-detail {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.seed-detail:last-child { border-bottom: none; padding-bottom: 0; }
+.seed-detail-k { color: var(--text-secondary); }
+.seed-detail-v {
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.seed-detail-v.mono { font-family: var(--font-mono, monospace); font-weight: 400; font-size: var(--text-xs); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bulk-speaker-row, .scope-opt, .filter-select, .donate-banner .btn-donate,
+  .donate-banner .btn-dismiss, .seed-coverage-fill { transition: none; }
+  .bulk-speaker-row:hover, .scope-opt:hover, .filter-select:hover,
+  .donate-banner .btn-donate:hover, .donate-banner .btn-dismiss:hover,
+  .bulk-speaker-row:active, .scope-opt:active, .filter-select:active,
+  .donate-banner .btn-donate:active, .donate-banner .btn-dismiss:active { transform: none; }
+  .donate-banner { animation: none; }
+}
+
+@media (forced-colors: active) {
+  .segmented, .segmented button, .filter-select, .bulk-speaker-row,
+  .scope-opt, .step-num, .step-state, .seed-verdict, .seed-verdict-mark,
+  .seed-stat, .seed-coverage-track, .seed-coverage-fill,
+  .donate-banner .btn-donate, .donate-banner .btn-dismiss {
+    box-shadow: none;
+    background-image: none;
+  }
+  .segmented button[aria-pressed="true"],
+  .scope-opt[aria-pressed="true"] { border: 2px solid; }
+}
+
+/* ── POPOVER MENUS ────────────────────────────────────────────────────────── */
+/* The share menu was the app's one real dropdown and it was built entirely from
+   inline styles, with each row holding its own `useState(hov)` — four React
+   state updates on every mouse move across the list, and a highlight that a
+   keyboard user only got because the component also listened for focus.
+   :hover and :focus-visible do this for free, in one place, and correctly.
+
+   A menu is a FLOATING surface: it gets --elev-4, not the --elev-1 a card
+   gets. A popover that is only slightly raised reads as part of the page it is
+   covering, which is precisely the thing a menu must not do. */
+
+.menu {
+  position: absolute;
+  z-index: 30;
+  min-width: 190px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit), var(--elev-4);
+  animation: menu-in 0.13s var(--ease-out);
+  transform-origin: top right;
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The hover bridge. The share menu opens on hover and sits a few pixels below
+   its trigger; without this the pointer crosses dead space on the way down,
+   mouseleave fires on the wrapper, and the menu shuts under the cursor. An
+   invisible strip belonging to the MENU keeps the pointer inside the subtree
+   the whole way. Eight pixels of nothing, and it is the difference between a
+   menu that works and one that feels broken. */
+.menu::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -10px;
+  height: 10px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 11px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-family: inherit;
+  transition: background-color 0.12s var(--ease-out), color 0.12s var(--ease-out);
+}
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--gold-dim);
+  color: var(--gold-text);
+  outline: none;
+}
+/* Keyboard focus still needs to be distinguishable from a mouse hover, or
+   tabbing through a menu is indistinguishable from the pointer resting on it. */
+.menu-item:focus-visible { box-shadow: inset 0 0 0 1px var(--gold); }
+.menu-item:active { background: var(--gold-glow); }
+.menu-item-icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.menu-item:hover .menu-item-icon { opacity: 1; }
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu { animation: none; }
+}
+@media (forced-colors: active) {
+  .menu { box-shadow: none; border: 1px solid; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.334 — ROUND FOUR: THE BRAND SURFACE
+   ═══════════════════════════════════════════════════════════════════════════
+
+   THE PROBLEM. The app is a deep olive column standing beside a field of
+   identical pale cards. The sidebar and the Seed Node hero are the only two
+   surfaces in the product with any material to them; everything else is cream
+   with a floating <h3> on it. That has two costs, and the second is the
+   expensive one:
+
+   1. The sidebar reads as bolted on. A dark column next to a light document
+      looks like two applications sharing a window, not one application.
+
+   2. Nothing is more important than anything else. On Connections, "Network
+      Health", "Node Status" and "Live Log" arrive in identical frames, so the
+      page has no answer — it has three equal boxes and you have to read all of
+      them to find out whether your node is working.
+
+   THE FIX is a surface hierarchy borrowed from the sidebar's own material,
+   with exactly three tiers and a rule for each:
+
+     BRAND   deep olive. The masthead at the top of every page, and ONE verdict
+             panel per page carrying that page's headline answer. Never more
+             than one per page, or it stops meaning "this is the answer".
+     PANEL   cream, raised, with a real header bar. The working surfaces.
+     WELL    inset, recessed. Logs, meters, fields — things you read INTO
+             rather than act ON.
+
+   Every colour below is drawn from tokens the app already ships. No new hues.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* The brand surface, shared with the sidebar so the two read as one
+     material. These deliberately mirror --sidebar-bg-top/-bottom rather than
+     referencing them: the sidebar is a full-height column and a masthead is a
+     wide band, and a band needs slightly more contrast at its own top edge to
+     read as lit from the same direction. */
+  --brand-top: #3F4429;
+  --brand-bottom: #2B2F1D;
+  --brand-text: #F4F3E4;
+  --brand-dim: rgba(244, 243, 228, 0.72);
+  --brand-muted: rgba(244, 243, 228, 0.50);
+  --brand-gold: #D9B84A;        /* gold lifted for legibility ON olive        */
+  --brand-line: rgba(255, 255, 255, 0.10);
+  --brand-well: rgba(0, 0, 0, 0.22);
+}
+
+:root[data-theme="dark"] {
+  /* Deepened to sit correctly against a dark page, exactly as --sidebar-bg
+     darkens. The band must still be darker than the page or it stops being a
+     band and becomes a lighter rectangle, which inverts the whole metaphor. */
+  --brand-top: #33371F;
+  --brand-bottom: #22250F;
+  --brand-line: rgba(255, 255, 255, 0.07);
+  --brand-well: rgba(0, 0, 0, 0.34);
+}
+
+/* ── THE MASTHEAD ─────────────────────────────────────────────────────────── */
+/* Every page opens with this. It is the sidebar's material continued across
+   the top of the content, so the dark column has something to belong to. */
+
+.masthead {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+  color: var(--brand-text);
+  /* The gold hairline along the bottom edge is the same gesture as the gold
+     spine on the active nav row — it is what makes this read as the sidebar's
+     sibling rather than as a generic dark header. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -2px 0 rgba(212, 175, 55, 0.55),
+    var(--elev-2);
+}
+
+/* A very quiet diagonal sheen across the band. One gradient, no pattern: a
+   repeating texture at this size reads as a screen door (the grain lesson),
+   while a single broad highlight reads as a lit surface. */
+.masthead::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 140% at 88% -20%, rgba(212, 175, 55, 0.16), transparent 58%),
+    radial-gradient(90% 120% at 0% 120%, rgba(0, 0, 0, 0.22), transparent 60%);
+}
+
+.masthead-wrap {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  /* Top-aligned, not centred. Some pages carry a figure row and some do not,
+     and centring made the status chips float at a different height on every
+     page — which is the exact opposite of what a shared header is for. */
+  align-items: flex-start;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.masthead-copy { flex: 1; min-width: 260px; }
+
+.masthead-kick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--brand-gold);
+  margin-bottom: var(--space-2);
+}
+/* The lozenge before the eyebrow. Small, but it is the thing that stops the
+   eyebrow looking like a stray label. */
+.masthead-kick::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  background: var(--brand-gold);
+  box-shadow: 0 0 8px rgba(212, 175, 55, 0.5);
+}
+
+.masthead h1,
+.masthead h2 {
+  font-family: var(--font-serif);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: #fff;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.masthead p {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--brand-dim);
+  max-width: 64ch;
+  margin: var(--space-2) 0 0;
+}
+
+/* The right-hand slot: live chips, a primary action, or a figure. */
+.masthead-aside {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  /* Nudged down to sit on the TITLE's optical line rather than the eyebrow's —
+     the eyebrow is a label for the page, the chips are about the page. */
+  margin-top: 26px;
+  margin-left: auto;
+}
+
+/* A status chip that lives ON the olive. The page's light-surface chips are
+   unreadable here, so this is its own object rather than a restyle. */
+.brand-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--brand-text);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--brand-line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  white-space: nowrap;
+}
+.brand-chip b {
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: var(--text-sm);
+}
+.brand-chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+.brand-chip.ok { color: #8FD79A; border-color: rgba(143, 215, 154, 0.32); }
+.brand-chip.gold { color: var(--brand-gold); border-color: rgba(212, 175, 55, 0.34); }
+
+/* A figure row inside the masthead, for pages whose headline IS a number. */
+.masthead-figures {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+.masthead-figures b {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: var(--text-xl);
+  color: var(--brand-gold);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.masthead-figures small {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--brand-muted);
+}
+
+/* An artwork slot bleeding in from the right, masked out before it reaches the
+   copy. Optional — most pages have none. */
+.masthead-art {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 38%;
+  max-width: 420px;
+  pointer-events: none;
+  opacity: 0.85;
+  -webkit-mask-image: linear-gradient(to left, #000 46%, transparent 96%);
+  mask-image: linear-gradient(to left, #000 46%, transparent 96%);
+}
+.masthead-art svg { width: 100%; height: 100%; display: block; }
+
+@media (max-width: 760px) {
+  .masthead { padding: var(--space-4); }
+  .masthead-art { display: none; }
+  .masthead h1, .masthead h2 { font-size: var(--text-xl); }
+}
+
+/* ── PANEL HEADERS ────────────────────────────────────────────────────────── */
+/* A card used to be a padded box with a heading floating in the top-left. A
+   header BAR — tinted, with a hairline under it and the title's icon in a
+   medallion — is what makes it read as an object with a top rather than as
+   text on cream. It also gives every card a place to put its count, its state
+   or its one action, which is why so many of them were improvising a flex row
+   with inline styles to do exactly that. */
+
+/* `.panel` is the explicit opt-in and the one that matters; the `:has()` rule
+   beside it is a courtesy for any card that grows a header without being
+   relabelled. `:has()` is not universally available in every WebView this ships
+   into, so nothing is allowed to DEPEND on it. */
+.seed-card.panel { padding: 0; overflow: hidden; }
+.seed-card:has(> .panel-head) { padding: 0; overflow: hidden; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: linear-gradient(180deg,
+    rgba(var(--shadow-hue), 0.045) 0%,
+    rgba(var(--shadow-hue), 0.012) 100%);
+  border-bottom: 1px solid var(--border);
+  /* --edge-lit, not a literal white: it is already theme-aware (0.70 light,
+     0.07 dark), and a fixed 0.55 white here drew a chalk line across the top
+     of every card in dark mode. */
+  box-shadow: var(--edge-lit);
+}
+
+/* The medallion. Gold-ringed, faintly gold-washed — the same relationship the
+   active nav row has with its gold spine, at icon scale. */
+.panel-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  color: var(--gold-text);
+  background: var(--gold-dim);
+  border: 1px solid rgba(212, 175, 55, 0.30);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 1px 2px rgba(var(--shadow-hue), 0.10);
+}
+.panel-mark svg { width: 17px; height: 17px; }
+
+.panel-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.panel-title small {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.panel-aside {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.panel-body { padding: var(--space-5); }
+.panel-body > :first-child { margin-top: 0; }
+.panel-body > p:last-child { margin-bottom: 0; }
+
+/* A body that holds nothing but rows wants no padding of its own — the rows
+   bring their own, and doubling it puts a gutter inside a gutter. */
+.panel-body.flush { padding: 0 var(--space-5); }
+.panel-body.flush > :last-child { border-bottom: none; }
+
+/* ── THE VERDICT PANEL ────────────────────────────────────────────────────── */
+/* One per page, carrying that page's headline answer, in the brand material so
+   it outranks everything beneath it. Its whole job is that you should be able
+   to read the page's answer without reading the page. */
+
+.verdict {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(165deg, var(--brand-top), var(--brand-bottom));
+  color: var(--brand-text);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 4px 0 0 var(--green),
+    var(--elev-2);
+}
+.verdict.warn { box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), inset 4px 0 0 var(--gold), var(--elev-2); }
+.verdict.bad  { box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), inset 4px 0 0 var(--red),  var(--elev-2); }
+
+.verdict::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(110% 150% at 92% -30%, rgba(212, 175, 55, 0.14), transparent 60%);
+}
+
+.verdict-mark {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--brand-line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.verdict-mark svg { width: 21px; height: 21px; }
+.verdict.ok .verdict-mark { color: #8FD79A; }
+.verdict.warn .verdict-mark { color: var(--brand-gold); }
+
+.verdict-copy { position: relative; z-index: 1; flex: 1; min-width: 0; }
+.verdict-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 4px;
+  line-height: 1.35;
+  /* NOT flex. It was, so the gold flag could sit beside the text — but that
+     turns every inline element in the heading into a flex item with a gap
+     around it, and "your node is a <em>peer</em>" came out as
+     "your node is a   peer   — still sharing". A heading is running text; the
+     flag is an inline-block inside it. */
+}
+.verdict-copy p {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--brand-dim);
+  margin: 0;
+  max-width: 76ch;
+}
+/* The age line. Deliberately separate from the claim above it, because a
+   measurement and WHEN it was measured are two different facts and running
+   them together is how a month-old reading ends up reading as current. */
+.verdict-age {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--brand-muted);
+}
+.verdict-aside {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* Buttons sitting on the brand surface need their own face — the light theme's
+   .btn-outline is invisible on olive. */
+.btn-on-brand {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  background-image: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.06)) !important;
+  border-color: var(--brand-line) !important;
+  color: var(--brand-text) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 1px 2px rgba(0,0,0,0.25) !important;
+}
+.btn-on-brand:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(212, 175, 55, 0.55) !important;
+  color: #fff !important;
+}
+.btn-on-brand:active:not(:disabled) {
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.42) !important;
+}
+
+/* ── TERMINAL WELL ────────────────────────────────────────────────────────── */
+/* The Live Log was cream monospace on a cream card — the only thing telling
+   you it was machine output was the typeface. A log is the clearest case in
+   the app of something you read INTO rather than act on, so it gets the
+   deepest well in the product, with its own header bar. */
+
+.terminal {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #22240F;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 12px;
+  background: linear-gradient(180deg, #33371C, #2A2D16);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  font-size: var(--text-xs);
+  color: var(--brand-muted);
+}
+.terminal-head .grow { flex: 1; }
+.terminal-count {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.terminal-body {
+  height: 420px;
+  overflow: auto;
+  padding: 10px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  line-height: 1.75;
+  /* A hairline ruling, one per line, at almost no contrast. It is what lets
+     the eye track a long timestamped line across to its message without a
+     zebra stripe, which at this density would strobe. */
+  background-image: repeating-linear-gradient(
+    180deg,
+    transparent 0,
+    transparent calc(1.75 * var(--text-xs) - 1px),
+    rgba(255, 255, 255, 0.05) calc(1.75 * var(--text-xs))
+  );
+}
+
+.terminal-line { padding: 0; color: #9FA68A; white-space: pre-wrap; word-break: break-word; }
+.terminal-line .t-time { color: #5E6448; margin-right: 10px; }
+.terminal-line.success { color: #8FD79A; }
+.terminal-line.warn    { color: #E0B25E; }
+.terminal-line.error   { color: #E98376; }
+.terminal-empty { color: #5E6448; font-style: italic; padding: 10px 0; }
+
+/* Same object in the light theme — still dark. A log that flips to cream is a
+   log you have to re-learn to read every time you change theme, and machine
+   output is the one place where a fixed, dark, high-contrast surface is simply
+   correct in both. */
+
+@media (forced-colors: active) {
+  .masthead, .verdict, .terminal, .terminal-head, .panel-head, .panel-mark,
+  .brand-chip, .btn-on-brand {
+    box-shadow: none;
+    background-image: none;
+  }
+  .terminal-body { background-image: none; }
+}
+
+/* ── SEED HERO, RETUNED TO THE BRAND ──────────────────────────────────────── */
+/* The hero was ported from the website and carried its own olive (#5f5f2e →
+   #565633) and its own gold. Beside the app's sidebar that read as a SECOND
+   dark material rather than the same one — close enough to look like a
+   mismatch instead of a contrast. It now draws from the same tokens as the
+   masthead, so the sidebar, the hero and every page header are one surface
+   appearing in three places. The website's own rendering is unaffected; this
+   is the app's copy of the class. */
+
+.si-seedhero {
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+  color: var(--brand-text);
+  margin-bottom: var(--space-5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -2px 0 rgba(212, 175, 55, 0.55),
+    var(--elev-2);
+}
+html[data-theme='dark'] .si-seedhero {
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+}
+.si-seedhero::after {
+  /* The same corner light the masthead has, so the two are lit identically. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(90% 130% at 96% -25%, rgba(212, 175, 55, 0.13), transparent 58%);
+}
+.si-seedhero-kick { color: var(--brand-gold); }
+.si-seedhero-copy p { color: var(--brand-dim); }
+.si-seedhero-stats .s b { color: var(--brand-gold); }
+.si-seedhero-stats .s small { color: var(--brand-muted); }
+
+/* The page title, woven into the hero rather than sitting above it as a second
+   heading. Two headings stacked — a plain "Become a Seed Node" on cream, then
+   a serif headline on olive — made the page open twice. */
+.si-seedhero-eyebrow,
+.brand-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--brand-line);
+}
+.brand-eyebrow h1 {
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--brand-text);
+  margin: 0;
+}
+.brand-eyebrow p {
+  font-size: var(--text-xs);
+  color: var(--brand-muted);
+  margin: 2px 0 0;
+}
+.si-seedhero-eyebrow h1 {
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--brand-text);
+  margin: 0;
+}
+.si-seedhero-eyebrow p {
+  font-size: var(--text-xs);
+  color: var(--brand-muted);
+  margin: 2px 0 0;
+}
+
+/* ── THE NODE-ID CREDENTIAL ───────────────────────────────────────────────── */
+/* This is the one string on the page a person has to copy and send to a human
+   being. It was a `<code>` with a tinted background — correct, and completely
+   unremarkable, which is wrong for the single most important value on the
+   screen. It now reads as a credential: a deep well, monospace, generously
+   tracked, with the copy action attached to it rather than floating beside it. */
+
+.credential {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.13);
+}
+.credential-value {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--gold-text);
+  display: flex;
+  align-items: center;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.credential .btn {
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  box-shadow: none;
+}
+.credential .btn:hover:not(:disabled) { transform: none; box-shadow: none; }
+.credential .btn:active:not(:disabled) { transform: none; box-shadow: var(--elev-press); }
+
+/* ── STAT STRIP ───────────────────────────────────────────────────────────── */
+/* Network Health's five figures were five divs in a flex row with the label
+   and value styled inline at each one. As a strip of wells they read as a
+   single instrument panel, and the numbers line up. */
+
+.statstrip {
+  /* Flex, not `grid auto-fit`. auto-fit computes its column count from the
+     track minimum and then honours each item's own min-content width, so at
+     certain widths the fifth figure wrapped to a second row and left a grey
+     hole beside it. Five equal, shrinkable children can only ever be one row —
+     and this is an instrument panel, where the readings belong on one line. */
+  display: flex;
+  gap: 1px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--border);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.10);
+}
+.statstrip > div {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 8px;
+  background: var(--bg-tertiary);
+  text-align: center;
+}
+@media (max-width: 560px) { .statstrip { flex-wrap: wrap; } .statstrip > div { flex-basis: 33%; } }
+.statstrip b {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.statstrip small {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── VERDICT: THE PLAIN VARIANT ───────────────────────────────────────────── */
+/* Same geometry, light surface. The tone carries the meaning, and this is the
+   one distinction worth making on a status banner:
+
+     BRAND (olive)  a settled answer. Nothing for you to do.
+     PLAIN (cream)  a working surface — there is something here for you to read
+                    or act on, and it contains its own nested panels, guides and
+                    disclosures, all of which are built for a light surface.
+
+   Putting the router tutorial on olive would have meant re-deriving every
+   nested panel inside it for a dark background, which is a lot of surface area
+   to get subtly wrong for no gain. A page still has exactly one verdict; it is
+   just not always the brand one. */
+
+.verdict.plain {
+  background: var(--bg-secondary);
+  background-image: var(--sheen);
+  color: var(--text-primary);
+  align-items: flex-start;
+  box-shadow: inset 4px 0 0 var(--gold), var(--edge-lit), var(--elev-1);
+}
+.verdict.plain::before { display: none; }
+.verdict.plain .verdict-mark {
+  color: var(--gold-text);
+  background: var(--gold-dim);
+  border-color: rgba(212, 175, 55, 0.30);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+.verdict.plain .verdict-title { color: var(--text-primary); }
+.verdict.plain .verdict-copy p { color: var(--text-secondary); }
+.verdict.plain .verdict-age { color: var(--text-muted); }
+.verdict.plain.quiet { box-shadow: inset 4px 0 0 var(--border), var(--edge-lit), var(--elev-1); }
+
+/* The gold "Backbone" flag, on either surface. */
+.verdict-flag {
+  display: inline-block;
+  margin-left: 9px;
+  vertical-align: 1px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--brand-gold);
+  background: rgba(212, 175, 55, 0.16);
+  border: 1px solid rgba(212, 175, 55, 0.34);
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.verdict.plain .verdict-flag {
+  color: var(--gold-text);
+  background: var(--gold-dim);
+}
+
+/* The banner is centred on the same 1100px measure as the columns beneath it. */
+.verdict { max-width: 1100px; margin-left: auto; margin-right: auto; }
+
+/* A button inside the BRAND verdict is on olive, so it needs the brand face.
+   Scoped rather than hand-applied at the call site: the banner picks its tone
+   from the node's state, and threading "am I on a dark surface?" down to a
+   button is exactly the kind of prop that gets forgotten on the seventh branch. */
+.verdict:not(.plain) .btn-outline {
+  background-color: rgba(255, 255, 255, 0.08);
+  background-image: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.06));
+  border-color: var(--brand-line);
+  color: var(--brand-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 1px 2px rgba(0,0,0,0.25);
+}
+.verdict:not(.plain) .btn-outline:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-color: rgba(212, 175, 55, 0.55);
+  color: #fff;
+}
+.verdict:not(.plain) .btn-outline:active:not(:disabled) {
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.42);
+}
+/* The "Last tested …" line that rides under that button. */
+.verdict:not(.plain) .verdict-aside span { color: var(--brand-muted); }
+
+/* ── THE OTHER TWO HEROES, RETUNED ────────────────────────────────────────── */
+/* Dashboard and About each shipped with their own hand-mixed olive — #6b6b33 →
+   #545432 on one, #5f5f2e → #565633 on the other — neither of which matched the
+   sidebar or each other. Three olives in one product is not a palette, it is an
+   accident, and it is the specific reason the app read as several screens
+   rather than one application. All three now draw the same two tokens. */
+
+.dash-hero {
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -2px 0 rgba(212, 175, 55, 0.55),
+    var(--elev-2);
+}
+.dash-hero-copy h2 { font-family: var(--font-serif); font-weight: 600; letter-spacing: -0.01em; }
+.dash-eyebrow { color: var(--brand-gold); }
+
+.si-abouthero {
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -2px 0 rgba(212, 175, 55, 0.55),
+    var(--elev-2);
+}
+html[data-theme='dark'] .si-abouthero {
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+}
+
+/* ── THE BOARD DRAWING ON BRAND SURFACES ──────────────────────────────────── */
+/* PiBoard fills itself from `--board-face` / `--board-edge` / `--board-trace`,
+   falling back to the light-card tokens. The brand surfaces override them here,
+   so the board reads as a dark board with gold traces instead of the small white
+   card it was rendering as on olive. Context sets the tone; no call site has to
+   remember to pass a prop. */
+
+.masthead,
+.si-seedhero,
+.si-abouthero,
+.dash-hero,
+.verdict:not(.plain) {
+  --board-face: rgba(0, 0, 0, 0.32);
+  --board-edge: rgba(212, 175, 55, 0.42);
+  --board-trace: var(--brand-gold);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE DOWNLOAD METER
+   ═══════════════════════════════════════════════════════════════════════════
+
+   It was a 4px hairline on a neutral grey track. Two things were wrong with
+   that, and the second is the one you feel:
+
+   1. FOUR PIXELS. This is the single most-watched object in the app — you press
+      download and then you look at this, repeatedly, for minutes. It was
+      thinner than the card's own border.
+
+   2. THE TRACK WAS THE WRONG COLOUR. A grey track with a gold fill says "part
+      of this grey thing is gold". A meter should read as ONE object whose state
+      you can see across its whole length, which means the track is a lighter
+      step of the fill's own ramp — gold-on-gold. Then an empty bar still says
+      "download", and a full one says "done", without reading the number.
+
+   Same geometry for every state; only the hue changes. Downloading is gold,
+   seeding is the app's own blue, and the two are far enough apart to tell at a
+   glance (ΔE 25 in normal vision — the same validated pair the stats charts
+   use). */
+
+.dl-progress-mini {
+  gap: 10px;
+  margin-top: 10px;
+  padding: 0;
+}
+
+.dl-progress-mini-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--gold-dim);
+  border: 1px solid rgba(212, 175, 55, 0.30);
+  /* Pressed into the card, so the fill can sit proud inside it. */
+  box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.16);
+  overflow: hidden;
+  position: relative;
+}
+
+.dl-progress-mini-fill {
+  border-radius: 999px;
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  /* A lit top edge and a dark lower lip — the same two lines that make the
+     gold buttons read as solid objects. A progress bar is a button's sibling:
+     both are gold things with a thickness. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(var(--shadow-hue), 0.22);
+  transition: width 0.35s var(--ease-out);
+}
+
+/* Seeding — the job flipped from taking to giving, so the colour flips with it.
+   No pulse: an animation that never stops is a distraction, and "seeding" is a
+   steady state, not an alarm. The old 1.5s opacity pulse made a shelf of
+   finished cards flicker. */
+.dl-progress-mini-bar:has(> .seeding) {
+  background: rgba(45, 108, 181, 0.16);
+  border-color: rgba(45, 108, 181, 0.32);
+}
+.dl-progress-mini-fill.seeding {
+  background-color: var(--seed-blue);
+  background-image: var(--sheen-strong);
+  animation: none;
+}
+
+/* Unknown size — a band that travels the track rather than a fill that lies
+   about its progress. */
+.dl-progress-mini-fill.indeterminate {
+  width: 38% !important;
+  border-radius: 999px;
+  animation: dl-sweep 1.6s var(--ease-out) infinite;
+}
+@keyframes dl-sweep {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(300%); }
+}
+
+.dl-progress-mini-text {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--gold-text);
+  min-width: 42px;
+  text-align: right;
+  /* Tabular figures here specifically because the value CHANGES in place: with
+     proportional digits "9%" → "10%" → "11%" shifts the whole label sideways
+     several times a second. These also line up down a column of cards. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-progress-mini-fill { transition: none; }
+  .dl-progress-mini-fill.indeterminate { animation: none; width: 100% !important; opacity: 0.45; }
+}
+@media (forced-colors: active) {
+  .dl-progress-mini-bar, .dl-progress-mini-fill { box-shadow: none; background-image: none; }
+}
+
+/* The download button while it is working: it stays lit rather than dimming to
+   0.6 opacity. A control that fades when you press it reads as broken; this one
+   is doing exactly what you asked. */
+.btn-icon.downloading {
+  opacity: 1;
+  cursor: default;
+  color: var(--gold-text);
+  border-color: var(--gold);
+  background-color: var(--gold-dim);
+  background-image: none;
+  box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.14);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHARTS
+   ═══════════════════════════════════════════════════════════════════════════
+
+   THE COLOURS ARE COMPUTED, NOT CHOSEN. The old hosting-mix chart used gold for
+   audio and olive for video. Run through the palette validator against this
+   app's own card surface, that pair FAILS three ways:
+
+     chroma floor      olive #707035 → 0.081, below 0.1: it reads as GREY
+     normal vision     ΔE 7.6 — under the floor of 15. Full-colour readers
+                       cannot reliably tell the two bars apart
+     CVD               ΔE 6.2 (protan)
+
+   So the chart everyone could "see fine" was, measurably, two grey-gold bars.
+   The replacement is gold against the app's own seed-blue, which passes every
+   check in both modes:
+
+     light  #967d1f / #2d6cb5   ΔE 25.0 normal · 23.5 protan · 16.7 tritan
+     dark   #a8862c / #4180c4   ΔE 23.9 normal · 22.4 protan · 18.3 tritan
+
+   Dark is SELECTED, not flipped: the same two hues re-stepped for the dark
+   surface, because the light pair sits outside the dark mode's lightness band.
+   Declared under both the media query and the data-theme scope so the theme
+   toggle wins either way. */
+
+.viz {
+  --viz-surface: var(--bg-secondary);
+  --viz-grid: rgba(0, 0, 0, 0.09);
+  --viz-1: #967d1f;   /* audio — the app's gold  */
+  --viz-2: #2d6cb5;   /* video — the app's blue  */
+  --viz-ink: var(--text-secondary);
+  --viz-ink-dim: var(--text-muted);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz {
+    --viz-surface: var(--bg-secondary);
+    --viz-grid: rgba(255, 255, 255, 0.10);
+    --viz-1: #a8862c;
+    --viz-2: #4180c4;
+  }
+}
+:root[data-theme="dark"] .viz {
+  --viz-surface: var(--bg-secondary);
+  --viz-grid: rgba(255, 255, 255, 0.10);
+  --viz-1: #a8862c;
+  --viz-2: #4180c4;
+}
+
+.viz-frame {
+  position: relative;
+  width: 100%;
+}
+.viz-frame svg { display: block; width: 100%; }
+
+/* Axis text. Never the series colour — identity comes from the mark, legibility
+   from the ink tokens. Tabular here because these DO align vertically. */
+.viz-tick {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  fill: var(--viz-ink-dim);
+}
+
+/* ── Tooltip ──────────────────────────────────────────────────────────────── */
+.viz-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  border: 1px solid var(--tooltip-border);
+  box-shadow: var(--elev-3);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.viz-tip b { display: block; font-weight: 700; font-variant-numeric: tabular-nums; }
+.viz-tip small { color: rgba(255, 255, 255, 0.62); }
+
+/* ── Hero figure + meter (replaces the coverage donut) ────────────────────── */
+/* A donut for ONE percentage is a two-slice pie, and it cannot show the thing
+   that actually matters here — how far you are from the 95% a verified seed
+   node needs. A hero figure carries the number; the meter carries the distance. */
+
+.viz-hero {
+  /* ≥48px, and in the SAME sans as everything else: a serif hero figure reads
+     as decoration rather than as data. Proportional figures, not tabular —
+     tabular gives every digit the width of a zero, which makes a standalone
+     number look loose at display size. */
+  font-size: 3.25rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  font-variant-numeric: proportional-nums;
+}
+.viz-hero-unit { font-size: 0.42em; font-weight: 700; color: var(--text-muted); margin-left: 2px; }
+.viz-hero-label {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.viz-meter {
+  position: relative;
+  height: 14px;
+  margin-top: var(--space-4);
+  border-radius: 999px;
+  /* The unfilled track is a lighter step of the FILL's own ramp, not a neutral
+     grey — so the state reads across the whole bar rather than only the filled
+     part. */
+  background: var(--gold-dim);
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  box-shadow: inset 0 1px 3px rgba(var(--shadow-hue), 0.14);
+  overflow: hidden;
+}
+.viz-meter i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: width 0.6s var(--ease-out);
+}
+.viz-meter i.ok { background-color: var(--green); }
+.viz-meter-mark {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: rgba(var(--shadow-hue), 0.5);
+}
+.viz-meter-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: 7px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ── Mix rows (audio vs video) ────────────────────────────────────────────── */
+.viz-row + .viz-row { margin-top: var(--space-4); }
+.viz-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 7px;
+  font-size: var(--text-sm);
+}
+.viz-row-name { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+/* The identity channel: a coloured key BESIDE the text, never coloured text. */
+.viz-key { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.viz-row-value { font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.viz-row-track {
+  height: 14px;               /* well under the 24px mark cap */
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  box-shadow: inset 0 1px 2px rgba(var(--shadow-hue), 0.10);
+  overflow: hidden;
+}
+.viz-row-fill {
+  height: 100%;
+  /* Square at the baseline (left), 4px rounded at the data end (right) — the
+     end that carries the value is the end that gets the radius. */
+  border-radius: 0 4px 4px 0;
+  transition: width 0.5s var(--ease-out);
+}
+
+/* ── Table view ───────────────────────────────────────────────────────────── */
+/* Every chart has one. A tooltip may enhance a value; it may never be the only
+   way to reach it. */
+.viz-table-toggle {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--gold-text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.viz-table {
+  width: 100%;
+  margin-top: var(--space-3);
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+.viz-table th,
+.viz-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.viz-table th { color: var(--text-muted); font-weight: 700; letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.viz-table td:last-child, .viz-table th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.viz-table tr:last-child td { border-bottom: none; }
+.viz-table-scroll { max-height: 210px; overflow: auto; }
+
+@media (forced-colors: active) {
+  .viz-meter, .viz-meter i, .viz-row-track, .viz-row-fill { box-shadow: none; background-image: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ROUND SIX
+   The essay layout · the collapsing step list · mission control
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── THE ESSAY ────────────────────────────────────────────────────────────── */
+/* The About page was an ESSAY rendered as a dashboard: two ~530px columns, the
+   conditions list on the left and the "why this exists" prose on the right,
+   inside cards. Two problems, and the second is why nobody finishes reading it:
+
+   1. Neither column got a comfortable measure, and the reader's eye has to
+      choose a column before it can start a sentence.
+   2. A card says "this is a widget, scan it". Prose wants the opposite — one
+      column, a measure of roughly 65–75 characters, and enough air that the eye
+      returns to the right place at the end of each line.
+
+   So this page stops being a grid of cards and becomes a page of writing. The
+   only card left is the conditions block, because that IS reference material
+   and should look like it. */
+
+.essay {
+  max-width: 68ch;
+  margin: 0 auto;
+  padding: var(--space-6) 0 var(--space-8);
+}
+.essay > * { max-width: 100%; }
+
+.essay p {
+  font-size: var(--text-base);
+  line-height: 1.75;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
+}
+.essay p strong { color: var(--text-primary); }
+
+/* The opening paragraph carries a little more weight, so the page has somewhere
+   to start rather than beginning at full speed. */
+.essay-lede {
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  color: var(--text-primary);
+  margin-bottom: var(--space-5);
+}
+
+/* Section marks. A gold eyebrow and a hairline, not a card header — inside a
+   reading column a heading's job is to let you find your place again, not to
+   frame a widget. */
+.essay-mark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-7) 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--gold-text);
+}
+.essay-mark::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border), transparent);
+}
+
+/* The pull-quote breaks OUT of the measure — that is the whole point of one.
+   Set in the serif, because this is the one place on the page where the words
+   are being quoted rather than explained. */
+.pullquote {
+  position: relative;
+  margin: var(--space-6) 0 var(--space-6) calc(var(--space-6) * -1);
+  padding: var(--space-5) var(--space-5) var(--space-5) var(--space-6);
+  border-left: 3px solid var(--gold);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: linear-gradient(90deg, var(--gold-dim), transparent 82%);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.pullquote cite {
+  display: block;
+  margin-top: var(--space-3);
+  font-family: var(--font);
+  font-style: normal;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+@media (max-width: 800px) {
+  .pullquote { margin-left: 0; padding-left: var(--space-4); }
+}
+
+/* Three plain figures inside the prose — no card, no border, just a rule above
+   each. Cards here would put the reader back into scanning mode. */
+.essay-points {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-5);
+  margin: var(--space-5) 0 var(--space-6);
+}
+.essay-point { border-top: 2px solid var(--gold); padding-top: var(--space-3); }
+.essay-point b {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.essay-point span {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-muted);
+}
+
+/* The footer row of outgoing links. */
+.essay-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+/* ── THE COLLAPSING STEP LIST ─────────────────────────────────────────────── */
+/* The Seed Node page was four full setup cards, permanently. Steps 1–3 are done
+   once and then done forever, so an operator who set their node up months ago
+   opened the page every day to a wizard they had already finished — with the
+   status they actually came to check pushed below it.
+   
+   A finished step now collapses to a single row that states WHAT IT PRODUCED
+   ("Audio Library · 1.2 TB", the storage path, "Reachable over IPv6"), which is
+   more useful than the form that produced it, and takes a twentieth of the
+   space. Click it to open it again. */
+
+.step-head {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: background-color 0.14s var(--ease-out);
+}
+.step-head:hover { background: rgba(var(--shadow-hue), 0.035); }
+.step-head:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* The value a finished step produced, shown in its collapsed row. */
+.step-value {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--gold-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-caret {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.18s var(--ease-out);
+}
+.step-card.open .step-caret { transform: rotate(180deg); }
+
+/* A collapsed card is quiet: no rail stub hanging off the bottom of a one-line
+   row, and tighter padding. */
+.step-card:not(.open) { padding-bottom: var(--space-3); }
+.step-card:not(.open) .step-body { display: none; }
+.step-card:not(.open):not(:last-child)::after { bottom: calc(var(--space-4) * -1 - 4px); top: calc(var(--space-5) + 36px); }
+
+/* ── MISSION CONTROL ──────────────────────────────────────────────────────── */
+/* The readings an operator opens this page to check, in one strip directly
+   under the masthead — above the setup, not below it. */
+
+.control {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.4fr) repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--space-5);
+  align-items: center;
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-secondary);
+  background-image: var(--sheen);
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit), var(--elev-1);
+}
+.control-read b {
+  display: block;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+.control-read small {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.control-read .mono {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .control { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── DASHBOARD HERO ───────────────────────────────────────────────────────── */
+/* 1.55rem is a card heading, not the line the whole app opens with. This is the
+   first sentence anyone reads after launching, and it is the reason the app
+   exists — it gets display weight, in the serif the other brand surfaces use. */
+.dash-hero-copy h2 {
+  font-size: clamp(1.9rem, 2.6vw, 2.6rem);
+  line-height: 1.12;
+  margin-bottom: var(--space-3);
+  max-width: 18ch;
+}
+.dash-hero-copy p { font-size: var(--text-base); max-width: 56ch; }
+.dash-hero { padding: var(--space-6) var(--space-6); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ROUND SEVEN — BACK TO THE CLI'S OLIVE
+   ═══════════════════════════════════════════════════════════════════════════
+
+   The CLI dashboard (`sermonindex-node-cli/assets/dashboard.html`) is the
+   authority here, and it is explicit:
+
+       --olive: #707035      --olive2: #908F51
+       --header: #707035     --headertext: #F8F8F2
+       dark:  --olive: #908F51   --olive2: #a7a662
+
+   Round four deepened the app's olive to #343824 / #2B2F1D on the argument that
+   a mid-tone has nowhere to put its own states. That argument was sound in the
+   abstract and wrong in practice: a node operator sees the CLI dashboard on a
+   Pi screen and the desktop app on their laptop, and when the two greens do not
+   match, they do not read as one product — which costs more than a slightly
+   harder-won hover state. The CLI is the shared surface, so the CLI wins.
+
+   WHAT THAT COSTS, AND HOW IT IS PAID. #707035 is much lighter than #2B2F1D, so
+   everything set on it has to be re-checked rather than carried over:
+
+       white            on #707035   5.17:1   ✓ headings, figures
+       #F2F1E3          on #707035   4.55:1   ✓ body copy (was 3.24:1 — a fail)
+       gold #D9B84A     on #707035   2.69:1   ✗ — fails even for large text
+
+   So the gold eyebrow stops being gold TEXT. The lozenge beside it keeps the
+   colour and the words go cream: identity from the mark, legibility from the
+   ink. Gold survives on the big serif figures, which are large-text sized, and
+   on the bottom hairline, which is not text at all.
+
+   The bands also run DARKER toward the bottom (#7a7943 → #5e5d2d, with the
+   CLI's #707035 as the midpoint), so paragraphs sit on the deeper end — 6.6:1
+   rather than 4.6:1 — while the band still reads as the CLI's olive. */
+
+:root {
+  --sidebar-bg: #707035;
+  --sidebar-bg-top: #7a7943;
+  --sidebar-bg-bottom: #63632c;
+  --sidebar-text: #F8F8F2;              /* the CLI's --headertext, verbatim */
+  --sidebar-text-dim: rgba(248, 248, 242, 0.80);
+  --sidebar-muted: rgba(248, 248, 242, 0.62);
+  --sidebar-hover: rgba(255, 255, 255, 0.11);
+  --sidebar-border: rgba(0, 0, 0, 0.22);
+  --sidebar-active-bg: rgba(212, 175, 55, 0.26);
+
+  --brand-top: #7a7943;
+  --brand-bottom: #5e5d2d;
+  --brand-text: #F8F8F2;
+  --brand-dim: #F2F1E3;                 /* 4.55:1 at the midpoint, 6.2:1 low  */
+  --brand-muted: rgba(248, 248, 242, 0.74);
+  --brand-gold: #EFDA93;                /* large text + marks only            */
+  --brand-line: rgba(255, 255, 255, 0.16);
+  --brand-well: rgba(0, 0, 0, 0.20);
+
+  --banner-bg: #5e5d2d;
+}
+
+:root[data-theme="dark"] {
+  /* The CLI goes LIGHTER in dark mode (--olive #908F51). Followed, but tempered:
+     at full #908F51 a full-width band glares against a near-black page, so this
+     lands between the two and keeps the same hue. */
+  --sidebar-bg: #6a6a35;
+  --sidebar-bg-top: #74743d;
+  --sidebar-bg-bottom: #5b5b2b;
+  --brand-top: #74743d;
+  --brand-bottom: #55552a;
+  --brand-line: rgba(255, 255, 255, 0.13);
+  --brand-well: rgba(0, 0, 0, 0.30);
+}
+
+/* The eyebrow is cream with a gold lozenge, not gold text — see the contrast
+   note above. The lozenge is a mark, so it keeps the full gold. */
+.masthead-kick,
+.si-seedhero-kick {
+  color: var(--brand-text);
+  opacity: 0.92;
+}
+.masthead-kick::before { background: #D4AF37; box-shadow: 0 0 10px rgba(212,175,55,0.65); }
+
+/* Figures stay gold: 1.5rem+ semibold clears the large-text bar at 3:1. */
+.masthead-figures b,
+.si-seedhero-stats .s b { color: var(--brand-gold); }
+
+/* The board drawing needs a darker well on the lighter olive or it disappears
+   into it. */
+.masthead,
+.si-seedhero,
+.si-abouthero,
+.dash-hero,
+.verdict:not(.plain) {
+  --board-face: rgba(0, 0, 0, 0.30);
+  --board-edge: rgba(255, 255, 255, 0.45);
+  --board-trace: #F0E4B4;
+}
+
+/* Chips and buttons on the brand surface: on a mid olive a 7% white wash is
+   invisible, so both go up. */
+.brand-chip { background: rgba(0, 0, 0, 0.20); border-color: rgba(255,255,255,0.22); }
+.brand-chip.ok { color: #C8F0CF; border-color: rgba(200, 240, 207, 0.42); }
+.brand-chip.gold { color: var(--brand-gold); border-color: rgba(239, 218, 147, 0.45); }
+.verdict:not(.plain) .btn-outline,
+.btn-on-brand {
+  background-color: rgba(0, 0, 0, 0.22) !important;
+  border-color: rgba(255, 255, 255, 0.26) !important;
+}
+.verdict:not(.plain) .btn-outline:hover:not(:disabled),
+.btn-on-brand:hover:not(:disabled) {
+  background-color: rgba(0, 0, 0, 0.32) !important;
+  border-color: rgba(239, 218, 147, 0.70) !important;
+}
+
+/* The active nav row: a mid olive needs a DARKER selection, not a lighter one —
+   at #707035 a lighter fill lands in the same muddy band as the hover. */
+/* The active row is GOLD, permanently.
+   Round seven replaced the gold face with a dark fill and a gold spine, on the
+   reasoning that a mid olive needs a darker selection than a lighter one. That
+   is true of a HOVER, which has to sit between the resting row and the selected
+   one — and it was the wrong call for the selection itself. The page you are on
+   is the single most useful thing the sidebar can tell you, and a dark pill on a
+   dark column whispers it. The gold face says it outright, and it is the same
+   gold as the primary buttons, so "gold means this one" holds across the app.
+
+   The full treatment (inverted icon, count and key cap) is defined once, higher
+   up the file, and still applies — this only restores the face it was painted
+   over with. */
+.nav-item.active {
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  color: var(--text-on-gold);
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(60, 52, 20, 0.30),
+    0 2px 6px rgba(0, 0, 0, 0.28);
+}
+/* Hover on the row you are already on lifts the gold slightly rather than
+   changing it — the state is "selected", and hovering it is not a new state. */
+.nav-item.active:hover { background-color: #dfbb45; }
+.nav-item.active:active { box-shadow: inset 0 2px 5px rgba(60, 52, 20, 0.40); }
+.nav-item:active:not(.active) { background-color: rgba(0, 0, 0, 0.18); }
+
+/* ── THE PHOTOGRAPH HERO ──────────────────────────────────────────────────── */
+/* The locked Seed Node page is a recruiting page, and it was recruiting with a
+   line drawing and an SVG chart. There are real photographs of a real node —
+   a small touchscreen glowing on a stack of old theology books, a quiet machine
+   on a shelf beside the router — and one of those does more to make the ask
+   concrete than any amount of copy about indestructible archives. It shows a
+   person exactly what they would be putting in their house.
+   
+   The photo is a BACKGROUND, not content: it sits under a gradient scrim heavy
+   enough that the headline clears contrast at any crop, because a hero whose
+   text becomes unreadable when the image loads is worse than one with no image
+   at all. */
+
+.photo-hero {
+  /* ── NO PHOTOGRAPH ───────────────────────────────────────────────────────
+     This band carried the hero image through several rounds of tinting: a warm
+     scrim, then a green one, then a true luminosity duotone onto the sidebar's
+     olive. Each got closer and none of them were right, because the two goals
+     were pulling against each other the whole time — the header had to be the
+     SAME olive as the column eighteen pixels away, and a photograph pushed to
+     that flat a colour is no longer a photograph, just noise under the words.
+
+     So the picture goes and the band is simply the brand surface, like every
+     other page header in the app. The photographs are still on this page, lower
+     down, in full colour where they can actually be looked at — which is more
+     use than three washed-out versions of one of them behind a headline. */
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-5);
+  min-height: 260px;
+  display: flex;
+  align-items: flex-end;
+  background: linear-gradient(165deg, var(--brand-top) 0%, var(--brand-bottom) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -2px 0 rgba(212, 175, 55, 0.55),
+    var(--elev-2);
+}
+/* The same corner light the masthead and the heroes carry, so all the brand
+   bands in the app are lit from the same place. */
+.photo-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(110% 150% at 90% -25%, rgba(212, 175, 55, 0.16), transparent 58%),
+    radial-gradient(90% 120% at 0% 125%, rgba(0, 0, 0, 0.22), transparent 62%);
+}
+
+.photo-hero-wrap {
+  position: relative;
+  z-index: 1;
+  padding: var(--space-6);
+  width: 100%;
+}
+.photo-hero h2 {
+  font-family: var(--font-serif);
+  font-size: clamp(1.8rem, 3.2vw, 2.7rem);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  color: #fff;
+  margin: 0 0 var(--space-3);
+  max-width: 20ch;
+}
+.photo-hero p {
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--brand-dim);
+  max-width: 62ch;
+  margin: 0;
+}
+.photo-hero-figures { margin-top: var(--space-5); }
+
+@media (max-width: 760px) {
+  .photo-hero { min-height: 220px; }
+  .photo-hero-wrap { padding: var(--space-4); }
+}
+
+/* ── PHOTO STRIP ──────────────────────────────────────────────────────────── */
+.photo-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+.photo-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+  aspect-ratio: 3 / 2;
+  /* Deliberately NOT duotoned. The header and the path cards are brand
+     surfaces; these three are captioned evidence — "this is a real machine on a
+     real shelf" — and evidence in a brand colour stops looking like evidence. */
+  background: var(--bg-tertiary) center/cover no-repeat;
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition: transform 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
+}
+.photo-tile:hover { transform: translateY(-2px); box-shadow: var(--edge-lit-strong), var(--elev-3); }
+.photo-tile figcaption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 22px 12px 10px;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: #fff;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.78), transparent);
+}
+@media (prefers-reduced-motion: reduce) { .photo-tile:hover { transform: none; } }
+
+/* ── THE ASK ──────────────────────────────────────────────────────────────── */
+/* The request form was a half-width card below the fold, under a hero and three
+   requirement columns. On a laptop you had to scroll past everything to find
+   the one thing the page is for. It is now full width, directly under the hero. */
+.ask {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: var(--space-6);
+  align-items: start;
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-secondary);
+  background-image: var(--sheen);
+  border: 1px solid var(--gold);
+  box-shadow: 0 0 0 1px var(--gold-dim), var(--edge-lit), var(--elev-2);
+}
+.ask h3 { margin: 0 0 var(--space-2); }
+.ask-label {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+@media (max-width: 760px) { .ask { grid-template-columns: 1fr; gap: var(--space-4); } }
+
+
+/* ── THE ASK: ONE SIZE FOR THE WHOLE FORM ─────────────────────────────────── */
+/* The machine-ID field is set at --text-lg with 10px/14px padding, because it
+   holds the one string a person has to copy and send. The email field beside it
+   was the default size, so the two halves of the same form were visibly
+   different objects — and the field you actually TYPE in was the smaller of the
+   two, which is backwards. Both rows now share the credential's height and
+   type scale. */
+
+.ask input[type="email"] {
+  padding: 10px 14px;
+  font-size: var(--text-lg);
+  font-family: var(--font);
+  border-radius: var(--radius);
+  min-height: 46px;
+}
+.ask input[type="email"]::placeholder {
+  font-size: var(--text-base);
+  color: var(--text-muted);
+}
+.ask .btn {
+  min-height: 46px;
+  padding: 10px 20px;
+  font-size: var(--text-base);
+}
+.ask .credential-value,
+.ask .credential .btn {
+  min-height: 46px;
+  font-size: var(--text-lg);
+}
+.ask .credential .btn { font-size: var(--text-base); padding: 10px 18px; }
+
+/* At narrow widths the three controls stack rather than squeezing: a 46px-tall
+   button squashed to 60px wide is worse than a button on its own line. */
+@media (max-width: 900px) {
+  .ask .btn { flex: 1 1 auto; }
+}
+
+/* ── THE TWO PATHS ────────────────────────────────────────────────────────── */
+/* "What to run it on" was two paragraphs under a heading, which reads as advice.
+   It is not advice — it is a CHOICE, and there are exactly two of them:
+
+     1. the computer you already own, left switched on, with a drive attached
+     2. a small dedicated machine that does nothing else
+
+   Presented as prose, a reader has to work out for themselves that these are
+   alternatives and that picking one is the next thing they do. Presented as two
+   cards side by side, each with its own photograph, badge and shopping list,
+   the choice is the point and the page has an obvious next step.
+
+   Both photographs are of real nodes, and neither is captioned as something it
+   is not: one shows a machine on a shelf, the other a small node in a hand. */
+
+.paths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0 var(--space-6);
+}
+
+.path {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-secondary);
+  background-image: var(--sheen);
+  border: 1px solid var(--border);
+  box-shadow: var(--edge-lit), var(--elev-1);
+  transition: box-shadow 0.18s var(--ease-out), transform 0.18s var(--ease-out),
+              border-color 0.18s var(--ease-out);
+}
+.path:hover {
+  transform: translateY(-2px);
+  border-color: var(--gold);
+  box-shadow: var(--edge-lit-strong), var(--elev-3);
+}
+@media (prefers-reduced-motion: reduce) { .path:hover { transform: none; } }
+
+.path-photo {
+  position: relative;
+  height: 150px;
+  background: var(--bg-tertiary) center/cover no-repeat;
+  border-bottom: 1px solid var(--border);
+}
+/* The same green wash the header carries, so the two photographs on this page
+   belong to the same picture rather than sitting next to each other. */
+.path-photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    /* Only enough shade at the foot to carry the badge. The photographs stay in
+       full colour: they are evidence that a real machine is doing this, and
+       evidence pushed into a brand colour stops reading as evidence. */
+    linear-gradient(0deg, rgba(24, 24, 10, 0.62), rgba(24, 24, 10, 0.10) 46%, transparent 70%);
+}
+
+/* The badge sits on the photo, over its own dark disc, because a number on a
+   photograph is unreadable without one. */
+.path-badge {
+  position: absolute;
+  z-index: 1;
+  left: var(--space-4);
+  bottom: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 13px 5px 6px;
+  border-radius: 999px;
+  background: rgba(24, 24, 10, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.path-badge i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: var(--gold);
+  background-image: var(--sheen-strong);
+  color: var(--text-on-gold);
+  font-style: normal;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.path-body { padding: var(--space-5); flex: 1; display: flex; flex-direction: column; }
+.path-body h4 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+  line-height: 1.25;
+}
+.path-lede {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
+}
+
+.path-list { list-style: none; margin: 0 0 var(--space-4); padding: 0; }
+.path-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.path-list li:last-child { border-bottom: none; }
+.path-list li::before {
+  content: '';
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: var(--gold);
+}
+.path-list b { color: var(--text-primary); font-weight: 700; }
+
+/* "Best for" — the line that actually decides it for most people, so it gets a
+   face of its own at the foot of the card rather than being the last sentence
+   of a paragraph nobody reaches. */
+.path-for {
+  margin-top: auto;
+  padding: 10px 13px;
+  border-radius: var(--radius);
+  background: var(--gold-dim);
+  border: 1px solid rgba(212, 175, 55, 0.30);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+}
+.path-for b {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--gold-text);
+  margin-bottom: 3px;
+}
+
+@media (forced-colors: active) {
+  .path, .path-badge i, .path-for { box-shadow: none; background-image: none; }
+  .path-photo::after { display: none; }
+}
+
+
+/* ── A FULL-WIDTH ESSAY ───────────────────────────────────────────────────── */
+/* `.essay` centres a ~68-character column, which is right for the About page,
+   where the whole page IS the prose. On the Seed Node page it was wrong: the
+   paragraphs sat centred inside the 1100px grid while the cards, the photo strip
+   and the two path cards above them ran the full width, so every block of text
+   started about 240px to the right of everything else on the page. Nothing was
+   aligned with anything.
+
+   `.essay-wide` drops the column and lets the content start where the rest of
+   the page starts. The paragraphs still get a measure — 82 characters, not
+   1100 pixels — because a line you have to track back across the whole window
+   is unreadable however well it lines up. The measure just no longer moves the
+   text off the page's own left edge. */
+.essay.essay-wide {
+  max-width: none;
+  padding-top: var(--space-5);
+}
+.essay.essay-wide p,
+.essay.essay-wide .essay-lede { max-width: 82ch; }
+.essay.essay-wide .pullquote { margin-left: 0; max-width: 88ch; }
+.essay.essay-wide .essay-points { max-width: none; }
+
+/* ── FAQ ──────────────────────────────────────────────────────────────────── */
+/* Built on <details>/<summary>, not a React accordion: it is keyboard- and
+   screen-reader-correct for free, it works before hydration, and Cmd/Ctrl+F
+   finds text inside a closed answer in most browsers — which is exactly what
+   somebody hunting for "bandwidth" or "electricity" will do. */
+
+.faq { margin: var(--space-4) 0 0; }
+
+.faq details {
+  border-bottom: 1px solid var(--border);
+}
+.faq details:first-of-type { border-top: 1px solid var(--border); }
+
+.faq summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: var(--leading-normal);
+  transition: color 0.14s var(--ease-out), background-color 0.14s var(--ease-out);
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary:hover { color: var(--gold-text); background: rgba(var(--shadow-hue), 0.03); }
+.faq summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: var(--radius); }
+
+/* The marker is drawn, not a glyph: a "+" or "▾" in the system font sits at a
+   different height and weight on every platform. */
+.faq summary::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: 8px;
+  border-right: 2px solid var(--gold);
+  border-bottom: 2px solid var(--gold);
+  transform: rotate(-45deg);
+  transition: transform 0.18s var(--ease-out);
+}
+.faq details[open] summary::before { transform: rotate(45deg); margin-top: 6px; }
+.faq details[open] summary { color: var(--gold-text); }
+
+.faq-a {
+  padding: 0 var(--space-2) var(--space-4) calc(9px + var(--space-3) + var(--space-2));
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--text-secondary);
+  max-width: 78ch;
+}
+.faq-a p { margin: 0 0 var(--space-3); }
+.faq-a p:last-child { margin-bottom: 0; }
+.faq-a strong { color: var(--text-primary); }
+.faq-a code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.92em;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+@media (prefers-reduced-motion: reduce) { .faq summary::before { transition: none; } }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NODE DISPLAY — the CLI's kiosk screen, inside the GUI
+   ═══════════════════════════════════════════════════════════════════════════
+
+   The CLI serves a four-screen dashboard on :8137 that people run fullscreen on
+   a little touchscreen beside the machine. Somebody hosting on an old laptop
+   with the GUI has exactly the same wish and no way to get it.
+
+   This is that screen, rendered inside the app. It deliberately does NOT inherit
+   the app's chrome: no sidebar, no masthead, no page padding — it is a display,
+   read from across a room, and everything that helps you navigate an app is
+   clutter on one. The palette is the CLI's own (`assets/dashboard.html`:
+   --olive #707035, --olive2 #908F51, --headertext #F8F8F2, --seedblue #2d6cb5,
+   --peer #f8d355), so the two screens are the same screen. */
+
+.nodedisp {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  background: #F4F4EC;
+  color: #26261a;
+  font-family: var(--font);
+}
+:root[data-theme="dark"] .nodedisp { background: #14140f; color: #ECECE0; }
+
+/* ── Header bar — the CLI's olive, edge to edge ── */
+.nd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 12px 20px;
+  background: #707035;
+  color: #F8F8F2;
+  box-shadow: inset 0 -2px 0 rgba(212, 175, 55, 0.55), 0 2px 10px rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+.nd-brand {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.nd-brand span {
+  margin-left: 10px;
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+.nd-head .grow { flex: 1; }
+
+.nd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.nd-pill i {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #7bd389;
+  box-shadow: 0 0 8px #7bd389;
+  animation: nd-blink 2.4s ease-in-out infinite;
+}
+.nd-pill.off i { background: #bdbdb0; box-shadow: none; animation: none; }
+@keyframes nd-blink { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }
+
+.nd-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.nd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #F8F8F2;
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 0.14s var(--ease-out), border-color 0.14s var(--ease-out);
+}
+.nd-btn:hover { background: rgba(0, 0, 0, 0.34); border-color: rgba(212, 175, 55, 0.7); }
+.nd-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* ── Body ── */
+/* The cards FILL the screen. A kiosk display that leaves two thirds of a
+   monitor empty and puts the figures in a strip along the top is a web page, not
+   a display — the whole reason this exists is to be readable from across a
+   room, and that means the numbers get the room. */
+.nd-body { flex: 1; overflow: auto; padding: 20px; display: flex; }
+.nd-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-auto-rows: minmax(150px, 1fr);
+  align-content: stretch;
+  gap: 14px;
+  max-width: 1500px;
+  margin: 0 auto;
+  width: 100%;
+}
+.nd-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: #FCFCF6;
+  border: 1px solid #DEDED0;
+  box-shadow: 0 1px 2px rgba(60,60,30,0.07);
+}
+:root[data-theme="dark"] .nd-card { background: #1E1E18; border-color: #34342a; }
+
+.nd-lbl {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #8a8a72;
+  margin-bottom: 6px;
+}
+.nd-val {
+  font-size: clamp(1.8rem, 3.4vw, 2.9rem);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+}
+.nd-val.blue { color: #2d6cb5; }
+.nd-val.gold { color: #8a7321; }
+.nd-val.green { color: #3d8a41; }
+:root[data-theme="dark"] .nd-val.blue { color: #6aa3e0; }
+:root[data-theme="dark"] .nd-val.gold { color: #d9bb4e; }
+:root[data-theme="dark"] .nd-val.green { color: #6bbd70; }
+.nd-sub { margin-top: 6px; font-size: var(--text-sm); color: #8a8a72; }
+
+/* The coverage ring, the one figure the CLI screen leads with. */
+.nd-gauge { grid-column: span 1; display: flex; flex-direction: row; align-items: center; gap: 20px; }
+/* The System screen nests a grid inside a full-width cell; it sizes to content. */
+.nd-grid .nd-grid { grid-auto-rows: auto; align-content: start; }
+.nd-ring { position: relative; width: 132px; height: 132px; flex-shrink: 0; }
+.nd-ring svg { transform: rotate(-90deg); display: block; }
+.nd-ring-mid {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.nd-ring-mid b { font-size: 1.7rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.nd-ring-mid small { margin-top: 4px; font-size: var(--text-xs); letter-spacing: 0.1em; text-transform: uppercase; color: #8a8a72; }
+
+/* ── Bottom nav — the CLI's tab strip ── */
+.nd-nav {
+  display: flex;
+  flex-shrink: 0;
+  border-top: 1px solid #DEDED0;
+  background: #EFEFE4;
+}
+:root[data-theme="dark"] .nd-nav { background: #1A1A14; border-top-color: #34342a; }
+.nd-nav button {
+  flex: 1;
+  padding: 16px 10px;
+  background: none;
+  border: none;
+  border-right: 1px solid #DEDED0;
+  font-family: var(--font);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: #6f6f5c;
+  cursor: pointer;
+  transition: background-color 0.14s var(--ease-out), color 0.14s var(--ease-out);
+}
+:root[data-theme="dark"] .nd-nav button { border-right-color: #34342a; color: #9a9a86; }
+.nd-nav button:last-child { border-right: none; }
+.nd-nav button:hover { background: rgba(112,112,53,0.10); color: #4a4a36; }
+.nd-nav button[aria-pressed="true"] {
+  background: #707035;
+  color: #F8F8F2;
+  box-shadow: inset 0 3px 0 var(--gold);
+}
+/* The dark-mode rule above is `:root[data-theme="dark"] .nd-nav button` — (0,3,1)
+   — which outranks `.nd-nav button[aria-pressed="true"]` at (0,2,1) whatever the
+   order. So in dark mode the SELECTED tab was still wearing the muted colour
+   meant for the unselected ones, on a gold-topped olive fill. Same trap as the
+   brand tokens earlier: specificity beats source order, and a theme scope is
+   worth one more point than you expect. */
+:root[data-theme="dark"] .nd-nav button[aria-pressed="true"] { color: #F8F8F2; }
+.nd-nav button:focus-visible { outline: 2px solid var(--gold); outline-offset: -3px; }
+
+/* ── The throughput trace across the foot of the Stats screen ── */
+.nd-trace { margin-top: 14px; }
+.nd-trace svg { display: block; width: 100%; }
+
+@media (prefers-reduced-motion: reduce) { .nd-pill i { animation: none; } }

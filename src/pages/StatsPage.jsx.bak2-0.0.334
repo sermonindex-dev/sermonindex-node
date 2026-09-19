@@ -1,8 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import PageHead, { Panel } from '../components/PageHead.jsx';
-import { CoverageMeter, MixBars, TrendArea, DailyColumns, ChartTable } from '../components/charts.jsx';
-import { openNodeDisplay, nodeDisplayUrl } from '../services/nodeDisplay.js';
-import { readSeedGranted } from '../utils/nodeStatus.js';
 import { getSeedProgress } from '../services/catalog.js';
 import { getIpv6Observation } from '../services/torrent.js';
 import ConnectivityChart from '../components/ConnectivityChart.jsx';
@@ -217,14 +213,6 @@ function formatContribution(bytes) {
   return '0 GB';
 }
 
-// A screen on a stand — the Node display launcher.
-const iconDisplay = (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="2" y="4" width="20" height="13" rx="2" />
-    <path d="M9 21h6M12 17v4" />
-  </svg>
-);
-
 // Feather-style bar-chart glyph for the page heading + sidebar nav.
 const iconStats = (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -268,29 +256,190 @@ const iconChevron = (
 );
 
 /**
- * ShareRow — one option in the invite/share dropdown.
- *
- * This used to carry its own `useState(hov)` plus four mouse/focus handlers to
- * paint its own highlight. That is a React re-render on every pointer crossing,
- * for an effect :hover gives away, and it only worked for the keyboard because
- * the component ALSO listened for focus — a second source of truth for one
- * visual state. `.menu-item` in the stylesheet does both, in one place.
+ * ShareRow — one option in the invite/share dropdown. Manages its own hover /
+ * focus highlight (inline styles, no CSS class) and renders as a real <button>
+ * so it's keyboard-focusable for accessibility.
  */
 function ShareRow({ icon, label, onSelect }) {
+  const [hov, setHov] = useState(false);
   return (
-    <button type="button" role="menuitem" className="menu-item" onClick={onSelect}>
-      <span className="menu-item-icon">{icon}</span>
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onSelect}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      onFocus={() => setHov(true)}
+      onBlur={() => setHov(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '9px', width: '100%',
+        textAlign: 'left', background: hov ? 'var(--bg-tertiary)' : 'transparent',
+        border: 'none', borderRadius: '6px', padding: '8px 11px', cursor: 'pointer',
+        color: hov ? 'var(--gold-text)' : 'var(--text-secondary)',
+        fontSize: 'var(--text-sm)', fontWeight: 600, fontFamily: 'inherit',
+        transition: 'background 0.12s ease, color 0.12s ease',
+      }}
+    >
+      <span style={{ display: 'inline-flex', width: 16, justifyContent: 'center' }}>{icon}</span>
       {label}
     </button>
   );
 }
 
-/* The four chart components that used to live here — CoverageDonut,
-   BreakdownBars, AreaSparkline and DailyBars — now live in
-   `components/charts.jsx`, rebuilt. They shared one bug that mattered more than
-   any styling: a fixed `viewBox` with `preserveAspectRatio="none"` and
-   `width="100%"`, which does not scale a chart but STRETCHES it. Bar widths and
-   line slopes were a function of the window size. See that file for the rest. */
+/**
+ * CoverageDonut — an olive→gold ring showing the % of the library this node
+ * hosts, with the exact figure in the center. Pure inline SVG (no chart dep).
+ */
+function CoverageDonut({ pct }) {
+  const size = 168, thickness = 16;
+  const r = (size - thickness) / 2;
+  const C = 2 * Math.PI * r;
+  // Ensure a tiny non-zero % still shows a visible sliver; center text stays exact.
+  const shown = pct > 0 ? Math.min(100, Math.max(pct, 2)) : 0;
+  const len = (shown / 100) * C;
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <defs>
+          <linearGradient id="stats-cov-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="var(--olive)" />
+            <stop offset="100%" stopColor="var(--gold-text)" />
+          </linearGradient>
+        </defs>
+        <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--olive-dim)" strokeWidth={thickness} />
+          {pct > 0 && (
+            <circle
+              cx={size / 2} cy={size / 2} r={r} fill="none"
+              stroke="url(#stats-cov-grad)" strokeWidth={thickness} strokeLinecap="round"
+              strokeDasharray={`${len} ${C - len}`}
+            />
+          )}
+        </g>
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: 'var(--gold-text)', lineHeight: 1 }}>
+          {pct.toFixed(pct >= 10 ? 0 : 1)}%
+        </div>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+          of library
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * BreakdownBars — horizontal bars for the audio vs video you're hosting.
+ * Gold = audio, olive = video, scaled to whichever is larger.
+ */
+function BreakdownBars({ audio, video }) {
+  const max = Math.max(1, audio, video);
+  const rows = [
+    { label: 'Audio sermons', value: audio, color: 'var(--gold-text)' },
+    { label: 'Video sermons', value: video, color: 'var(--olive)' },
+  ];
+  return (
+    <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 16, justifyContent: 'center' }}>
+      {rows.map((r) => (
+        <div key={r.label}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 'var(--text-sm)', marginBottom: 6 }}>
+            <span style={{ color: 'var(--text-secondary)' }}>{r.label}</span>
+            <span style={{ color: r.color, fontWeight: 700 }}>{r.value.toLocaleString()}</span>
+          </div>
+          <div style={{ height: 11, borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+            <div style={{ width: `${(r.value / max) * 100}%`, height: '100%', background: r.color, borderRadius: 6, transition: 'width 0.5s ease' }} />
+          </div>
+        </div>
+      ))}
+      {audio + video === 0 && (
+        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', margin: 0 }}>
+          Download a few sermons and your hosting mix will appear here.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * AreaSparkline — a filled area chart of the live "peers helped" samples.
+ * Mirrors the hub dashboard's AreaChart: fixed viewBox, responsive width,
+ * gold line over a soft gold gradient. Pure inline SVG.
+ */
+function AreaSparkline({ data, height = 120, gradId = 'stats-spark-grad' }) {
+  const w = 340, h = height, pad = 6;
+  const arr = data && data.length ? data : [0];
+  const max = Math.max(1, ...arr);
+  const n = arr.length;
+  const pts = arr.map((v, i) => {
+    const x = n <= 1 ? w - pad : pad + (i / (n - 1)) * (w - 2 * pad);
+    const y = h - pad - ((Number(v) || 0) / max) * (h - 2 * pad);
+    return [x, y];
+  });
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const area = `${line} L ${w - pad} ${h - pad} L ${pad} ${h - pad} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none">
+      <defs>
+        {/* The gradient id is a prop so a second sparkline on the page gets its
+            own <defs> id rather than two elements sharing one. */}
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--gold-text)" stopOpacity="0.38" />
+          <stop offset="100%" stopColor="var(--gold-text)" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gradId})`} />
+      <path d={line} fill="none" stroke="var(--gold-text)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+/**
+ * DailyBars — one bar per day of the local daily record. Same rendering
+ * approach as AreaSparkline above (fixed viewBox, responsive width, inline SVG,
+ * gold from the existing tokens — no new colours, no charting dependency).
+ * `data` is [{ d:'YYYY-MM-DD', v:<number> }]; `format` labels the hover tooltip.
+ */
+function DailyBars({ data, height = 120, format = (v) => String(v) }) {
+  const w = 340, h = height, pad = 6;
+  const arr = data && data.length ? data : [{ d: '', v: 0 }];
+  const max = Math.max(1, ...arr.map(x => Number(x.v) || 0));
+  const slot = (w - 2 * pad) / arr.length;
+  const bw = Math.max(1.5, slot * 0.6);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="stats-daily-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--gold-text)" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="var(--gold-text)" stopOpacity="0.3" />
+        </linearGradient>
+      </defs>
+      {arr.map((x, i) => {
+        const v = Number(x.v) || 0;
+        // Zero days draw nothing at all — an empty column is the honest picture
+        // of a day when nothing was shared.
+        const bh = v > 0 ? Math.max(2, (v / max) * (h - 2 * pad)) : 0;
+        return (
+          <rect
+            key={x.d || i}
+            x={pad + slot * i + (slot - bw) / 2}
+            y={h - pad - bh}
+            width={bw}
+            height={bh}
+            fill="url(#stats-daily-grad)"
+          >
+            <title>{`${dayLabel(x.d)} — ${format(v)}`}</title>
+          </rect>
+        );
+      })}
+      {/* Baseline, so a run of empty days still reads as a chart. */}
+      <line
+        x1={pad} y1={h - pad} x2={w - pad} y2={h - pad}
+        stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
 
 /**
  * StatsPage — "Your Stats": a worshipful, encouraging view of THIS node's real
@@ -313,14 +462,6 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
   const [samples, setSamples] = useState([]);        // live "peers helped" sparkline
   const [copied, setCopied] = useState(false);
   const [shareOpen, setShareOpen] = useState(false); // invite/share dropdown (hover / click / focus)
-  // The node display. This used to be a React overlay inside the app window —
-  // close to the CLI's screen, which was exactly the problem: two files to keep
-  // in step and a fullscreen fighting the app's own window. It is now the CLI's
-  // actual page, served by the app over HTTP and opened in a browser, where
-  // fullscreen is the browser's own and simply works. See
-  // services/nodeDisplay.js and src-tauri/src/nodedisplay.rs.
-  const [displayUrl, setDisplayUrl] = useState(null);
-  const [displayErr, setDisplayErr] = useState('');
   const copiedTimer = useRef(null);
   const peersRef = useRef(0);                          // latest peers for the sampler
   // Direction (0.0.331). `peers` above is a bare total; these say who dialled
@@ -507,32 +648,6 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
   const dataLabel = formatContribution(uploaded);
   const peakPeers = samples.length ? Math.max(...samples) : peers;
 
-  // The display reads its own sources (see services/nodeDisplay.js) rather than
-  // being fed from here. It used to take a callback built from this page's
-  // props, which meant it could only ever know what this one page happened to
-  // hold — and this page holds no `running`, no listen port, no uptime and no
-  // storage path. A kiosk screen also has to keep moving after its owner has
-  // navigated away, which a page-owned callback cannot do.
-
-  const launchDisplay = useCallback(async () => {
-    setDisplayErr('');
-    try {
-      const url = await openNodeDisplay();
-      setDisplayUrl(url);
-    } catch (e) {
-      console.warn('[Stats] node display failed:', e);
-      setDisplayErr(String(e?.message || e));
-    }
-  }, []);
-
-  // If the server is already up from an earlier visit, say so rather than
-  // making the user press the button to find out.
-  useEffect(() => {
-    let alive = true;
-    nodeDisplayUrl().then(u => { if (alive && u) setDisplayUrl(u); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-
   const tiles = [
     { value: seeding.toLocaleString(), label: "Sermons you're seeding", color: 'var(--gold-text)' },
     { value: dataLabel, label: "Data you've contributed", color: 'var(--green)' },
@@ -548,57 +663,12 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
           they lay out far better across the whole width than squeezed into one
           column. Everything below is split into two. */}
       <div className="page-header-wide">
-      <PageHead
-        kicker="Your node"
-        icon={iconStats}
-        title="Your Stats"
-        sub="What you have contributed to preserving God's Word for the world."
-        aside={
-          <button
-            type="button"
-            className="btn btn-on-brand"
-            onClick={launchDisplay}
-            title="Opens the same display the command-line node serves, in your browser"
-          >
-            {iconDisplay} Node display
-          </button>
-        }
-      />
-
-      {(displayUrl || displayErr) && (
-        <div className="page-header-wide" style={{ marginBottom: 'var(--space-4)' }}>
-          <div className="verdict plain quiet" style={{ marginBottom: 0 }}>
-            <span className="verdict-mark" aria-hidden="true">{iconDisplay}</span>
-            <div className="verdict-copy">
-              <div className="verdict-title">
-                {displayErr ? 'The node display could not start' : 'Node display is running'}
-              </div>
-              <p>
-                {displayErr || (
-                  <>
-                    It opened in your browser, where full screen is the browser&rsquo;s own
-                    (<strong>F11</strong> on Windows and Linux, <strong>⌃⌘F</strong> on a Mac).
-                    It keeps updating while this app is open — and because it is a real
-                    server, you can open the same display on a phone or tablet on this
-                    network.
-                  </>
-                )}
-              </p>
-              {displayUrl && !displayErr && (
-                <div className="credential" style={{ maxWidth: '380px' }}>
-                  <span className="credential-value" style={{ fontSize: 'var(--text-base)' }}>{displayUrl}</span>
-                  <button
-                    className="btn btn-outline"
-                    onClick={() => { try { navigator.clipboard.writeText(displayUrl); } catch {} }}
-                  >
-                    Copy
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="page-header">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ display: 'inline-flex', color: 'var(--gold-text)' }}>{iconStats}</span> Your Stats
+        </h2>
+        <p>Your contribution to preserving God's Word for the world</p>
+      </div>
 
       {/* Hero — encouraging framing, the live stat tiles, and the one-click invite */}
       <div
@@ -629,12 +699,24 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
             </button>
 
             {shareOpen && (
-              <div role="menu" className="menu" style={{ top: 'calc(100% + 6px)', right: 0 }}>
-                <ShareRow icon={iconX} label="X (Twitter)" onSelect={() => { openExternal(SHARE_X); setShareOpen(false); }} />
-                <ShareRow icon={iconFacebook} label="Facebook" onSelect={() => { openExternal(SHARE_FB); setShareOpen(false); }} />
-                <ShareRow icon={iconEmail} label="Email" onSelect={() => { openExternal(SHARE_EMAIL); setShareOpen(false); }} />
-                <div className="menu-sep" role="separator" />
-                <ShareRow icon={iconCopy} label="Copy link" onSelect={() => { handleInvite(); setShareOpen(false); }} />
+              <div role="menu" style={{ position: 'absolute', top: '100%', right: 0, paddingTop: '6px', zIndex: 30 }}>
+                <div style={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  boxShadow: '0 10px 28px rgba(0,0,0,0.18)',
+                  padding: '5px',
+                  minWidth: '190px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '1px',
+                }}>
+                  <ShareRow icon={iconX} label="X (Twitter)" onSelect={() => { openExternal(SHARE_X); setShareOpen(false); }} />
+                  <ShareRow icon={iconFacebook} label="Facebook" onSelect={() => { openExternal(SHARE_FB); setShareOpen(false); }} />
+                  <ShareRow icon={iconEmail} label="Email" onSelect={() => { openExternal(SHARE_EMAIL); setShareOpen(false); }} />
+                  <div style={{ height: '1px', background: 'var(--border)', margin: '4px 6px' }} />
+                  <ShareRow icon={iconCopy} label="Copy link" onSelect={() => { handleInvite(); setShareOpen(false); }} />
+                </div>
               </div>
             )}
 
@@ -683,57 +765,52 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
       <div className="connections-left">
 
       {/* Coverage donut + audio/video breakdown */}
-      <Panel
-        mark={iconStats}
-        title="Library Coverage & Your Hosting Mix"
-        sub={`How much of the ${coverage.scope === 'full' ? 'full' : 'audio'} library you hold`}
-      >
+      <div className="seed-card">
+        <h3>Library Coverage & Your Hosting Mix</h3>
         <p style={{ marginBottom: '18px' }}>
           How much of the {coverage.scope === 'full' ? 'full' : 'audio'} library you're holding right now, and
           the split between audio and video sermons you're sharing with the network.
         </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '32px', alignItems: 'flex-start' }}>
-          <CoverageMeter
-            pct={coverage.pct}
-            downloaded={coverage.downloaded}
-            total={coverage.total}
-          />
-          <MixBars audio={breakdown.audio} video={breakdown.video} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '28px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <CoverageDonut pct={coverage.pct} />
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+              {coverage.downloaded.toLocaleString()} of {coverage.total.toLocaleString()} sermons
+            </div>
+          </div>
+          <BreakdownBars audio={breakdown.audio} video={breakdown.video} />
         </div>
-      </Panel>
+      </div>
 
       {/* What you've shared each day — real figures from the SAME lifetime
           uploaded total heartbeat.js reports (si-uploaded-lifetime). Each bar
           is the rise in that total since the previous recorded day, so nothing
           here is estimated. The app kept no history before now, so the record
           honestly begins the first day this page is opened. */}
-      <Panel
-        mark={iconStats}
-        title="What You've Shared Each Day"
-        sub="Real figures — no estimates, no back-fill"
-        aside={
-          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-            Total <strong style={{ color: 'var(--gold-text)' }}>{formatContribution(sharedInWindow)}</strong>
-            {bestDay > 0 && <> · Best <strong style={{ color: 'var(--text-secondary)' }}>{formatContribution(bestDay)}</strong></>}
+      <div className="seed-card">
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+          <h3 style={{ marginBottom: 0 }}>What You've Shared Each Day</h3>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+            Total: <strong style={{ color: 'var(--gold-text)' }}>{formatContribution(sharedInWindow)}</strong>
+            {bestDay > 0 && <> · Best day: <strong style={{ color: 'var(--text-secondary)' }}>{formatContribution(bestDay)}</strong></>}
           </span>
-        }
-      >
-        <p style={{ marginTop: 0, marginBottom: '14px' }}>
+        </div>
+        <p style={{ marginTop: '6px', marginBottom: '14px' }}>
           Every bar is what your computer passed on to other believers that day. Each one covers the
           time since the last day you had the app open, so nothing you gave is missed.
         </p>
-        <DailyColumns data={dailyShared} format={formatContribution} dayLabel={dayLabel} />
-        <ChartTable
-          id="tbl-shared"
-          head={['Day', 'Shared']}
-          rows={[...dailyShared].reverse().map(x => [dayLabel(x.d), formatContribution(x.v)])}
-        />
+        <div style={{
+          background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '10px 8px 4px',
+        }}>
+          <DailyBars data={dailyShared} format={formatContribution} />
+        </div>
         <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', margin: '10px 0 0' }}>
           {daysRecorded > 1
             ? `Keeping a record since ${firstDayLabel} — the last ${daysRecorded} days you had the app open.`
             : 'This started keeping a record today, so it will fill out over the coming days.'}
         </p>
-      </Panel>
+      </div>
 
       </div>
 
@@ -781,7 +858,12 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
           all day as your node rotates through the library — a zero here means nobody is mid-download
           this second, not that you have helped nobody.
         </p>
-        <TrendArea data={samples} label="peers connected" format={(v) => Math.round(v).toLocaleString()} />
+        <div style={{
+          background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '10px 8px 4px',
+        }}>
+          <AreaSparkline data={samples} />
+        </div>
       </div>
 
       {/* Sermons safe on your computer, day by day — the count of files that
@@ -802,16 +884,12 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
         </p>
         {daysRecorded > 1 ? (
           <>
-            <TrendArea
-              data={dailyHeld.map(x => x.v)}
-              label="sermons held"
-              format={(v) => Math.round(v).toLocaleString()}
-            />
-            <ChartTable
-              id="tbl-held"
-              head={['Day', 'Sermons held']}
-              rows={[...dailyHeld].reverse().map(x => [dayLabel(x.d), Math.round(x.v).toLocaleString()])}
-            />
+            <div style={{
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', padding: '10px 8px 4px',
+            }}>
+              <AreaSparkline data={dailyHeld.map(x => x.v)} gradId="stats-held-grad" />
+            </div>
             <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', margin: '10px 0 0' }}>
               From {firstDayLabel} to today.
             </p>

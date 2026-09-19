@@ -159,7 +159,7 @@ export default function UpdatePrompt({ inline = false }) {
       <span
         style={{
           flex: 1, minWidth: 0,
-          fontSize: '0.78rem', fontWeight: 600, lineHeight: 1.35,
+          fontSize: 'var(--text-sm)', fontWeight: 600, lineHeight: 1.35,
           color: error ? 'var(--orange, #b85c00)' : 'var(--sidebar-text, #F8F8F2)',
         }}
       >

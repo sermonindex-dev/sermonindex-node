@@ -173,6 +173,7 @@ async function ensureTables(): Promise<void> {
         seed_progress REAL DEFAULT 0,
         seed_verified INTEGER DEFAULT 0,
         peak_storage_bytes INTEGER DEFAULT 0,
+        quiet INTEGER DEFAULT 0,
         last_seen TEXT,
         first_seen TEXT,
         total_heartbeats INTEGER DEFAULT 0,
@@ -318,6 +319,11 @@ async function ensureTables(): Promise<void> {
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN peak_storage_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
   // All-time storage downloaded across every node ever (sum of peak_storage_bytes).
   try { await dbQuery(`ALTER TABLE stats_snapshots ADD COLUMN total_storage_bytes_all INTEGER DEFAULT 0`); } catch { /* exists */ }
+  // Scheduled quiet hours (node v0.1.14+): the node is online and heartbeating
+  // but intentionally not seeding/serving right now (e.g. Sunday service — the
+  // building's bandwidth belongs to the livestream). Shown as a badge so an
+  // idle seed reads as scheduled, not broken.
+  try { await dbQuery(`ALTER TABLE nodes ADD COLUMN quiet INTEGER DEFAULT 0`); } catch { /* exists */ }
 
   _tablesCreated = true;
 }
@@ -527,6 +533,7 @@ label{display:block;font-size:0.74rem;color:var(--text2);margin-bottom:4px;font-
 .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:0.7em;font-weight:700;letter-spacing:0.02em;}
 .b-on{background:rgba(61,138,65,0.15);color:var(--green);}
 .b-off{background:rgba(136,136,136,0.15);color:var(--muted);}
+.b-quiet{background:rgba(94,129,212,0.15);color:#7f9be8;}
 .b-seed{background:rgba(212,175,55,0.2);color:var(--gold-text);}
 .b-user{background:rgba(112,112,53,0.15);color:var(--olive);}
 .b-node{background:rgba(61,138,65,0.15);color:var(--green);}
@@ -677,6 +684,9 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   // BitTorrent port reachability: true = port open/reachable, false = closed,
   // anything else (null/undefined) = unknown → stored as 0.
   const reachable = body.reachable === true ? 1 : (body.reachable === false ? 0 : 0);
+  // Scheduled quiet hours (node v0.1.14+). Older clients omit the key → 0,
+  // which is correct: a node that can't report quiet hours doesn't have them.
+  const quiet = body.quiet === true ? 1 : 0;
 
   // Seed telemetry (app v0.0.328+). CRITICAL: older clients omit these keys
   // entirely, and an omitted field must never overwrite a previously-good value.
@@ -722,10 +732,10 @@ async function handleHeartbeat(req: Request): Promise<Response> {
   await dbQuery(
     `INSERT INTO nodes
       (node_id, lat, lon, city, country, region, files_stored, storage_used_bytes, uploaded_bytes, peers_connected,
-       uptime_seconds, library_coverage, content_mode, app_version, node_type, reachable,
+       uptime_seconds, library_coverage, content_mode, app_version, node_type, reachable, quiet,
        seed_scope, seed_progress, seed_verified, peak_storage_bytes,
        last_seen, first_seen, total_heartbeats, is_online)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)
      ON CONFLICT(node_id) DO UPDATE SET
        lat=excluded.lat, lon=excluded.lon, city=excluded.city, country=excluded.country, region=excluded.region,
        files_stored=excluded.files_stored, storage_used_bytes=excluded.storage_used_bytes,
@@ -735,6 +745,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
        library_coverage=excluded.library_coverage, content_mode=excluded.content_mode,
        app_version=excluded.app_version, node_type=excluded.node_type,
        reachable=excluded.reachable,
+       quiet=excluded.quiet,
        seed_scope=COALESCE(?, nodes.seed_scope),
        seed_progress=COALESCE(?, nodes.seed_progress),
        seed_verified=COALESCE(?, nodes.seed_verified),
@@ -748,7 +759,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
     // omitted field COALESCEs back to the row's existing value.
     [
       nodeId, lat, lon, city, country, region, filesStored, storageBytes, uploadedBytes, peers,
-      uptime, coverage, contentMode, appVersion, nodeType, reachable,
+      uptime, coverage, contentMode, appVersion, nodeType, reachable, quiet,
       seedScopeIn ?? "", seedProgressIn ?? 0, seedVerifiedIn ?? 0, storageBytes,
       ts, ts,
       seedScopeIn, seedProgressIn, seedVerifiedIn,
@@ -949,7 +960,7 @@ async function handleMap(): Promise<Response> {
   await ensureTables();
   const online = isoMinutesAgo(15);
   const { rows } = await dbQuery(
-    `SELECT node_id, lat, lon, city, country, region, library_coverage, node_type, reachable,
+    `SELECT node_id, lat, lon, city, country, region, library_coverage, node_type, reachable, quiet,
             files_stored, app_version, content_mode, peers_connected, storage_used_bytes
        FROM nodes WHERE is_online=1 AND last_seen >= ?`,
     [online],
@@ -969,6 +980,8 @@ async function handleMap(): Promise<Response> {
     peers: toInt(r.peers_connected, 0),
     storage: toInt(r.storage_used_bytes, 0),
     reachable: Number(r.reachable) || 0,
+    // Scheduled quiet hours in effect — online but intentionally not serving.
+    quiet: Number(r.quiet) || 0,
     category: nodeCategory(r),
   }));
   return jsonResponse({ nodes, count: nodes.length }, 200, { "Cache-Control": "public, max-age=30" });
@@ -993,7 +1006,8 @@ async function handleStats(): Promise<Response> {
               COALESCE(SUM(storage_used_bytes),0) totalStorage,
               COALESCE(AVG(library_coverage),0) avgCoverage,
               COUNT(DISTINCT country) countries,
-              COALESCE(SUM(peers_connected),0) totalPeers
+              COALESCE(SUM(peers_connected),0) totalPeers,
+              SUM(CASE WHEN quiet=1 THEN 1 ELSE 0 END) quietNodes
          FROM nodes WHERE is_online=1 AND last_seen >= ?`,
       [online],
     ),
@@ -1012,6 +1026,8 @@ async function handleStats(): Promise<Response> {
     avgCoverage: Math.round(toNum(r.avgCoverage, 0) * 10) / 10,
     countries: toInt(r.countries, 0),
     totalPeers: toInt(r.totalPeers, 0),
+    // Online nodes currently in scheduled quiet hours (not serving on purpose).
+    quietNodes: toInt(r.quietNodes, 0),
     totalNodesEver: toInt(all.rows[0]?.totalNodesEver, 0),
     networkSince: since.rows[0]?.networkSince || null,
   });
@@ -1566,7 +1582,7 @@ async function pageNodes(): Promise<Response> {
     ),
     // Nodes joined with seed_access flag and a per-node shared-sermon count.
     dbQuery(
-      `SELECT n.node_id, n.city, n.country, n.region, n.is_online, n.last_seen, n.node_type, n.reachable,
+      `SELECT n.node_id, n.city, n.country, n.region, n.is_online, n.last_seen, n.node_type, n.reachable, n.quiet,
               n.files_stored, n.library_coverage, n.app_version,
               COALESCE(sa.enabled, 0) AS seed_enabled,
               (SELECT COUNT(*) FROM shared_sermons ss WHERE ss.node_id = n.node_id) AS shared_count
@@ -1726,7 +1742,13 @@ async function pageNodes(): Promise<Response> {
       return `<tr>
         <td><code>#${escapeHtml(String(n.node_id).slice(0, 8))}</code></td>
         <td>${escapeHtml(fmtLocation(n.city, n.region, n.country))}</td>
-        <td>${isOnline ? '<span class="badge b-on">online</span>' : '<span class="badge b-off">offline</span>'}</td>
+        <td>${
+          isOnline
+            ? (toInt(n.quiet, 0) === 1
+                ? '<span class="badge b-quiet" title="Scheduled quiet hours — online but intentionally not seeding/serving right now (e.g. Sunday service).">quiet</span>'
+                : '<span class="badge b-on">online</span>')
+            : '<span class="badge b-off">offline</span>'
+        }</td>
         <td>${n.node_type === "seed" ? '<span class="badge b-seed">seed</span>' : '<span class="badge b-user">user</span>'}</td>
         <td>${classBadge}</td>
         <td>${toInt(n.shared_count, 0)}</td>
@@ -1770,7 +1792,7 @@ async function pageSeedNodes(): Promise<Response> {
   const online = isoMinutesAgo(15);
   const { rows } = await dbQuery(
     `SELECT sa.node_id, sa.email, sa.enabled, sa.requested_at, sa.enabled_at,
-            n.city, n.region, n.country, n.is_online, n.last_seen, n.node_type, n.reachable,
+            n.city, n.region, n.country, n.is_online, n.last_seen, n.node_type, n.reachable, n.quiet,
             n.files_stored, n.storage_used_bytes, n.library_coverage, n.uploaded_bytes,
             n.app_version, n.uptime_seconds, n.seed_scope, n.seed_progress, n.seed_verified,
             (SELECT COUNT(*) FROM shared_sermons ss WHERE ss.node_id = sa.node_id) AS seeding_now
@@ -1848,6 +1870,9 @@ async function pageSeedNodes(): Promise<Response> {
     `<td>${r.last_seen ? escapeHtml(fmtLocation(r.city, r.region, r.country)) : '<span class="muted">—</span>'}</td>`;
   const statusCell = (r: any) => {
     if (!r.last_seen) return '<td><span class="badge b-off" title="No heartbeat has ever been received from this node.">never seen</span></td>';
+    if (isOnlineRow(r) && toInt(r.quiet, 0) === 1) {
+      return '<td><span class="badge b-quiet" title="Scheduled quiet hours — online but intentionally not seeding/serving right now (e.g. Sunday service).">quiet</span></td>';
+    }
     return `<td>${isOnlineRow(r) ? '<span class="badge b-on">online</span>' : '<span class="badge b-off">offline</span>'}</td>`;
   };
   // Scope badge: which slice of the catalog the node set out to seed.

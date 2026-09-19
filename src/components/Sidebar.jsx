@@ -29,9 +29,18 @@ const icons = {
       <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
     </svg>
   ),
+  // Every other icon in this column is a 24-unit outline at 1.8px. This one was
+  // a SOLID fill on a 256 viewBox, so at 18px it rendered as a pale block among
+  // delicate line drawings — the one heavy mark in the whole sidebar, and the
+  // first thing your eye landed on for no reason. Redrawn in the column's own
+  // language: a board, a chip, its pins, and a signal leaving it.
   seed: (
-    <svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor">
-      <path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM88,160a8,8,0,1,1-8,8A8,8,0,0,1,88,160ZM48,48H80v97.38a24,24,0,1,0,16,0V115.31l48,48V208H48ZM208,208H160V160a8,8,0,0,0-2.34-5.66L96,92.69V48h32V72a8,8,0,0,0,2.34,5.66l16,16A23.74,23.74,0,0,0,144,104a24,24,0,1,0,24-24,23.74,23.74,0,0,0-10.34,2.35L144,68.69V48h64V208ZM168,96a8,8,0,1,1-8,8A8,8,0,0,1,168,96Z" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="14" height="14" rx="2.5" />
+      <rect x="8" y="10" width="4" height="4" rx="1" />
+      <path d="M10 5V3.5M7 19v1.5M13 19v1.5" />
+      <path d="M3 9H1.5M3 15H1.5" />
+      <path d="M19.5 9.5a4.5 4.5 0 0 1 0 5M21.8 7.5a8 8 0 0 1 0 9" />
     </svg>
   ),
   seedLocked: (
@@ -66,6 +75,39 @@ const icons = {
   ),
 };
 
+// The whole navigation, in one place. Keys match the accelerators registered
+// by the native View menu (src-tauri/src/appmenu.rs) — if you add a
+// destination, add it in both or the shortcut silently does nothing.
+const NAV = [
+  { items: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', key: '1' },
+  ] },
+  { label: 'Library', items: [
+    { id: 'library', label: 'Browse Sermons', icon: 'library', key: '2' },
+    { id: 'bulk-download', label: 'Bulk Download', icon: 'bulkDownload' },
+    { id: 'downloads', label: 'My Downloads', icon: 'downloads', key: '3' },
+  ] },
+  { label: 'Network', items: [
+    { id: 'network', label: 'Node Map', icon: 'globe', key: '4' },
+    { id: 'seed', label: 'Seed Node', icon: 'seed', key: '5' },
+    { id: 'stats', label: 'Your Stats', icon: 'stats', key: '6' },
+    { id: 'community', label: 'Community', icon: 'chat' },
+  ] },
+  { label: 'App', items: [
+    { id: 'connections', label: 'Connections', icon: 'connections', key: '7' },
+    { id: 'settings', label: 'Settings', icon: 'settings' },
+    { id: 'about', label: 'About', icon: 'about' },
+  ] },
+];
+
+// Show the symbol the person's own keyboard has. A Windows user shown ⌘ learns
+// nothing; a Mac user shown "Ctrl" is told something untrue.
+const MOD = (() => {
+  try {
+    return /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent) ? '\u2318' : 'Ctrl+';
+  } catch { return 'Ctrl+'; }
+})();
+
 export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedUnlocked, libraryStats, announcement, unreadChat = 0, chatShow = true, nodesOnline = null, seedsOnline = null, version = '' }) {
   const coverage = libraryStats ? libraryStats.coverage : 0;
 
@@ -82,85 +124,66 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
         </div>
       </div>
 
-      <div className="sidebar-nav">
-        <div className="nav-section">
-          <div className={`nav-item ${page === 'dashboard' ? 'active' : ''}`} onClick={() => onNavigate('dashboard')}>
-            <span className="icon">{icons.dashboard}</span> Dashboard
-          </div>
-        </div>
-        <div className="nav-section">
-          <div className="nav-section-label">Library</div>
-          <div className={`nav-item ${page === 'library' ? 'active' : ''}`} onClick={() => onNavigate('library')}>
-            <span className="icon">{icons.library}</span> Browse Sermons
-          </div>
-          <div className={`nav-item ${page === 'bulk-download' ? 'active' : ''}`} onClick={() => onNavigate('bulk-download')}>
-            <span className="icon">{icons.bulkDownload}</span> Bulk Download
-          </div>
-          <div className={`nav-item ${page === 'downloads' ? 'active' : ''}`} onClick={() => onNavigate('downloads')}>
-            <span className="icon">{icons.downloads}</span> My Downloads
-          </div>
-        </div>
+      {/* ── Navigation ──────────────────────────────────────────────────────
+          Data-driven rather than twenty hand-written blocks. The old version
+          repeated the same nine lines per destination, which is why the count
+          pills and the badge had drifted into three different treatments.
 
-        <div className="nav-section">
-          <div className="nav-section-label">Network</div>
-          <div className={`nav-item ${page === 'network' ? 'active' : ''}`} onClick={() => onNavigate('network')}>
-            <span className="icon">{icons.globe}</span> Node Map
-            {nodesOnline !== null && (
-              <span className="nav-count" title={`${nodesOnline} node${nodesOnline === 1 ? '' : 's'} online`}>
-                [{nodesOnline}]
-              </span>
-            )}
-          </div>
-          <div className={`nav-item ${page === 'seed' ? 'active' : ''}`} onClick={() => onNavigate('seed')}>
-            <span className="icon">{icons.seed}</span> Seed Node
-            {seedsOnline !== null && (
-              <span className="nav-count" title={`${seedsOnline} seed node${seedsOnline === 1 ? '' : 's'} online`}>
-                [{seedsOnline}]
-              </span>
-            )}
-          </div>
-          <div className={`nav-item ${page === 'stats' ? 'active' : ''}`} onClick={() => onNavigate('stats')}>
-            <span className="icon">{icons.stats}</span> Your Stats
-          </div>
-          {chatShow && (
-            <div className={`nav-item ${page === 'community' ? 'active' : ''}`} onClick={() => onNavigate('community')}>
-              <span className="icon">{icons.chat}</span> Community
-              {unreadChat > 0 && (
-                <span className="nav-badge">{unreadChat > 99 ? '99+' : unreadChat}</span>
-              )}
-            </div>
-          )}
-        </div>
+          Two upgrades beyond tidiness:
 
-        <div className="nav-section">
-          <div className="nav-section-label">App</div>
-          <div className={`nav-item ${page === 'connections' ? 'active' : ''}`} onClick={() => onNavigate('connections')}>
-            <span className="icon">{icons.connections}</span> Connections
+          BUTTONS, not divs. Every row was a <div onClick>, so none of them
+          could be reached with a Tab key, none announced itself to a screen
+          reader as clickable, and none could show a focus ring. A sidebar is
+          the primary navigation of the app; it should not require a mouse.
+
+          SHORTCUT HINTS. The menu bar added Cmd/Ctrl+1–7 in this release, and
+          a shortcut nobody can discover may as well not exist. They appear on
+          hover and on focus only, so the resting state stays quiet. */}
+      <nav className="sidebar-nav" aria-label="Main">
+        {NAV.map((section) => (
+          <div className="nav-section" key={section.label || 'top'}>
+            {section.label && <div className="nav-section-label">{section.label}</div>}
+            {section.items.map((it) => {
+              if (it.id === 'community' && !chatShow) return null;
+              const count =
+                it.id === 'network' ? nodesOnline :
+                it.id === 'seed' ? seedsOnline : null;
+              const badge = it.id === 'community' && unreadChat > 0
+                ? (unreadChat > 99 ? '99+' : String(unreadChat))
+                : null;
+              return (
+                <button
+                  type="button"
+                  key={it.id}
+                  className={`nav-item ${page === it.id ? 'active' : ''}`}
+                  aria-current={page === it.id ? 'page' : undefined}
+                  onClick={() => onNavigate(it.id)}
+                >
+                  <span className="icon">{icons[it.icon]}</span>
+                  <span className="nav-label">{it.label}</span>
+                  {count !== null && count !== undefined && (
+                    <span className="nav-count" title={`${count} online`}>{count}</span>
+                  )}
+                  {badge && <span className="nav-badge">{badge}</span>}
+                  {it.key && <kbd className="nav-kbd">{MOD}{it.key}</kbd>}
+                </button>
+              );
+            })}
           </div>
-          <div className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('settings')}>
-            <span className="icon">{icons.settings}</span> Settings
-          </div>
-          <div className={`nav-item ${page === 'about' ? 'active' : ''}`} onClick={() => onNavigate('about')}>
-            <span className="icon">{icons.about}</span> About
-          </div>
-        </div>
-      </div>
+        ))}
+      </nav>
 
       {/* In-app update alert — inline, directly above the scripture/announcement
           + "Local Node Online" status box. Self-gating: renders nothing unless
           updater.js has fired 'si-update-available' (and it isn't snoozed). */}
       <UpdatePrompt inline />
 
-      {/* Announcement box — above node status */}
-      {announcement ? (
-        <div className="sidebar-announcement">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.7 }}>
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-          </svg>
-          <span>{announcement}</span>
-        </div>
-      ) : null}
+      {/* The announcement/verse moved to the header in 0.0.334 — see
+          TopBar.jsx. It was the last element in the column, below the node
+          stats, which is the lowest-priority position in the window for the
+          one line in the app that is not about software. `announcement` is
+          still accepted as a prop so App.jsx needs no change and so a future
+          sidebar notice has somewhere to go. */}
 
       {/* Footer — what this node is actually holding. The online/offline status
           line that used to sit above these figures has been removed on purpose:

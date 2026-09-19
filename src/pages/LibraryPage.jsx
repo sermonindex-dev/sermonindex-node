@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import PageHead from '../components/PageHead.jsx';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 import DownloadFailureBanner, {
   DownloadFailureNote,
@@ -29,7 +30,7 @@ const iconHeadphones = <svg width="12" height="12" viewBox="0 0 24 24" fill="non
 const iconExternalPlay = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>;
 // Rounded-square external-player button (like the Export button). Video previews
 // can't decode inline in the app's WebView, so we hand them to the native player.
-const externalBtnStyle = { display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 };
+// (The inline face this used to carry is now `className="btn btn-outline btn-sm"`.)
 
 // SpeakerAvatar now shared — tries multiple site image conventions before initials
 
@@ -172,9 +173,17 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
 
   return (
     <>
+      <PageHead
+        kicker="Library"
+        title="Sermon Library"
+        sub="Download to listen offline — and to share what you hold with the network."
+        figures={[
+          { value: sermons.length.toLocaleString(), label: 'Sermons' },
+          { value: audioCount.toLocaleString(), label: 'Audio' },
+          { value: videoCount.toLocaleString(), label: 'Video' },
+        ]}
+      />
       <div className="page-header">
-        <h2>Sermon Library</h2>
-        <p>{sermons.length} sermons available ({audioCount} audio, {videoCount} video) · Download to listen and share</p>
         {/* Honest disclosure, in the one place every visitor to this page reads.
             Pressing play puts the sermon through the same download queue and the
             same progress bar as the download button, so browsing quietly uses
@@ -309,7 +318,18 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
                   <div className="sermon-title" title={sermon.title} style={isExpanded ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'unset' } : {}}>
                     {sermon.title}
                   </div>
-                  <div className="sermon-speaker">{sermon.speaker}</div>
+                  {/* Speaker and scripture belong together, under the title:
+                      both answer "what IS this", where duration and file size
+                      answer "what will it cost me". Splitting them that way is
+                      what lets the footer breathe — the topic chip was being
+                      truncated to "Self-Co…" purely because four unrelated
+                      facts were competing for one line. */}
+                  <div className="sermon-byline">
+                    <span className="sermon-speaker">{sermon.speaker}</span>
+                    {sermon.scripture && (
+                      <span className="sermon-scripture" title={sermon.scripture}>{sermon.scripture}</span>
+                    )}
+                  </div>
                 </div>
                 <span className={`type-badge ${sermon.type || 'audio'}`}>
                   {sermon.type === 'video' ? iconFilm : iconHeadphones}
@@ -317,13 +337,14 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
                 </span>
               </div>
 
+              {/* One footer line: identity on the left, the action on the
+                  right. Pinned to the bottom of the card by `margin-top: auto`
+                  in the stylesheet, which is what makes every card in a row the
+                  same height regardless of how long its title ran. */}
               <div className="sermon-meta">
-                <span className="tag">{sermon.topic}</span>
+                <span className="tag" title={sermon.topic}>{sermon.topic}</span>
                 <span>{sermon.durationFormatted || sermon.duration}</span>
                 <span>{sermon.diskSize ? formatStorage(sermon.diskSize) : (sermon.sizeFormatted || sermon.size)}</span>
-                {sermon.scripture && (
-                  <span className="scripture-ref" title={sermon.scripture}>{sermon.scripture}</span>
-                )}
               </div>
 
               <div className="sermon-meta-row2">
@@ -347,9 +368,9 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
                     player. Like audio, only available once downloaded. */}
                 {sermon.type === 'video' && sermon.downloaded && onOpenExternal && (
                   <button
+                    className="btn btn-outline btn-sm"
                     onClick={() => onOpenExternal(sermon)}
                     data-tooltip="Open in your device's video player"
-                    style={externalBtnStyle}
                   >
                     {iconExternalPlay} Player
                   </button>
@@ -368,10 +389,11 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
                     be told what to do next. */}
                 {!sermon.downloaded && hasFailed && (
                   <button
+                    className="btn btn-outline btn-sm"
                     onClick={() => !isRetrying && retryDownload(sermon.id, dlState)}
                     disabled={isRetrying}
                     data-tooltip="Try this download again"
-                    style={{ ...externalBtnStyle, color: 'var(--orange)', opacity: isRetrying ? 0.6 : 1, cursor: isRetrying ? 'default' : 'pointer' }}
+                    style={{ color: 'var(--orange)' }}
                   >
                     {iconRetry} {isRetrying ? 'Trying…' : 'Try again'}
                   </button>
@@ -402,7 +424,7 @@ export default function LibraryPage({ sermons, currentSermon, isPlaying, onPlay,
           <button
             className="btn btn-outline"
             onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-            style={{ padding: '10px 32px', fontSize: '0.85rem' }}
+            style={{ padding: '10px 32px', fontSize: 'var(--text-sm)' }}
           >
             Load More ({filtered.length - visibleCount} remaining)
           </button>

@@ -161,7 +161,7 @@ export default function ImpactPanel() {
           {copied && (
             <span style={{
               position: 'absolute', top: '112%', right: 0,
-              background: 'var(--olive)', color: '#fff', fontSize: '0.68rem', fontWeight: 600,
+              background: 'var(--olive)', color: '#fff', fontSize: 'var(--text-xs)', fontWeight: 600,
               padding: '4px 10px', borderRadius: '4px', whiteSpace: 'nowrap',
               pointerEvents: 'none', zIndex: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
             }}>
@@ -185,14 +185,14 @@ export default function ImpactPanel() {
             borderRadius: 'var(--radius)',
             padding: '14px 16px',
           }}>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: t.color, lineHeight: 1.1 }}>{t.value}</div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>{t.label}</div>
+            <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: t.color, lineHeight: 1.1 }}>{t.value}</div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '4px' }}>{t.label}</div>
           </div>
         ))}
       </div>
 
       {/* Encouraging one-liner that folds the live numbers together */}
-      <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <p style={{ marginTop: '16px', marginBottom: 0, fontSize: 'var(--text-base)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
         <strong style={{ color: 'var(--gold-text)' }}>{seeding.toLocaleString()}</strong>{' '}
         {seeding === 1 ? 'sermon' : 'sermons'} shared ·{' '}
         <strong style={{ color: 'var(--gold-text)' }}>{dataLabel}</strong> contributed ·{' '}

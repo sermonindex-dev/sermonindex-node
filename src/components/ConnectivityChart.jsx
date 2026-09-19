@@ -1,4 +1,5 @@
 import React, { useId, useMemo, useState } from 'react';
+import { useWidth } from './charts.jsx';
 
 /**
  * ConnectivityChart — inbound vs outbound peer connections, day by day.
@@ -101,9 +102,15 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
   // One scale for both series (never two y-axes). A floor of 1 keeps an
   // all-zero week from dividing by zero and from drawing full-height bars.
   const max = Math.max(1, ...rows.map(r => Math.max(r.inb, r.out)));
-  const W = 100; // viewBox units; the SVG scales to its container
+  // Measured, not stretched. This used to be 100 viewBox units scaled to the
+  // container with `preserveAspectRatio="none"`, which meant the bars' WIDTH was
+  // a function of how wide the card happened to be — the same data drew 4px bars
+  // in a narrow window and 18px bars in a wide one, and the 2px surface gap
+  // between a day's two bars was never actually 2px. Drawing at true scale also
+  // lets the 24px mark cap mean something.
+  const [frameRef, W] = useWidth(320);
   const slot = W / rows.length;
-  const barW = Math.max(1.5, (slot - 4) / 2 - GAP / 2);
+  const barW = Math.max(1.5, Math.min(24, (slot - 6) / 2 - GAP / 2));
   const plotH = H - PAD_T - PAD_B;
   const scale = v => (v / max) * plotH;
 
@@ -151,10 +158,10 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
           </tbody>
         </table>
       ) : (
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative' }} ref={frameRef}>
           <svg
-            viewBox={`0 0 ${W} ${H}`}
-            preserveAspectRatio="none"
+            width={W}
+            height={H}
             style={{ width: '100%', height: `${H}px`, display: 'block', overflow: 'visible' }}
             role="img"
             aria-label={`Peer connections by day. ${verdict}`}
@@ -163,10 +170,12 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
                 series the eye compares heights directly and gridlines are noise. */}
             <line
               x1="0" y1={PAD_T + plotH} x2={W} y2={PAD_T + plotH}
-              stroke="var(--border)" strokeWidth="0.4" vectorEffect="non-scaling-stroke"
+              stroke="var(--border)" strokeWidth="1"
             />
             {rows.map((r, i) => {
-              const x0 = i * slot + 2;
+              // Centre the day's PAIR in its slot: at true scale the leftover
+              // air belongs on both sides, not all on the right.
+              const x0 = i * slot + (slot - (barW * 2 + GAP)) / 2;
               const hIn = scale(r.inb);
               const hOut = scale(r.out);
               const on = hover === i;
@@ -199,12 +208,10 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
             })}
           </svg>
 
-          {/* Day labels in HTML, NOT inside the <svg>.
-              The plot uses preserveAspectRatio="none" so the bars stretch to
-              whatever width the card is — which is right for bars and fatal for
-              text, because the same transform stretches every glyph with them.
-              A flex row of equal-width cells lines up with the bar slots exactly
-              and renders at the real font. */}
+          {/* Day labels in HTML rather than inside the <svg>. They line up with
+              the bar slots exactly (equal-width flex cells over equal-width
+              slots) and they inherit the app's real type, which SVG text does
+              not — it has no access to the CSS font stack's fallbacks. */}
           <div style={{ display: 'flex', marginTop: '4px' }}>
             {rows.map((r, i) => (
               <div
@@ -212,7 +219,7 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
                 style={{
                   flex: 1,
                   textAlign: 'center',
-                  fontSize: '0.66rem',
+                  fontSize: 'var(--text-xs)',
                   whiteSpace: 'nowrap',
                   color: hover === i ? 'var(--text-primary)' : 'var(--text-muted)',
                   fontWeight: hover === i ? 600 : 400,
@@ -225,8 +232,9 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
             ))}
           </div>
 
-          {/* Tooltip. Positioned in DOM rather than SVG so the text is not
-              stretched by preserveAspectRatio="none". */}
+          {/* Tooltip in the DOM rather than the SVG: it needs the app's type,
+              a border-radius and a shadow, all of which are one line in CSS and
+              a small project in SVG. */}
           {hover != null && (
             <div style={{
               ...tip,
@@ -243,7 +251,7 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
         </div>
       )}
 
-      <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '12px 0 0', lineHeight: 1.55 }}>
+      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', margin: '12px 0 0', lineHeight: 1.55 }}>
         {verdict}
       </p>
     </div>
@@ -252,7 +260,7 @@ export default function ConnectivityChart({ days = [], mode = 'light' }) {
 
 function Key({ color, label, value }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: 'var(--text-sm)' }}>
       <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: color, flexShrink: 0 }} />
       {/* Text wears text tokens — never the series colour. The swatch carries
           identity; the label carries meaning. */}
@@ -264,7 +272,7 @@ function Key({ color, label, value }) {
 
 function TipRow({ color, label, value }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--text-xs)', whiteSpace: 'nowrap' }}>
       <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: color, flexShrink: 0 }} />
       <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
       <strong style={{ marginLeft: 'auto', paddingLeft: '10px', color: 'var(--text-primary)' }}>
@@ -280,7 +288,7 @@ const legendRow = {
 };
 const tableToggle = {
   background: 'none', border: '1px solid var(--border)', borderRadius: '6px',
-  padding: '3px 10px', fontSize: '0.72rem', color: 'var(--text-secondary)', cursor: 'pointer',
+  padding: '3px 10px', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', cursor: 'pointer',
 };
 const tip = {
   position: 'absolute', top: '4px', pointerEvents: 'none',
@@ -288,15 +296,15 @@ const tip = {
   borderRadius: '8px', padding: '8px 10px', minWidth: '150px',
   boxShadow: '0 4px 14px rgba(0,0,0,0.18)', zIndex: 3,
 };
-const table = { width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' };
+const table = { width: '100%', borderCollapse: 'collapse', fontSize: 'var(--text-sm)' };
 const th = {
   textAlign: 'left', padding: '5px 8px', color: 'var(--text-muted)',
-  fontWeight: 600, borderBottom: '1px solid var(--border)', fontSize: '0.72rem',
+  fontWeight: 600, borderBottom: '1px solid var(--border)', fontSize: 'var(--text-xs)',
   textTransform: 'uppercase', letterSpacing: '0.4px',
 };
 const td = { padding: '5px 8px', color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)' };
 const empty = {
-  padding: '26px 16px', textAlign: 'center', fontSize: '0.82rem',
+  padding: '26px 16px', textAlign: 'center', fontSize: 'var(--text-sm)',
   color: 'var(--text-muted)', background: 'var(--bg-tertiary)',
   border: '1px dashed var(--border)', borderRadius: 'var(--radius)',
 };

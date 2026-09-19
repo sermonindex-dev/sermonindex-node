@@ -127,7 +127,7 @@ export default function ImageContextMenu() {
                 display: 'flex', alignItems: 'center', gap: 8, width: '100%',
                 padding: '8px 10px', background: 'none', border: 'none',
                 cursor: enabled ? 'pointer' : 'default',
-                fontSize: '0.8rem', color: enabled ? 'var(--text-primary, #222)' : 'var(--text-muted, #999)',
+                fontSize: 'var(--text-sm)', color: enabled ? 'var(--text-primary, #222)' : 'var(--text-muted, #999)',
                 borderRadius: 6, textAlign: 'left', fontFamily: 'var(--font, inherit)', opacity: enabled ? 1 : 0.6,
               }}
               onMouseEnter={(e) => { if (enabled) e.currentTarget.style.background = 'var(--bg-tertiary, #f0f0f0)'; }}
@@ -146,7 +146,7 @@ export default function ImageContextMenu() {
             zIndex: 10001, background: toast.ok ? 'var(--bg-secondary, #fff)' : '#4a1f1f',
             color: toast.ok ? 'var(--text-primary, #222)' : '#ffd7d7',
             border: `1px solid ${toast.ok ? 'var(--border, #ddd)' : '#7a2b2b'}`,
-            borderRadius: 8, padding: '9px 16px', fontSize: '0.8rem',
+            borderRadius: 8, padding: '9px 16px', fontSize: 'var(--text-sm)',
             boxShadow: '0 6px 22px rgba(0,0,0,0.22)', display: 'flex', alignItems: 'center', gap: 8,
           }}
         >

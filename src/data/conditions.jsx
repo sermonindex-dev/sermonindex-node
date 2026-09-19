@@ -15,20 +15,20 @@ export const CONDITIONS_SUMMARY = [
 ];
 
 const h = {
-  fontSize: '0.95rem',
+  fontSize: 'var(--text-base)',
   fontWeight: 700,
   color: 'var(--gold-text)',
   margin: '18px 0 6px',
   letterSpacing: '0.01em',
 };
 const p = {
-  fontSize: '0.86rem',
+  fontSize: 'var(--text-sm)',
   lineHeight: 1.65,
   color: 'var(--text-secondary)',
   margin: '0 0 10px',
 };
 const quote = {
-  fontSize: '0.82rem',
+  fontSize: 'var(--text-sm)',
   lineHeight: 1.6,
   color: 'var(--text-muted)',
   fontStyle: 'italic',

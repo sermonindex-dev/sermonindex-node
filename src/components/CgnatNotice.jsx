@@ -118,13 +118,13 @@ const panel = {
   background: 'var(--bg-tertiary)',
   border: '1px solid var(--border)',
   borderLeft: '3px solid var(--gold-text)',
-  fontSize: '0.78rem',
+  fontSize: 'var(--text-sm)',
   color: 'var(--text-secondary)',
   lineHeight: 1.6,
 };
 const heading = {
   fontWeight: 700,
-  fontSize: '0.82rem',
+  fontSize: 'var(--text-sm)',
   color: 'var(--gold-text)',
   marginBottom: '6px',
 };

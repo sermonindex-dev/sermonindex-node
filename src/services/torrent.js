@@ -175,6 +175,28 @@ export async function pruneMissing() {
 }
 
 /** Session-wide stats (speeds, peers, uptime). */
+/**
+ * Pin the BitTorrent listening port, or clear it (`null`) to go back to the
+ * automatic range.
+ *
+ * WHY PIN IT AT ALL. When nothing opens the port automatically — no UPnP, no
+ * NAT-PMP — the only way in is a rule the user writes in their router: an IPv4
+ * port forward, or (the one that matters for IPv6, where there is no NAT and a
+ * firewall is all that stands in the way) an inbound pinhole. Those rules name
+ * ONE port. A node that may land on any of forty can only match such a rule by
+ * luck, and stops matching the first time something else holds that port at
+ * startup — at which point the user is unreachable with nothing on screen to
+ * explain why.
+ *
+ * Takes effect on the next session start, so the caller restarts the session.
+ * Returns the port that was stored (`null` when cleared).
+ */
+export async function setListenPort(port) {
+  const stored = await invoke('set_listen_port', { port: port ?? null });
+  torrentLog.info(`[Torrent] Listening port ${stored ? `pinned to ${stored}` : 'set to automatic'}`);
+  return stored ?? null;
+}
+
 export async function getSessionStats() {
   return invoke('torrent_session_stats');
 }

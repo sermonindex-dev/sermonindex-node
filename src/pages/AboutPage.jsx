@@ -1,15 +1,19 @@
 import React from 'react';
 import { CONDITIONS_SUMMARY } from '../data/conditions.jsx';
-// Same white wordmark the sidebar uses. Safe to `import` — the asset exists in
-// the repo, so Vite resolves it at build time.
-import logo from '../assets/sermon-index-white.png';
+import { Panel } from '../components/PageHead.jsx';
+// The white wordmark that used to be imported here is gone. It appeared TWICE
+// on this page — once pinned over the portrait in the band, once in the eyebrow
+// row — inside an app whose sidebar already carries the wordmark at all times.
+// A logo repeated three times on one screen stops being a mark and becomes
+// wallpaper, and it was competing with the one image on the page that is
+// actually saying something.
 
-const seedMark = (
-  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2C7 6 5 10 5 14a7 7 0 0 0 14 0c0-4-2-8-7-12z" />
-    <path d="M12 22V9" />
-    <path d="M12 13c-1.6-.5-2.8-1.7-3.3-3.3" />
-    <path d="M12 11c1.5-.5 2.6-1.6 3.1-3.1" />
+// A scroll — the conditions block's medallion. Drawn in the same 24-unit,
+// 1.8px-stroke outline language as the sidebar's icons.
+const iconScroll = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6 3h11a2 2 0 0 1 2 2v13a3 3 0 0 0 3 3H8a3 3 0 0 1-3-3V5a2 2 0 0 0-2 2h3" />
+    <path d="M9 8h7M9 12h7M9 16h4" />
   </svg>
 );
 
@@ -53,8 +57,10 @@ function SiteLink({ children }) {
   );
 }
 
-const h = { fontSize: '1rem', fontWeight: 700, color: 'var(--gold-text)', margin: '0 0 10px' };
-const p = { fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)', margin: '0 0 12px' };
+// The `h` and `p` inline style objects that used to live here are gone: the
+// essay's headings and paragraphs are now `.essay-mark` and `.essay p`, so the
+// measure, the leading and the rhythm are set in one place instead of being
+// re-asserted at every paragraph.
 
 // ── About hero band ───────────────────────────────────────────────────────
 // Built to match `SeedNodeHero()` on the Seed Node page: a full-width band that
@@ -72,7 +78,7 @@ const p = { fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)',
 // element so the band degrades cleanly to logo + text.
 const SPURGEON_SRC = '/images/about-spurgeon.png';
 
-function AboutHero() {
+function AboutHero({ version = '' }) {
   return (
     <div className="si-abouthero">
       <div className="si-abouthero-portrait" aria-hidden="true">
@@ -83,9 +89,18 @@ function AboutHero() {
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
         />
       </div>
-      <img className="si-abouthero-logo" src={logo} alt="SermonIndex" />
       <div className="si-abouthero-wrap">
         <div className="si-abouthero-copy">
+          {/* The page title lives INSIDE the band, above a rule — the same fix
+              the Seed Node page needed. The page used to open twice: a quiet
+              grey "SermonIndex — Node Software" on cream, then "Our Mission" in
+              serif on olive a moment later. One opening. */}
+          <div className="brand-eyebrow">
+            <div>
+              <h1>SermonIndex — Node Software</h1>
+              <p>{version ? `Version ${version}` : 'Preserving revival preaching for generations to come'}</p>
+            </div>
+          </div>
           <h2>Our Mission</h2>
           <p className="si-abouthero-lede">
             "<SiteLink>SermonIndex</SiteLink>'s assignment is to honour and preserve the past preaching of
@@ -107,112 +122,114 @@ function AboutHero() {
 }
 
 export default function AboutPage({ version = '', onShowConditions }) {
-  const extLink = {
-    display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem',
-    color: 'var(--gold-text)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-    borderRadius: '6px', padding: '7px 12px', cursor: 'pointer', fontWeight: 600,
-  };
-
   return (
     <div className="settings-page-root">
-      {/* Header spans the full width above both columns (same pattern Settings
-          uses), so it lines up with the left-hand column beneath it. */}
+      {/* The band spans the full 1100px and lines up with the reading column
+          below it. It carries the page title too — see `.brand-eyebrow`. */}
       <div className="page-header-wide" style={{ padding: '4px 0 0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '22px', color: 'var(--gold-text)' }}>
-          <span style={{ display: 'flex' }}>{seedMark}</span>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '1.35rem', color: 'var(--text-primary)' }}>SermonIndex — Node Software</h2>
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              {version ? `Version ${version}` : 'Preserving revival preaching for generations to come'}
-            </div>
-          </div>
-        </div>
-
-        {/* Mission, as the page's hero. Lives inside `.page-header-wide` rather
-            than in a column — same as the Seed Node band — so it spans the full
-            1100px, lines up with the two columns beneath, and lets the portrait
-            bleed off its left edge. */}
-        <AboutHero />
+        <AboutHero version={version} />
       </div>
 
-      {/* Two columns, the shared layout Settings and Connections use.
-          LEFT  — what you may do with the sermons: the plain-English conditions
-                  and the links out to the website.
-          RIGHT — the long "why this software exists" essay. It is a single
-                  tall block of prose, so it balances the shorter blocks on the
-                  left far better than any card-count split would.
-          The mission itself now lives in the hero band above. */}
-      <div className="connections-layout" style={{ paddingBottom: '40px' }}>
-        <div className="connections-left">
+      {/* ── One reading column ──────────────────────────────────────────────
+          This page used to be two ~530px columns of prose inside cards, which
+          gave neither of them a comfortable measure and made the reader choose
+          a column before they could start a sentence. It is an essay, so it is
+          now set as one: ~68 characters, generous leading, section marks rather
+          than card headers, and a pull-quote that breaks out of the measure.
+          The only card left is the conditions block — that genuinely IS
+          reference material and should look like it. */}
+      <div className="page-header-wide">
+        <article className="essay">
 
-        {/* Conditions summary */}
-        <div className="seed-card">
-          <h3 style={h}>Copying Permissions &amp; Conditions</h3>
-          <p style={{ ...p, marginBottom: '10px' }}>
-            In short:
+          <div className="essay-mark">Why this software exists</div>
+
+          <p className="essay-lede">
+            There is a quiet danger in &ldquo;one place.&rdquo; Everything that lives on a single
+            set of servers can be lost from a single set of servers — through cost, hardware
+            failure, pressure, or a decision made far above our heads. An archive this
+            precious should not hang on so thin a thread.
           </p>
-          <ul style={{ margin: '0 0 14px', paddingLeft: '20px' }}>
-            {CONDITIONS_SUMMARY.map((line, i) => (
-              <li key={i} style={{ fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                {line}
-              </li>
-            ))}
-          </ul>
-          {onShowConditions && (
-            <button className="btn btn-gold" onClick={onShowConditions} style={{ fontSize: '0.82rem' }}>
-              Read the full conditions
-            </button>
-          )}
-        </div>
 
-        {/* External links */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-          <span style={extLink} onClick={() => openExternal('https://www.sermonindex.net/md/about/')}>{iconExt} About SermonIndex</span>
-          <span style={extLink} onClick={() => openExternal('https://forums.sermonindex.net')}>{iconExt} Forums</span>
-          <span style={extLink} onClick={() => openExternal('https://www.sermonindex.net/md/copying-permissions/')}>{iconExt} Copying Permissions</span>
-          <span style={extLink} onClick={() => openExternal('https://www.sermonindex.net/md/donate/')}>{iconExt} Donate</span>
-        </div>
+          <p>
+            This software turns your computer into a living part of the archive. You use it
+            to browse and download sermons to keep and hear offline — and in the background,
+            your app quietly shares those same files with others, computer to computer,
+            around the world. There is no central server doing the work.{' '}
+            <strong>The network is the people running it</strong>, and the more of us who run
+            it, the more permanent the archive becomes.
+          </p>
 
-        </div>
-
-        {/* ── RIGHT: why this software exists ── */}
-        <div className="connections-right">
-          <div className="seed-card">
-            <h3 style={h}>Why the Node Software Exists</h3>
-            <p style={p}>
-              There is a quiet danger in "one place." Everything that lives on a single set
-              of servers can be lost from a single set of servers — through cost, hardware
-              failure, pressure, or a decision made far above our heads. An archive this
-              precious should not hang on so thin a thread.
-            </p>
-            <p style={p}>
-              This software turns your computer into a living part of the archive. You use
-              it to browse and download sermons to keep and hear offline — and in the
-              background, your app quietly shares those same files with others, computer to
-              computer, around the world. There is no central server doing the work.
-              <strong style={{ color: 'var(--text-primary)' }}> The network is the people running it</strong>,
-              and the more of us who run it, the more permanent the archive becomes.
-            </p>
-            <p style={{
-              fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)',
-              borderLeft: '3px solid var(--gold)', paddingLeft: '14px', margin: '0 0 12px', fontStyle: 'italic',
-            }}>
-              With seed nodes distributed across the world, the sermon library becomes
-              essentially indestructible. No single point of failure. No authority can
-              censor it. The content lives on across the body of Christ.
-              <br /><br />
-              "How beautiful on the mountains are the feet of those who bring good news"
-              — Isaiah 52:7
-            </p>
-            <p style={{ ...p, margin: 0 }}>
-              Not a company guarding an archive, but the church herself carrying it —
-              thousands of ordinary computers in homes, on shelves, beside routers, across
-              dozens of nations, together forming something no outage and no authority can
-              erase. A fire handed from house to house that cannot be put out.
-            </p>
+          <div className="essay-points">
+            <div className="essay-point">
+              <b>No single point of failure</b>
+              <span>Every copy is a full copy. The library survives any one machine going dark.</span>
+            </div>
+            <div className="essay-point">
+              <b>Nothing to sign in to</b>
+              <span>No account, no server deciding who may listen. The files are simply there.</span>
+            </div>
+            <div className="essay-point">
+              <b>Carried by the church</b>
+              <span>Ordinary computers in homes and offices across dozens of nations.</span>
+            </div>
           </div>
-        </div>
 
+          <blockquote className="pullquote">
+            With seed nodes distributed across the world, the sermon library becomes
+            essentially indestructible. No single point of failure. No authority can censor
+            it. The content lives on across the body of Christ.
+            <cite>Isaiah 52:7 — &ldquo;How beautiful on the mountains are the feet of those who bring good news&rdquo;</cite>
+          </blockquote>
+
+          <p>
+            Not a company guarding an archive, but the church herself carrying it — thousands
+            of ordinary computers in homes, on shelves, beside routers, across dozens of
+            nations, together forming something no outage and no authority can erase. A fire
+            handed from house to house that cannot be put out.
+          </p>
+
+          <div className="essay-mark">What you may do with the sermons</div>
+
+          <p>
+            The short version is below. It is worth reading once — it is four sentences, and
+            it is the whole agreement.
+          </p>
+
+          <Panel mark={iconScroll} title="Copying Permissions & Conditions" sub="In short">
+            <ul style={{ margin: '0 0 16px', paddingLeft: '20px' }}>
+              {CONDITIONS_SUMMARY.map((line, i) => (
+                <li key={i} style={{ fontSize: 'var(--text-sm)', lineHeight: 1.65, color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                  {line}
+                </li>
+              ))}
+            </ul>
+            {onShowConditions && (
+              <button className="btn btn-gold" onClick={onShowConditions}>
+                Read the full conditions
+              </button>
+            )}
+          </Panel>
+
+          <div className="essay-mark">Elsewhere</div>
+          <div className="essay-links">
+            {[
+              ['About SermonIndex', 'https://www.sermonindex.net/md/about/'],
+              ['Forums', 'https://forums.sermonindex.net'],
+              ['Copying Permissions', 'https://www.sermonindex.net/md/copying-permissions/'],
+              ['Donate', 'https://www.sermonindex.net/md/donate/'],
+            ].map(([label, url]) => (
+              <button
+                key={url}
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => openExternal(url)}
+              >
+                {iconExt} {label}
+              </button>
+            ))}
+          </div>
+
+        </article>
       </div>
     </div>
   );

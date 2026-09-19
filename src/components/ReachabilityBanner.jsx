@@ -57,6 +57,16 @@ import { timeAgo } from '../utils/time.js';
  *                                 because reachability is a "has this ever been
  *                                 demonstrated" fact, not a momentary one.
  *   v6InboundAt {number|null}   — epoch ms we first observed that.
+ *   v6ThisSession {boolean}     — the CURRENT session's own observation says an
+ *                                 IPv6 peer has dialled in. This is what
+ *                                 separates "is true now" from "was true once".
+ *                                 The native observation is sticky for the
+ *                                 session only; the localStorage blob behind
+ *                                 `v6InboundSeen` survives restarts, which is
+ *                                 why the two must be reported separately.
+ *   inboundPeersPeak {number|null} — how many peers (any family) have connected
+ *                                 IN to us during this session. Context for the
+ *                                 claim above, not evidence for it.
  *   v6EgressSeen {boolean}      — we connected OUT to an IPv6 peer. Proves this
  *                                 machine has working IPv6 and NOTHING MORE. It
  *                                 is never shown as reachability; it is only used
@@ -67,6 +77,7 @@ export default function ReachabilityBanner({
   running, port, reachOpen, reachOpen6 = false, v6Probe = 'none',
   hasIpv6 = false, cgnat, testing, testedAt = null, onTest,
   v6InboundSeen = false, v6InboundAt = null, v6EgressSeen = false,
+  v6ThisSession = false, inboundPeersPeak = null,
 }) {
   // Inline "how to open your port" directions — collapsed by default, expands
   // in place (no external link). Hook is declared unconditionally, above the
@@ -81,14 +92,14 @@ export default function ReachabilityBanner({
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
       <button
         className="btn btn-outline"
-        style={{ fontSize: '0.78rem', padding: '6px 14px', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 'var(--text-sm)', padding: '6px 14px', whiteSpace: 'nowrap' }}
         onClick={onTest}
         disabled={testing}
       >
         {testing ? 'Testing…' : 'Re-test'}
       </button>
       {(testing || age) && (
-        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           {testing ? 'Checking now…' : `Last tested ${age}`}
         </span>
       )}
@@ -98,11 +109,11 @@ export default function ReachabilityBanner({
   // ── Node offline — no session, so no honest claim to make ──
   if (!running) {
     return (
-      <div style={box('var(--bg-tertiary)', 'var(--border)')}>
-        <span style={glyph('var(--text-muted)')}>◌</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={title('var(--text-primary)')}>Node offline</div>
-          <div style={sub}>Start your node to join the network and check whether you're reachable.</div>
+      <div className="verdict plain quiet">
+        <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" strokeDasharray="3 3" /></svg>}</span>
+        <div className="verdict-copy">
+          <div className="verdict-title">Node offline</div>
+          <p>Start your node to join the network and check whether you're reachable.</p>
         </div>
       </div>
     );
@@ -111,24 +122,19 @@ export default function ReachabilityBanner({
   // ── Reachable → full NODE (green, celebratory, with a gold "backbone" accent) ──
   if (reachOpen === true) {
     return (
-      <div style={box('rgba(61,138,65,0.12)', 'rgba(61,138,65,0.40)')}>
-        <span style={glyph('var(--green)')}>✓</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={title('var(--green)')}>Reachable — your node is a full node</span>
-            <span style={{
-              fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
-              color: 'var(--gold-text)', background: 'var(--gold-dim)', padding: '2px 8px', borderRadius: '10px',
-            }}>
-              Backbone
-            </span>
+      <div className="verdict ok">
+        <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}</span>
+        <div className="verdict-copy">
+          <div className="verdict-title">
+            Reachable — your node is a full node
+            <span className="verdict-flag">Backbone</span>
           </div>
-          <div style={sub}>
+          <p>
             You're actively serving sermons to peers around the world — this is exactly what keeps the
             library indestructible. Thank you for strengthening the network.
-          </div>
+          </p>
         </div>
-        {testBtn}
+        <div className="verdict-aside">{testBtn}</div>
       </div>
     );
   }
@@ -139,24 +145,19 @@ export default function ReachabilityBanner({
   // NO port-forward instructions here — there is nothing to fix.
   if (reachOpen === false && reachOpen6 === true) {
     return (
-      <div style={box('rgba(61,138,65,0.12)', 'rgba(61,138,65,0.40)')}>
-        <span style={glyph('var(--green)')}>✓</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={title('var(--green)')}>Reachable over IPv6 — your node is a full node</span>
-            <span style={{
-              fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
-              color: 'var(--gold-text)', background: 'var(--gold-dim)', padding: '2px 8px', borderRadius: '10px',
-            }}>
-              Backbone
-            </span>
+      <div className="verdict ok">
+        <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}</span>
+        <div className="verdict-copy">
+          <div className="verdict-title">
+            Reachable over IPv6 — your node is a full node
+            <span className="verdict-flag">Backbone</span>
           </div>
-          <div style={sub}>
+          <p>
             Other people can reach your node over IPv6 — nothing to forward or change. That's the normal
             good result on Starlink and mobile broadband. Thank you for strengthening the network.
-          </div>
+          </p>
         </div>
-        {testBtn}
+        <div className="verdict-aside">{testBtn}</div>
       </div>
     );
   }
@@ -190,24 +191,57 @@ export default function ReachabilityBanner({
     // Both ends are fixed now (heartbeat.js reads v6_inbound_seen), so the two
     // views agree. What remains is honesty about age: say WHEN, in the heading,
     // where it cannot be missed.
-    const stale = v6InboundAt != null && (Date.now() - v6InboundAt) > 7 * 24 * 60 * 60 * 1000;
-    return (
-      <div style={box('rgba(61,138,65,0.12)', 'rgba(61,138,65,0.40)')}>
-        <span style={glyph('var(--green)')}>✓</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={title('var(--green)')}>
-              Reachable over IPv6 — your node is a full node
-              {seenAgo && <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> · confirmed {seenAgo}</span>}
-            </span>
-            <span style={{
-              fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
-              color: 'var(--gold-text)', background: 'var(--gold-dim)', padding: '2px 8px', borderRadius: '10px',
-            }}>
-              Backbone
-            </span>
+    // 0.0.334 — 14 days, matching network.js REACH_CONFIRM_DAYS and the CLI's
+    // config::reach_confirm_days. Beyond it the claim is no longer made in the
+    // present tense at all: the branch below takes over and says plainly that
+    // nothing has come in since, which is what a node with one connection a
+    // month ago deserves to be told.
+    const ageMs = v6InboundAt == null ? 0 : Date.now() - v6InboundAt;
+    const stale = v6InboundAt != null && ageMs > 14 * 24 * 60 * 60 * 1000;
+    const ageDays = Math.floor(ageMs / 86400000);
+    // ── Proof has gone stale ──────────────────────────────────────────────
+    // Not a failure, and not green either. The node WAS reachable; nothing has
+    // come in for a fortnight, and the honest thing is to say exactly that
+    // rather than keep a confident badge alive on month-old evidence.
+    if (stale) {
+      return (
+        <div className="verdict plain">
+          <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l9 9-9 9-9-9z" /></svg>}</span>
+          <div className="verdict-copy">
+            <div className="verdict-title" style={{ color: 'var(--gold-text)' }}>
+              No one has reached you in {ageDays} days
+            </div>
+            <p>
+              A peer did connect straight to your node over IPv6 {seenAgo}, so this
+              worked at least once — but nothing has come in since, and we would rather
+              say so than keep a green badge alive on evidence that old.
+              <br /><br />
+              Two innocent explanations, both common: the swarm has simply been quiet,
+              or your connection changed — a new router, a new address from your
+              provider, a firewall rule that reset. Your node is still uploading to
+              every peer it reaches either way.
+              {port ? <> If you can, check that <strong style={{ color: 'var(--text-primary)' }}>port {port}</strong> is still open.</> : null}
+            </p>
           </div>
-          <div style={sub}>
+          <div className="verdict-aside">{testBtn}</div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="verdict ok">
+        <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}</span>
+        <div className="verdict-copy">
+          <div className="verdict-title">
+            {/* The "· confirmed 36 minutes ago" that used to hang off this
+                heading has moved to the age line below, on its own. A heading
+                is where a reader looks for the ANSWER; a timestamp tucked into
+                it gets read as decoration, which is how a green badge on
+                month-old evidence kept passing for a live one. */}
+            Reachable over IPv6 — your node is a full node
+            <span className="verdict-flag">Backbone</span>
+          </div>
+          <p>
             Someone out there connected straight to your node — not the other way round — using the newer
             kind of internet address (IPv6). That's the proof that matters: people <em>can</em> find you and
             take sermons from you directly.
@@ -219,16 +253,33 @@ export default function ReachabilityBanner({
               : <> We haven't been able to check the older kind of address (IPv4) from outside, but it doesn't
                   matter much: you're already reachable.</>}
             {' '}Thank you for strengthening the network.
+          </p>
+          {/* 0.0.334 — THE TENSE FIX.
+              This used to read "Last seen 36 minutes ago" under a present-tense
+              green heading, with nothing to say whether that was this run of the
+              app or a previous one. It was routinely both: the proof is kept in
+              localStorage across restarts, so a node four minutes into a fresh
+              session with zero live peers would report a confident "confirmed 36
+              minutes ago" — a true fact, stated as though it were happening.
+
+              A measurement and WHEN it was measured are two different facts, and
+              running them together is exactly how a stale reading passes for a
+              current one. So: which session, and what has actually happened in
+              THIS one, said plainly. */}
+          <div className="verdict-age">
+            {v6ThisSession
+              ? <>Confirmed <strong style={{ color: 'var(--text-secondary)' }}>in this session</strong>
+                  {seenAgo ? <> — first seen {seenAgo}</> : null}
+                  {' '}· noticed from a real connection, not a test.</>
+              : <>Last confirmed {seenAgo || 'earlier'}, <strong style={{ color: 'var(--text-secondary)' }}>in a previous session</strong>.
+                  {' '}{inboundPeersPeak != null
+                    ? (inboundPeersPeak > 0
+                        ? <>{inboundPeersPeak} peer{inboundPeersPeak === 1 ? ' has' : 's have'} connected in since this app started.</>
+                        : <>Nobody has connected in since this app started — which is normal on a quiet swarm.</>)
+                    : null}</>}
           </div>
-          {seenAgo && (
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '5px' }}>
-              First seen {seenAgo} — noticed from a real connection, not a test.
-              {stale && ' Nothing has come in since, so this is a fact about the past; '
-                      + 'if your router or provider has changed, re-test to be sure.'}
-            </div>
-          )}
         </div>
-        {testBtn}
+        <div className="verdict-aside">{testBtn}</div>
       </div>
     );
   }
@@ -241,13 +292,13 @@ export default function ReachabilityBanner({
   // so someone who sees themselves on the map sees the same category here.
   if (reachOpen === false) {
     return (
-      <div style={{ ...box('rgba(248,211,85,0.10)', 'rgba(248,211,85,0.35)'), alignItems: 'flex-start' }}>
-        <span style={glyph('var(--gold-text)')}>◈</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={title('var(--gold-text)')}>
+      <div className="verdict plain">
+        <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l9 9-9 9-9-9z" /></svg>}</span>
+        <div className="verdict-copy">
+          <div className="verdict-title" style={{ color: 'var(--gold-text)' }}>
             Your node is a <em>peer</em> — still sharing, just not reachable
           </div>
-          <div style={sub}>
+          <p>
             Other people can't connect <em>to</em> you, so your node goes out and connects to them instead —
             and uploads sermons to every peer it reaches. If you can open{' '}
             {port
@@ -255,7 +306,7 @@ export default function ReachabilityBanner({
               : <>your node's port</>}{' '}
             on your router you'll also become a meeting point for others. Many people can't, and that's
             genuinely fine.
-          </div>
+          </p>
 
           {/* The router-firewall diagnosis only counts when the edge really did
               attempt an IPv6 connection (v6Probe === 'ok'). If it couldn't, the
@@ -297,14 +348,14 @@ export default function ReachabilityBanner({
               gap: '5px',
               color: 'var(--gold-text)',
               fontWeight: 600,
-              fontSize: '0.82rem',
+              fontSize: 'var(--text-sm)',
               lineHeight: 1.4,
             }}
           >
             How to open your port
             <span style={{
               display: 'inline-flex',
-              fontSize: '0.7rem',
+              fontSize: 'var(--text-xs)',
               transform: showGuide ? 'rotate(180deg)' : 'none',
               transition: 'transform 0.15s ease',
             }}>▾</span>
@@ -340,25 +391,25 @@ export default function ReachabilityBanner({
             </div>
           )}
         </div>
-        {testBtn}
+        <div className="verdict-aside">{testBtn}</div>
       </div>
     );
   }
 
   // ── Unknown — probe hasn't resolved (or is running). Don't claim either way. ──
   return (
-    <div style={box('var(--bg-tertiary)', 'var(--border)')}>
-      <span style={glyph('var(--gold-text)')}>◐</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={title('var(--text-primary)')}>
+    <div className="verdict plain quiet">
+      <span className="verdict-mark" aria-hidden="true">{<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" /></svg>}</span>
+      <div className="verdict-copy">
+        <div className="verdict-title">
           {testing ? 'Checking reachability…' : 'Reachability not confirmed yet'}
         </div>
-        <div style={sub}>Run the test to see whether other peers can connect directly to your node.</div>
+        <p>Run the test to see whether other peers can connect directly to your node.</p>
       </div>
       {onTest && (
         <button
           className="btn btn-outline"
-          style={{ fontSize: '0.78rem', padding: '6px 14px', whiteSpace: 'nowrap', flexShrink: 0 }}
+          style={{ fontSize: 'var(--text-sm)', padding: '6px 14px', whiteSpace: 'nowrap', flexShrink: 0 }}
           onClick={onTest}
           disabled={testing}
         >
@@ -369,34 +420,20 @@ export default function ReachabilityBanner({
   );
 }
 
-// ── Shared inline styles (all theme tokens) ──
-function box(bg, border) {
-  return {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '16px 20px',
-    borderRadius: 'var(--radius-lg)',
-    background: bg,
-    border: `1px solid ${border}`,
-    maxWidth: '1100px',
-    margin: '0 auto 16px',
-  };
-}
-function glyph(color) {
-  return { fontSize: '1.8rem', lineHeight: 1, color, flexShrink: 0 };
-}
-function title(color) {
-  return { fontWeight: 700, fontSize: '0.95rem', color };
-}
-const sub = { fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '3px', lineHeight: 1.55 };
+// `box()`, `glyph()`, `title()` and `sub` used to live here — six branches each
+// rebuilding the same banner out of inline objects, with the colour of every
+// state hand-passed as an argument. All six are now `.verdict` in the
+// stylesheet, in two tones: brand (olive) for a settled answer, plain (cream)
+// for a state that has something in it for the reader to do. That distinction
+// is the only one the colours were ever really making, and it now lives in one
+// place instead of being re-argued at every call site.
 
 // Expanded "how to open your port" panel — mirrors the Connections panel's
 // disclosure body (small text, secondary color, relaxed line-height), set on a
 // tertiary surface so it reads as a distinct inline panel within the gold banner.
 const guidePanel = {
   marginTop: '8px',
-  fontSize: '0.78rem',
+  fontSize: 'var(--text-sm)',
   color: 'var(--text-secondary)',
   lineHeight: 1.6,
   padding: '10px 12px',

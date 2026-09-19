@@ -294,6 +294,55 @@ async function main() {
     console.warn('  Continuing (no --require-all). latest.json will be PARTIAL.\n');
   }
 
+  // ── Version-truth gate ─────────────────────────────────────────────────────
+  // `version` above comes from --version, which CI fills with the TAG NAME. The
+  // binaries, however, are built from whatever the tagged COMMIT contains. If a
+  // tag is pushed without the version-bump commit, those two disagree and this
+  // script will happily publish a manifest announcing a version the binaries are
+  // not — every installed app then sees a new version, downloads the OLD build,
+  // and "nothing happens" when the user presses Update, for ever.
+  //
+  // That is exactly what shipped as 0.0.335: the tag said 0.0.335, the commit
+  // said 0.0.333, and latest.json promised an upgrade that could never arrive.
+  //
+  // package.json at the built commit is the honest answer to "what version is
+  // this actually?", so it must agree with the tag.
+  const builtVersion = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
+  if (builtVersion !== version) {
+    console.error('');
+    console.error('════════════════════════════════════════════════════════════════════');
+    console.error('  VERSION MISMATCH — refusing to publish');
+    console.error('════════════════════════════════════════════════════════════════════');
+    console.error(`    tag / --version   ${version}`);
+    console.error(`    package.json      ${builtVersion}   <- what was actually built`);
+    console.error('');
+    console.error('  The tag does not point at the version-bump commit. Publishing');
+    console.error('  would advertise an update that installs the OLD build.');
+    console.error('');
+    console.error('  Fix: commit the bump, delete the tag, re-tag the new commit:');
+    console.error(`    git tag -d v${version} && git push origin :refs/tags/v${version}`);
+    console.error('    git add -A && git commit -m "..." && git push');
+    console.error(`    git tag v${builtVersion} && git push origin v${builtVersion}`);
+    console.error('════════════════════════════════════════════════════════════════════');
+    console.error('');
+    process.exit(1);
+  }
+
+  // Second, independent check: Windows and Linux artifacts carry the version in
+  // their FILENAME, so they can be verified against the binary itself rather
+  // than against a file next to it. macOS updater tarballs are arch- and
+  // version-less by design and cannot be checked this way.
+  for (const k of keys) {
+    const m = /_(\d+\.\d+\.\d+)_/.exec(chosen.get(k).name);
+    if (m && m[1] !== version) {
+      console.error('');
+      console.error(`  ARTIFACT VERSION MISMATCH: ${k} is "${chosen.get(k).name}"`);
+      console.error(`  but this release claims ${version}. Refusing to publish.`);
+      console.error('');
+      process.exit(1);
+    }
+  }
+
   // Upload each artifact and build the platforms map.
   const platforms = {};
   for (const k of keys) {

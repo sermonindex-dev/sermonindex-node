@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import PageHead from '../components/PageHead.jsx';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 
 function formatBytes(bytes) {
@@ -225,10 +226,11 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
 
   return (
     <>
-      <div className="page-header">
-        <h2>Bulk Download</h2>
-        <p>Bulk-download a speaker's entire catalog. Downloads are processed sequentially — one speaker at a time — to avoid saturating your connection and disk I/O.</p>
-      </div>
+      <PageHead
+        kicker="Library"
+        title="Bulk Download"
+        sub="A speaker's entire catalogue in one go. Downloads run one speaker at a time so your connection and disk are never saturated."
+      />
 
       <div className="library-filters">
         <div className="search-box" style={{ maxWidth: '400px' }}>
@@ -259,7 +261,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
               <span>{batchProgress.percent.toFixed(1)}%</span>
             </div>
             {batchProgress.failed > 0 && (
-              <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: '6px' }}>
+              <p style={{ fontSize: 'var(--text-xs)', color: 'var(--red)', marginTop: '6px' }}>
                 {batchProgress.failed} file{batchProgress.failed === 1 ? '' : 's'} failed so far
                 {batchProgress.retrying ? ' — retrying them now…' : ' — they will be retried automatically'}
               </p>
@@ -273,11 +275,11 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
               className="btn"
               onClick={stopForNow}
               disabled={stopping}
-              style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: stopping ? 'default' : 'pointer', fontSize: '0.82rem', opacity: stopping ? 0.6 : 1 }}
+              style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: stopping ? 'default' : 'pointer', fontSize: 'var(--text-sm)', opacity: stopping ? 0.6 : 1 }}
             >
               {stopping ? 'Finishing this file…' : '■ Stop for now'}
             </button>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
               Your place is saved as you go, so you can stop any time — or just close the app — and carry on later.
             </span>
           </div>
@@ -288,14 +290,14 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
       {!activeSpeaker && savedBatch && (
         <div className="seed-card" style={{ marginBottom: '16px', borderColor: 'var(--gold)' }}>
           <h3 style={{ marginBottom: '6px' }}>Pick up where you left off</h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginBottom: '8px' }}>
             Your last bulk download{savedBatch.label ? ` — ${savedBatch.label} — ` : ' '}didn't get to finish.
             There {savedBatch.remaining === 1 ? 'is' : 'are'} <strong>{savedBatch.remaining.toLocaleString()}</strong>{' '}
             sermon{savedBatch.remaining === 1 ? '' : 's'} still to go
             {savedBatch.bytes > 0 ? ` (about ${formatBytes(savedBatch.bytes)})` : ''}.
             Nothing has been lost.
           </p>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: '12px' }}>
             {savedBatch.alreadyHave > 0 && (
               <div>· {savedBatch.alreadyHave.toLocaleString()} of them are already on this computer, so they'll be skipped.</div>
             )}
@@ -311,7 +313,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
           </div>
           {pendingSpeaker ? (
             <div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                 Only one list is kept at a time. Starting {pendingSpeaker.name} now will replace the saved one above.
                 Your downloaded sermons are all kept either way.
               </p>
@@ -320,7 +322,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
                 <button
                   className="btn"
                   onClick={confirmPendingSpeaker}
-                  style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem' }}
+                  style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: 'var(--text-sm)' }}
                 >
                   Start {pendingSpeaker.name} instead
                 </button>
@@ -328,7 +330,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
             </div>
           ) : confirmDiscard ? (
             <div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                 Forget this list? Your downloaded sermons are all kept — you'd just be starting the list again from the speakers below.
               </p>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -336,7 +338,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
                 <button
                   className="btn"
                   onClick={discardSavedBatch}
-                  style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem' }}
+                  style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: 'var(--text-sm)' }}
                 >
                   Yes, forget it
                 </button>
@@ -350,7 +352,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
               <button
                 className="btn"
                 onClick={() => setConfirmDiscard(true)}
-                style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem' }}
+                style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: 'var(--text-sm)' }}
               >
                 Start fresh instead
               </button>
@@ -365,11 +367,11 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
           <h3 style={{ marginBottom: '6px' }}>
             {failedItems.length} file{failedItems.length === 1 ? '' : 's'} failed after retries
           </h3>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginBottom: '10px' }}>
             Everything else finished. These are usually temporary source hiccups — try again in a moment.
             This list is kept safe if you close the app, so you can come back to it another day.
           </p>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '10px', maxHeight: '120px', overflowY: 'auto' }}>
+          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: '10px', maxHeight: '120px', overflowY: 'auto' }}>
             {failedItems.slice(0, 10).map((f, i) => (
               <div key={f.sermon?.id || i}>· {f.sermon?.title || f.sermon?.id} — {f.error}</div>
             ))}
@@ -380,7 +382,7 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
             <button
               className="btn"
               onClick={dismissFailed}
-              style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem' }}
+              style={{ padding: '6px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: 'var(--text-sm)' }}
             >
               Dismiss
             </button>
@@ -422,14 +424,14 @@ export default function BulkDownloadPage({ catalog, downloadManager, downloadSta
 
               <div className="bulk-speaker-action">
                 {isComplete ? (
-                  <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.82rem' }}>✓ Complete</span>
+                  <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: 'var(--text-sm)' }}>✓ Complete</span>
                 ) : isActive ? (
-                  <span style={{ color: 'var(--gold-text)', fontWeight: 600, fontSize: '0.82rem' }}>Downloading...</span>
+                  <span style={{ color: 'var(--gold-text)', fontWeight: 600, fontSize: 'var(--text-sm)' }}>Downloading...</span>
                 ) : (
                   <button
                     className="btn btn-gold"
                     onClick={() => startBulkDownload(speaker)}
-                    style={{ fontSize: '0.78rem', padding: '6px 16px' }}
+                    style={{ fontSize: 'var(--text-sm)', padding: '6px 16px' }}
                   >
                     Download All ({remaining}) {remainingBytes > 0 ? formatBytes(remainingBytes) : ''}
                   </button>

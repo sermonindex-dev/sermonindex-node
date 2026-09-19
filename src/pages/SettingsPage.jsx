@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import PageHead from '../components/PageHead.jsx';
 import { getNodeId } from '../services/heartbeat.js';
 // Shared with App.jsx's seeding-status derivation so the two never drift.
 import { to12h } from '../utils/time.js';
@@ -239,21 +240,16 @@ export default function SettingsPage({
     color: 'var(--text-primary)',
     padding: '6px 10px',
     borderRadius: '6px',
-    fontSize: '0.82rem',
+    fontSize: 'var(--text-sm)',
     fontFamily: 'var(--font)',
   };
 
   // Small button matching the app's existing tertiary buttons (see About section).
-  const setButtonStyle = {
-    fontSize: '0.8rem',
-    fontWeight: 600,
-    fontFamily: 'var(--font)',
-    color: 'var(--gold-text)',
-    background: 'var(--bg-tertiary)',
-    border: '1px solid var(--border)',
-    borderRadius: '6px',
-    padding: '6px 12px',
-  };
+  // A shared inline button style used to live here: nine lines of face that
+  // looked approximately like a button and responded to nothing. Every user of
+  // it is now `className="btn btn-outline"`, so these controls rise on hover
+  // and sink on press like every other button in the app. Colour that carries
+  // STATE — the green "Set ✓" — stays inline, because that is information.
 
   // Upload-cap draft → derived flags + a commit that reuses the existing setter prop.
   const uploadKbpsDraftNum = parseInt(uploadKbpsDraft, 10);
@@ -268,7 +264,7 @@ export default function SettingsPage({
 
   // Muted, secondary "status" line used under the two section headings.
   const summaryLineStyle = {
-    fontSize: '0.78rem',
+    fontSize: 'var(--text-sm)',
     color: 'var(--text-muted)',
     marginBottom: '16px',
     lineHeight: 1.5,
@@ -344,10 +340,11 @@ export default function SettingsPage({
           centring, so the heading lines up with the columns below it rather
           than sitting flush to the window edge. */}
       <div className="page-header-wide">
-        <div className="page-header">
-          <h2>Settings</h2>
-          <p>Configure your node and app preferences</p>
-        </div>
+        <PageHead
+          kicker="Your node"
+          title="Settings"
+          sub="How this node behaves — what it hosts, how much it uploads, and when."
+        />
       </div>
 
       {/* Two-column layout: Settings left, Stats + About right */}
@@ -361,7 +358,7 @@ export default function SettingsPage({
               <div style={{ fontWeight: 700, color: 'var(--gold-text)', marginBottom: '4px' }}>
                 Low disk space
               </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 Only {nodeStats.diskFree || 'very little space'} free on the storage drive.
                 New downloads are paused until space is freed. Seeding of files you
                 already have continues normally.
@@ -382,7 +379,7 @@ export default function SettingsPage({
             <div className="settings-row">
               <div>
                 <div style={{ fontWeight: 500 }}>P2P Node (BitTorrent)</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   {p2pRunning
                     ? <span style={{ color: 'var(--green)' }}>Running — sharing sermons with the peer network</span>
                     : p2pEnabled
@@ -399,7 +396,7 @@ export default function SettingsPage({
             <div className="settings-row">
               <div>
                 <div style={{ fontWeight: 500 }}>Background Seeding</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Keep sharing sermons when the window is closed
                 </div>
               </div>
@@ -412,7 +409,7 @@ export default function SettingsPage({
             <div className="settings-row">
               <div>
                 <div style={{ fontWeight: 500 }}>Storage Limit</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Maximum disk space for cached sermons:{' '}
                   <strong style={{ color: 'var(--gold-text)' }}>
                     {storageLimit === 0 ? 'Unlimited' : `${storageLimit} GB`}
@@ -437,7 +434,7 @@ export default function SettingsPage({
             <div className="settings-row">
               <div>
                 <div style={{ fontWeight: 500 }}>Download Bandwidth Limit</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Limit how much bandwidth downloads (Archive.org / CDN) may use, in bits per second:{' '}
                   <strong style={{ color: 'var(--gold-text)' }}>
                     {bandwidthLimit === 0 ? 'Unlimited' : bandwidthLimit < 1 ? `${bandwidthLimit * 1000} kbps` : `${bandwidthLimit} Mbps`}
@@ -468,7 +465,7 @@ export default function SettingsPage({
             <div className="settings-row" style={uploadLimitEnabled ? undefined : { border: 'none' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>Limit upload speed</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Cap how fast sermons are shared to the peer swarm (BitTorrent uploads), in kilobytes per second:{' '}
                   <strong style={{ color: 'var(--gold-text)' }}>
                     {uploadLimitEnabled ? `${uploadLimitKbps} KB/s` : 'Unlimited'}
@@ -485,7 +482,7 @@ export default function SettingsPage({
               <div className="settings-row" style={{ border: 'none' }}>
                 <div>
                   <div style={{ fontWeight: 500 }}>Upload speed cap</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                     Maximum upload rate, in kilobytes per second
                   </div>
                 </div>
@@ -499,18 +496,15 @@ export default function SettingsPage({
                     onKeyDown={e => { if (e.key === 'Enter') commitUploadKbps(); }}
                     style={{ ...selectStyle, width: '90px', textAlign: 'right' }}
                   />
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>KB/s</span>
+                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>KB/s</span>
                   <button
+                    className="btn btn-outline btn-sm"
                     onClick={commitUploadKbps}
                     disabled={!uploadKbpsDirty}
                     title="Apply the upload speed cap"
-                    style={{
-                      ...setButtonStyle,
-                      color: uploadKbpsSaved ? 'var(--green)' : setButtonStyle.color,
-                      border: `1px solid ${uploadKbpsSaved ? 'var(--green)' : 'var(--border)'}`,
-                      opacity: (uploadKbpsDirty || uploadKbpsSaved) ? 1 : 0.5,
-                      cursor: uploadKbpsDirty ? 'pointer' : 'default',
-                    }}
+                    style={uploadKbpsSaved
+                      ? { color: 'var(--green)', borderColor: 'var(--green)' }
+                      : undefined}
                   >
                     {uploadKbpsSaved ? 'Set ✓' : 'Set'}
                   </button>
@@ -535,7 +529,7 @@ export default function SettingsPage({
             <div className="settings-row">
               <div>
                 <div style={{ fontWeight: 500 }}>Only seed during set hours</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Outside the window, uploads throttle to near-zero (about 1 KB/s).
                   Downloads and playback are unaffected — handy for overnight-only seeding.
                 </div>
@@ -550,7 +544,7 @@ export default function SettingsPage({
               <div className="settings-row">
                 <div>
                   <div style={{ fontWeight: 500 }}>Seeding window</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                     Local time. A window like 23:00 → 07:00 seeds overnight and throttles by day.
                   </div>
                 </div>
@@ -567,7 +561,7 @@ export default function SettingsPage({
                       <option key={t} value={t}>{to12h(t)}</option>
                     ))}
                   </select>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>to</span>
+                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>to</span>
                   <select
                     value={normalizeTime(seedEnd)}
                     onChange={e => onSeedEndChange(e.target.value)}
@@ -587,7 +581,7 @@ export default function SettingsPage({
             <div className="settings-row" style={{ border: 'none' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>Monthly upload cap</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Pause seeding once you've uploaded this much in a calendar month;
                   it resumes automatically when the month resets.
                   {uploadCapEnabled && (
@@ -610,7 +604,7 @@ export default function SettingsPage({
               <div className="settings-row" style={{ border: 'none' }}>
                 <div>
                   <div style={{ fontWeight: 500 }}>Cap size</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                     Upload allowance per month, in gigabytes
                   </div>
                 </div>
@@ -626,7 +620,7 @@ export default function SettingsPage({
                     }}
                     style={{ ...selectStyle, width: '90px', textAlign: 'right' }}
                   />
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>GB</span>
+                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>GB</span>
                 </div>
               </div>
             )}
@@ -637,7 +631,7 @@ export default function SettingsPage({
             <p style={{ marginBottom: '8px' }}>
               Controls where the app fetches sermon content from. Click to switch modes.
             </p>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: '16px' }}>
               The network defines which sources are available.
             </p>
 
@@ -676,7 +670,7 @@ export default function SettingsPage({
                       </div>
                       <div style={{ opacity: isActive ? 1 : 0.85 }}>
                         <div style={{ fontWeight: 500, color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>{mode.label}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{mode.desc}</div>
+                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{mode.desc}</div>
                       </div>
                     </div>
                     {isActive && <span className="mode-badge cdn">Active</span>}
@@ -685,7 +679,7 @@ export default function SettingsPage({
               })}
             </div>
             {modeStatus === 'saved' && (
-              <div style={{ fontSize: '0.75rem', color: 'var(--green)', marginTop: '8px', transition: 'opacity 0.3s' }}>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', marginTop: '8px', transition: 'opacity 0.3s' }}>
                 Mode updated successfully
               </div>
             )}
@@ -697,7 +691,7 @@ export default function SettingsPage({
             <div className="settings-row">
               <div>
                 <div style={{ fontWeight: 500 }}>Community notifications</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Show an unread-message count beside Community in the sidebar
                 </div>
               </div>
@@ -710,7 +704,7 @@ export default function SettingsPage({
             <div className="settings-row" style={{ border: 'none' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>Show Community page</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Hide the community chat entirely if you prefer no interaction
                 </div>
               </div>
@@ -745,35 +739,27 @@ export default function SettingsPage({
             <div className="settings-row" style={{ border: 'none' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>Check my sermons</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                   Looks at every sermon in your download folder. Large libraries can take a
                   few minutes.
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
+                  className="btn btn-outline btn-sm"
                   onClick={handleVerifyLibrary}
                   disabled={verify?.status === 'running'}
                   title="Check that every sermon you are hosting is complete"
-                  style={{
-                    ...setButtonStyle,
-                    cursor: verify?.status === 'running' ? 'default' : 'pointer',
-                    opacity: verify?.status === 'running' ? 0.5 : 1,
-                    whiteSpace: 'nowrap',
-                  }}
+                  style={{ whiteSpace: 'nowrap' }}
                 >
                   {verify?.status === 'running' ? 'Checking…' : 'Check now'}
                 </button>
                 {verify?.status === 'running' && (
                   <button
+                    className="btn btn-outline btn-sm"
                     onClick={() => { cancelVerifyRef.current = true; }}
                     title="Stop checking"
-                    style={{
-                      ...setButtonStyle,
-                      color: 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
+                    style={{ whiteSpace: 'nowrap' }}
                   >
                     Stop
                   </button>
@@ -792,7 +778,7 @@ export default function SettingsPage({
                     background: 'var(--gold)', transition: 'width 0.2s',
                   }} />
                 </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: '6px' }}>
                   {verify.total > 0
                     ? `Checking ${fmtCount(verify.done)} of ${fmtCount(verify.total)}…`
                     : 'Looking through your sermon folder…'}
@@ -801,7 +787,7 @@ export default function SettingsPage({
             )}
 
             {(verify?.status === 'done' || verify?.status === 'stopped') && (
-              <div style={{ marginTop: '4px', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              <div style={{ marginTop: '4px', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                 {verify.total === 0 ? (
                   <div>You have not downloaded any sermons yet, so there is nothing to check.</div>
                 ) : (
@@ -846,13 +832,14 @@ export default function SettingsPage({
                     {repairableCount > 0 && !repair && (
                       <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                         <button
+                          className="btn btn-gold btn-sm"
                           onClick={handleRepairLibrary}
                           title="Fetch back the missing parts of these sermons"
-                          style={{ ...setButtonStyle, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          style={{ whiteSpace: 'nowrap' }}
                         >
                           Repair {fmtCount(repairableCount)} sermon{repairableCount === 1 ? '' : 's'}
                         </button>
-                        <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                           Only the missing parts are fetched, so this is usually far quicker
                           than downloading them again.
                         </span>
@@ -881,7 +868,7 @@ export default function SettingsPage({
             )}
 
             {verify?.status === 'unavailable' && (
-              <div style={{ marginTop: '4px', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              <div style={{ marginTop: '4px', fontSize: 'var(--text-sm)', color: 'var(--text-muted)', lineHeight: 1.6 }}>
                 Your sermons could not be checked just now, so nothing has been changed.
                 Please try again in a moment.
               </div>
@@ -915,16 +902,17 @@ export default function SettingsPage({
                     so leaving Settings and returning shows this again. */}
                 {(!updateCheck || updateCheck.status === 'checking') && (
                   <button
+                    className="btn btn-outline btn-sm"
                     onClick={handleCheckForUpdate}
                     disabled={updateCheck?.status === 'checking'}
-                    style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 12px', cursor: updateCheck?.status === 'checking' ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+                    style={{ whiteSpace: 'nowrap' }}
                   >
                     {updateCheck?.status === 'checking' ? 'Checking…' : 'Check for update'}
                   </button>
                 )}
 
                 {updateCheck?.status === 'latest' && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--green)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--green)' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
@@ -934,13 +922,14 @@ export default function SettingsPage({
 
                 {updateCheck?.status === 'available' && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gold-text)' }}>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--gold-text)' }}>
                       Version {updateCheck.version} is available
                     </span>
                     <button
                       onClick={handleInstallUpdate}
                       disabled={installing}
-                      style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gold-text)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 12px', cursor: installing ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+                      className="btn btn-gold btn-sm"
+                      style={{ whiteSpace: 'nowrap' }}
                     >
                       {installing ? 'Installing…' : 'Install now'}
                     </button>
@@ -951,14 +940,15 @@ export default function SettingsPage({
                     nothing to check — say that rather than sitting silent. */}
                 {(updateCheck?.status === 'dev' || updateCheck?.status === 'error') && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', maxWidth: '260px', textAlign: 'right' }}>
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', maxWidth: '260px', textAlign: 'right' }}>
                       {updateCheck.status === 'dev'
                         ? updateCheck.message
                         : `Couldn't check for updates — ${updateCheck.message}`}
                     </span>
                     <button
                       onClick={handleCheckForUpdate}
-                      style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      className="btn btn-outline btn-sm"
+                      style={{ whiteSpace: 'nowrap' }}
                     >
                       Try again
                     </button>
@@ -971,7 +961,7 @@ export default function SettingsPage({
                 {onNavigate && (
                   <button
                     onClick={() => onNavigate('about')}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--gold-text)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '7px 12px', cursor: 'pointer' }}
+                    className="btn btn-outline btn-sm"
                   >
                     About &amp; Vision
                   </button>
@@ -979,7 +969,7 @@ export default function SettingsPage({
                 {onShowConditions && (
                   <button
                     onClick={onShowConditions}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: '6px', padding: '7px 12px', cursor: 'pointer' }}
+                    className="btn btn-outline btn-sm"
                   >
                     Copying Permissions &amp; Conditions
                   </button>
@@ -998,10 +988,10 @@ export default function SettingsPage({
             </div>
             {nodeId && (
               <div className="settings-row" style={{ border: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: '6px' }}>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>Node ID</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>Node ID</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
                   <code style={{
-                    fontSize: '0.72rem', fontFamily: 'monospace', color: 'var(--text-secondary)',
+                    fontSize: 'var(--text-xs)', fontFamily: 'monospace', color: 'var(--text-secondary)',
                     background: 'var(--bg-primary)', padding: '6px 10px', borderRadius: '6px',
                     border: '1px solid var(--border)', flex: 1, wordBreak: 'break-all',
                     overflowWrap: 'anywhere', userSelect: 'all',
@@ -1010,10 +1000,10 @@ export default function SettingsPage({
                   </code>
                   <button
                     onClick={copyNodeId}
+                    className="btn btn-outline btn-sm"
                     style={{
-                      fontSize: '0.7rem', color: copiedNodeId ? 'var(--green)' : 'var(--text-muted)', background: 'none',
-                      border: `1px solid ${copiedNodeId ? 'var(--green)' : 'var(--border)'}`, borderRadius: '4px', padding: '4px 10px',
-                      cursor: 'pointer', flexShrink: 0, minWidth: '58px',
+                      flexShrink: 0, minWidth: '58px',
+                      ...(copiedNodeId ? { color: 'var(--green)', borderColor: 'var(--green)' } : null),
                     }}
                     title="Copy Node ID"
                   >
@@ -1026,16 +1016,16 @@ export default function SettingsPage({
 
           <div className="seed-card" style={{ background: 'rgba(212,175,55,0.04)', border: '1px solid rgba(212,175,55,0.15)' }}>
             <h3 style={{ color: 'var(--gold-text)' }}>Network Layers</h3>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: '12px' }}>
               Your node uses standard BitTorrent connectivity for maximum reachability:
             </p>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
               <div>1. TCP — direct peer connections</div>
               <div>2. Mainline DHT — trackerless peer discovery (millions of nodes)</div>
               <div>3. Public Trackers — secondary peer discovery</div>
               <div>4. UPnP — automatic router port forwarding</div>
             </div>
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '12px' }}>
+            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '12px' }}>
               See the Connections page for live status of each layer. Seeded sermons can also
               be shared with any standard torrent client.
             </p>
