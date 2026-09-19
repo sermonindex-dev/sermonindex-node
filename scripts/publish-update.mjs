@@ -215,11 +215,27 @@ for (const sigPath of sigFiles) {
 // URL 404s and the updater's download fails. A space-free key resolves identically
 // both ways. (The reliable older releases used a space-free "SermonIndex.app.tar.gz".)
 const safeName = (s) => s.replace(/\s+/g, '-').replace(/[^A-Za-z0-9._-]/g, '');
-const nameCounts = new Map();
-for (const { name } of chosen.values()) nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
 for (const [key, a] of chosen) {
   const fname = safeName(a.name);
-  a.remotePath = (nameCounts.get(a.name) > 1) ? `app/${key}/${fname}` : `app/${fname}`;
+  // EVERY artifact goes under a VERSIONED path.
+  //
+  // Windows and Linux artifacts already carry the version in their filename, so
+  // each release was always a fresh URL for them. The macOS updater tarball does
+  // not — Tauri names it "<productName>.app.tar.gz" with no version and no arch —
+  // so every release reused ONE cache key, served with a 30-day max-age.
+  //
+  // That single reused key has caused four separate incidents: 0.0.328 and
+  // 0.0.329 (stale tarball served against a fresh signature), 0.0.335, and a
+  // corrupted edge/shield fill on 0.0.336 that survived repeated purges because
+  // a pull-zone purge does not evict an origin shield. Nothing downstream can
+  // work around a poisoned cache entry on a key that never changes.
+  //
+  // A version in the path makes every release a key that has never been fetched
+  // before, at the edge AND at the shield. A stale or corrupt entry for one
+  // version is then simply unreachable from the next. latest.json is written in
+  // the same run and carries these URLs, so clients need no change and nothing
+  // has to be migrated.
+  a.remotePath = `app/${key}/${version}/${fname}`;
 }
 
 // Percent-encode each path segment (filenames contain spaces) while keeping the
