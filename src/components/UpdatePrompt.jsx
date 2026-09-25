@@ -66,7 +66,8 @@ const iconClose = (
 export default function UpdatePrompt({ inline = false }) {
   const [update, setUpdate] = useState(null); // { version, notes, install } — latest known update
   const [visible, setVisible] = useState(false); // whether the banner is currently shown
-  const [state, setState] = useState('idle');  // idle | working | error
+  const [state, setState] = useState('idle');  // idle | working | error | fallback
+  const [fallback, setFallback] = useState('');
   const timerRef = useRef(null); // pending "re-show after snooze" timeout id
 
   const clearTimer = useCallback(() => {
@@ -122,6 +123,14 @@ export default function UpdatePrompt({ inline = false }) {
       await update.install(); // downloads, installs, then relaunches (won't return)
     } catch (e) {
       console.warn('[UpdatePrompt] Update failed:', e?.message || e);
+      // A Debian/Ubuntu install that cannot self-update is not a retry case —
+      // retrying will fail identically every time. Send them somewhere useful
+      // instead. See updateFallbackUrl() for the two ways this happens.
+      try {
+        const { updateFallbackUrl } = await import('../services/updater.js');
+        const url = updateFallbackUrl();
+        if (url) { setFallback(url); setState('fallback'); return; }
+      } catch {}
       setState('error');
     }
   }, [update]);
@@ -130,8 +139,18 @@ export default function UpdatePrompt({ inline = false }) {
 
   const working = state === 'working';
   const error = state === 'error';
+  const isFallback = state === 'fallback';
+
+  const openFallback = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('open_url', { url: fallback });
+    } catch { try { window.open(fallback, '_blank'); } catch {} }
+  }, [fallback]);
   const label = working
     ? 'Updating…'
+    : isFallback
+    ? 'Update ready — click to download'
     : error
     ? 'Update failed — click to retry'
     : `Click to update to v${update.version}`;
@@ -140,19 +159,22 @@ export default function UpdatePrompt({ inline = false }) {
     <div
       role="button"
       tabIndex={0}
-      aria-label={working ? 'Updating' : error ? 'Update failed — click to retry' : `Click to update to version ${update.version}`}
+      aria-label={working ? 'Updating' : isFallback ? 'Update ready — click to download' : error ? 'Update failed — click to retry' : `Click to update to version ${update.version}`}
       title={update.notes ? String(update.notes).slice(0, 160) : `Update to v${update.version} — installs and restarts in place`}
       className={`si-update-alert${inline ? ' si-update-alert--sidebar' : ''}${working ? ' is-working' : ''}`}
-      onClick={working ? undefined : doUpdate}
+      onClick={working ? undefined : (isFallback ? openFallback : doUpdate)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return; // let the ✕ button handle its own keys
-        if (!working && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); doUpdate(); }
+        if (!working && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          (isFallback ? openFallback : doUpdate)();
+        }
       }}
     >
       {/* Up-arrow (idle) / spinning refresh (working, error) — gold accent */}
       <span
         className={working ? 'si-update-alert__spin' : undefined}
-        style={{ display: 'inline-flex', flexShrink: 0, color: error ? 'var(--orange, #b85c00)' : 'var(--gold, #D4AF37)' }}
+        style={{ display: 'inline-flex', flexShrink: 0, color: error && !isFallback ? 'var(--orange, #b85c00)' : 'var(--gold, #D4AF37)' }}
       >
         {working || error ? iconRefresh : iconUpCircle}
       </span>
@@ -160,7 +182,7 @@ export default function UpdatePrompt({ inline = false }) {
         style={{
           flex: 1, minWidth: 0,
           fontSize: 'var(--text-sm)', fontWeight: 600, lineHeight: 1.35,
-          color: error ? 'var(--orange, #b85c00)' : 'var(--sidebar-text, #F8F8F2)',
+          color: error && !isFallback ? 'var(--orange, #b85c00)' : 'var(--sidebar-text, #F8F8F2)',
         }}
       >
         {label}

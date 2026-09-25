@@ -242,6 +242,39 @@ const MAX_RETRY_AFTER_MS = 120000;   // never obey an absurd Retry-After
 // retrying it is pointless (and looks like abuse). Fall back to the other source.
 const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 410, 451]);
 
+// ── Throughput watchdog (0.0.339) ──────────────────────────────────────────
+// The connection timeout above covers getting the HEADERS back. Once the body
+// starts, `clearTimeout(connectionTimeout)` fires and — until this release —
+// nothing timed the stream at all. The old comment claimed "the streaming read
+// has its own implicit timeout"; it does not. `await reader.read()` on a socket
+// that is open but trickling simply returns very small chunks forever, and the
+// download sat there, at 2%, with a fast copy of the same file available from
+// the other source and no mechanism that would ever reach for it.
+//
+// Same thresholds as the CLI's download.rs, deliberately: two implementations
+// of one policy that disagree is worse than either number being slightly wrong.
+const STALL_MS = 60000;          // no bytes at all for this long → next source
+const SLOW_WINDOW_MS = 5000;     // rate is measured over windows, not per chunk
+const SLOW_FOR_MS = 30000;       // sustained under the floor for this long → next source
+const MIN_BYTES_PER_SEC = 50 * 1024;
+const SLOW_GRACE_BYTES = 1024 * 1024; // don't judge speed before this much arrives
+
+// A source abandoned by the watchdog. NOT `fatalSource` — the source has the
+// file and may be fine in a minute; it is only unusable right now. Retrying the
+// SAME source immediately is the one thing that cannot help, so this skips the
+// per-source retries and goes straight to the other source, keeping whatever
+// was already received for a Range resume there.
+function slowSourceError(host, bps) {
+  const err = new Error(
+    bps > 0
+      ? `${host} too slow (${Math.round(bps / 1024)} KB/s)`
+      : `${host} stopped sending data`
+  );
+  err.retryable = true;
+  err.slowSource = true;
+  return err;
+}
+
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // A cancellation is not a transient failure — it must never be retried or
@@ -696,6 +729,11 @@ class DownloadManager {
     err.status = Number(outcome?.status ?? 0);
     err.retryAfterMs = parseRetryAfterValue(outcome?.retryAfter);
     err.fatalSource = !!outcome?.fatalSource;
+    // The native watchdog gave up on this source (see `slow_source` in
+    // StreamOutcome). Not fatal — the source has the file — but retrying the
+    // same host is the one response that cannot help, so this skips straight to
+    // the other source. The bytes already staged in `.part` are resumed there.
+    err.slowSource = !!outcome?.slowSource;
     // Only claim resumability when there are actually staged bytes to resume.
     err.resumable = !!outcome?.resumable && received > 0;
     err.received = received;
@@ -721,6 +759,7 @@ class DownloadManager {
         if (entry.cancelled) throw cancelledError();
         if (e?.streamUnsupported) throw e;   // fall back to the buffered path
         if (e?.fatalSource) throw e;         // 404 etc — don't hammer it
+        if (e?.slowSource) throw e;          // connected but crawling — switch source
         if (attempt >= maxAttempts - 1) throw e;
 
         const wait = e?.retryAfterMs > 0
@@ -1041,6 +1080,11 @@ class DownloadManager {
         lastError = e;
         if (entry.cancelled) throw cancelledError();     // user pulled the plug
         if (e && e.fatalSource) throw e;                 // 404 etc — don't hammer it
+        // Abandoned by the watchdog: the file is there, this source just is not
+        // delivering it. Backing off and asking the SAME host again is the one
+        // response guaranteed not to help — hand it to the caller so the other
+        // source picks up from the bytes we already have.
+        if (e && e.slowSource) throw e;
         if (attempt >= maxAttempts - 1) throw e;         // out of attempts here
 
         const wait = e?.retryAfterMs > 0
@@ -1206,14 +1250,69 @@ class DownloadManager {
     const throttleStart = Date.now();
     const throttleBase = received;
 
+    // Watchdog state — see STALL_MS above.
+    //
+    // The floor has to respect the operator's OWN bandwidth limit. Someone who
+    // caps the app at 30 KB/s so it does not swamp a household connection is
+    // getting exactly what they asked for, and a watchdog that reads their
+    // setting as a failing source would abandon every source in turn and then
+    // fail the file. Below half the floor, the check is switched off entirely
+    // rather than fudged: at those speeds no measurement here can distinguish
+    // a throttle from a stall, and guessing wrong costs the user their download.
+    const rateFloor = this.bandwidthLimit > 0
+      ? Math.min(MIN_BYTES_PER_SEC, Math.floor(this.bandwidthLimit / 2))
+      : MIN_BYTES_PER_SEC;
+    const watchRate = rateFloor >= 4096;
+    let gotThisAttempt = 0;
+    let windowStart = Date.now();
+    let windowBytes = 0;
+    let slowFor = 0;
+
     try {
       while (true) {
         if (entry.cancelled) throw cancelledError();
-        const { done, value } = await reader.read();
+        // Race the read against the stall timer. A plain `await reader.read()`
+        // on a dead-but-open socket never settles, which is precisely how a
+        // single bad source used to hold a download slot indefinitely.
+        let stallTimer;
+        const stalled = new Promise((_, reject) => {
+          stallTimer = setTimeout(() => reject(slowSourceError(host, 0)), STALL_MS);
+        });
+        let read;
+        try {
+          read = await Promise.race([reader.read(), stalled]);
+        } finally {
+          clearTimeout(stallTimer);
+        }
+        const { done, value } = read;
         if (done) break;
 
         chunks.push(value);
         received += value.length;
+        gotThisAttempt += value.length;
+        windowBytes += value.length;
+
+        // Rolling-window rate check. Measured over windows rather than per
+        // chunk so one slow chunk proves nothing and a burst cannot mask a
+        // sustained crawl; and only once enough has arrived for the
+        // measurement to mean anything.
+        const wElapsed = Date.now() - windowStart;
+        if (wElapsed >= SLOW_WINDOW_MS) {
+          const bps = (windowBytes / wElapsed) * 1000;
+          if (watchRate && gotThisAttempt >= SLOW_GRACE_BYTES && bps < rateFloor) {
+            slowFor += wElapsed;
+            if (slowFor >= SLOW_FOR_MS) {
+              // Keep `partial` exactly as it is: the other source resumes from
+              // these bytes with a Range request rather than starting over.
+              if (partial) partial.received = received;
+              throw slowSourceError(host, bps);
+            }
+          } else {
+            slowFor = 0;
+          }
+          windowStart = Date.now();
+          windowBytes = 0;
+        }
         if (partial) partial.received = received;
         entry.bytesDownloaded = received;
         // Calculate progress using best available size estimate
@@ -1241,6 +1340,11 @@ class DownloadManager {
       }
     } catch (streamErr) {
       if (streamErr?.cancelled || entry.cancelled) throw cancelledError();
+      // The watchdog's own verdict passes straight through. Re-wrapping it as a
+      // generic "connection dropped" would strip `slowSource`, and the caller
+      // would then retry the very source we just gave up on — which is how a
+      // watchdog turns into a no-op.
+      if (streamErr?.slowSource) throw streamErr;
       // Mid-stream drop. Whatever we already buffered stays in `partial`, so
       // the next attempt resumes from here if the server supports Range.
       const err = new Error(`Connection dropped at ${received} bytes from ${host}: ${streamErr?.message || streamErr}`);

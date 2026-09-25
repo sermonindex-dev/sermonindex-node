@@ -60,15 +60,18 @@ let _lastCheck = 0;
  * no override applies.
  */
 let _targetCache;
+let _installKind = null;
 async function updaterTarget() {
   if (_targetCache !== undefined) return _targetCache || undefined;
   _targetCache = '';
   try {
-    if (typeof navigator !== 'undefined' && !/Linux/i.test(navigator.userAgent || '')) {
-      return undefined;
-    }
+    // No user-agent sniffing. WebKitGTK's UA happens to contain "Linux", but
+    // leaning on that meant the whole deb path hung off a string that no part
+    // of this app controls. `linux_install_kind` is cfg-gated and answers
+    // "other" everywhere that is not Linux, so just ask it.
     const { invoke } = await import('@tauri-apps/api/core');
     const kind = await invoke('linux_install_kind');
+    _installKind = kind;
     if (kind === 'deb') _targetCache = 'linux-deb-x86_64';
   } catch {
     // An older native build has no such command. Falling back to the default
@@ -76,6 +79,26 @@ async function updaterTarget() {
     // download, where a wrong override would offer them nothing at all.
   }
   return _targetCache || undefined;
+}
+
+/**
+ * Where a Debian/Ubuntu user should go when the in-app update cannot finish.
+ *
+ * Two situations put someone here, and neither is recoverable in the app:
+ *
+ *   1. They are on a build from BEFORE this deb support existed. That build
+ *      asks for `linux-x86_64`, is handed an AppImage, and refuses it — and it
+ *      cannot learn otherwise, because the fix is in the very update it is
+ *      failing to install. One manual install breaks the loop for good.
+ *   2. Installing a .deb needs root, so the plugin shells out to pkexec (then
+ *      zenity/kdialog, then sudo). On a box with no session bus — a headless
+ *      or minimal desktop, which is exactly what a node often runs on — there
+ *      may be no agent to show a password prompt at all.
+ *
+ * In both cases "Update failed" is a dead end, and a link is not.
+ */
+export function updateFallbackUrl() {
+  return _installKind === 'deb' ? 'https://sermonindex.net/node-software/' : null;
 }
 
 async function getUpdateMode() {

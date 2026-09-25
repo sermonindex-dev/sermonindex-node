@@ -315,6 +315,13 @@ async function ensureTables(): Promise<void> {
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN seed_scope TEXT DEFAULT ''`); } catch { /* exists */ }
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN seed_progress REAL DEFAULT 0`); } catch { /* exists */ }
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN seed_verified INTEGER DEFAULT 0`); } catch { /* exists */ }
+  // Dismissing a junk seed request. Before this there was only the on/off flip,
+  // so a request from a bot or a mistyped address sat in the pending queue
+  // permanently and the queue stopped being a to-do list — which is the only
+  // thing a queue is for. Dismissed is NOT denied: the row is kept, the node can
+  // still be enabled later, and Restore puts it straight back.
+  try { await dbQuery(`ALTER TABLE seed_access ADD COLUMN dismissed INTEGER DEFAULT 0`); } catch { /* exists */ }
+  try { await dbQuery(`ALTER TABLE seed_access ADD COLUMN dismissed_at TEXT`); } catch { /* exists */ }
   // High-water mark of storage a node has ever held (mirrors uploaded_bytes: monotonic).
   try { await dbQuery(`ALTER TABLE nodes ADD COLUMN peak_storage_bytes INTEGER DEFAULT 0`); } catch { /* exists */ }
   // All-time storage downloaded across every node ever (sum of peak_storage_bytes).
@@ -1270,8 +1277,176 @@ function statCardColor(n: string | number, label: string, color: string): string
 }
 
 /** Remote config editor block (shared by /admin and /admin/config). */
+/**
+ * The settings block.
+ *
+ * It used to be a flat list of `key / value / description` rows: every setting
+ * rendered as a bare text box beside its own raw identifier, in alphabetical
+ * order, with `announcement` sitting between `max_concurrent_downloads` and
+ * `min_app_version` as though the three were the same kind of thing. Reading it
+ * meant knowing the schema already, and the settings that matter most were the
+ * easiest to miss.
+ *
+ * Now each known setting gets the control it deserves — a dropdown where the
+ * values are an enum, a number field where the value is a number, a textarea
+ * where the value is prose — grouped by what an admin is actually doing, with
+ * one plain sentence of explanation each. The raw editor is still here for
+ * anything unrecognised, because a config table that cannot take a new key is
+ * not a config table.
+ *
+ * `compact` keeps the old dense rendering for the embedded view; only the full
+ * page gets the grouped treatment.
+ */
+type FieldSpec = {
+  key: string;
+  label: string;
+  help: string;
+  kind: "select" | "number" | "text" | "textarea";
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  placeholder?: string;
+};
+
+/** Grouped, in the order an admin meets them. Anything not listed here falls
+ *  through to the raw editor below, unchanged. */
+const CONFIG_GROUPS: Array<{ title: string; blurb: string; fields: FieldSpec[] }> = [
+  {
+    title: "Content delivery",
+    blurb: "How nodes get their files, and how hard they pull.",
+    fields: [
+      {
+        key: "source_mode",
+        label: "Where nodes fetch content",
+        kind: "select",
+        help:
+          "CDN is the simplest and the most expensive for us. Hybrid is the one to move to once enough seed nodes are complete — it uses the swarm first and falls back to the CDN, so it costs us nothing when the swarm can serve and never fails when it cannot.",
+        options: [
+          { value: "cdn", label: "CDN — direct download" },
+          { value: "p2p", label: "Peer-to-peer (BitTorrent only)" },
+          { value: "hybrid", label: "Hybrid — BitTorrent, CDN fallback" },
+        ],
+      },
+      {
+        key: "max_concurrent_downloads",
+        label: "Simultaneous downloads per node",
+        kind: "number",
+        min: 1,
+        max: 16,
+        help:
+          "The ceiling a node may use. Operators can set their own below this with `config downloads <n>`; a node on a data-centre link is wasted at 3.",
+      },
+    ],
+  },
+  {
+    title: "Network behaviour",
+    blurb: "How often nodes check in, and which versions the network expects.",
+    fields: [
+      {
+        key: "heartbeat_interval",
+        label: "Heartbeat interval (seconds)",
+        kind: "number",
+        min: 60,
+        max: 3600,
+        help:
+          "How often a node reports in. Lower makes the map livelier and the database busier; 300 has been right for a long time.",
+      },
+      {
+        key: "min_app_version",
+        label: "Minimum expected app version",
+        kind: "text",
+        placeholder: "0.0.0",
+        help:
+          "Advisory only — nothing is blocked. It is what the console compares against when telling you which nodes are behind.",
+      },
+    ],
+  },
+  {
+    title: "Messages to operators",
+    blurb: "Text that reaches every node operator. Both take effect within minutes.",
+    fields: [
+      {
+        key: "announcement",
+        label: "Banner announcement",
+        kind: "textarea",
+        placeholder: "Leave empty for no banner.",
+        help:
+          "Shown inside the app to everyone running a node. Empty means no banner — which is the right setting almost always, so that the one time it is not empty, people read it.",
+      },
+      {
+        key: "moderator_ids",
+        label: "Chat moderators",
+        kind: "textarea",
+        placeholder: "si-2098a, si-1a2b3",
+        help:
+          "Short node IDs whose community-chat messages are starred. Commas, spaces or new lines. Picked up within ~60 seconds.",
+      },
+    ],
+  },
+];
+
+function configField(f: FieldSpec, value: string): string {
+  const v = escapeHtml(value);
+  let control: string;
+  switch (f.kind) {
+    case "select":
+      control = `<select name="value">${(f.options || [])
+        .map(
+          (o) =>
+            `<option value="${escapeHtml(o.value)}"${o.value === value ? " selected" : ""}>${escapeHtml(o.label)}</option>`,
+        )
+        .join("")}</select>`;
+      break;
+    case "number":
+      control = `<input type="number" name="value" value="${v}"${
+        f.min !== undefined ? ` min="${f.min}"` : ""
+      }${f.max !== undefined ? ` max="${f.max}"` : ""}>`;
+      break;
+    case "textarea":
+      control = `<textarea name="value" rows="3" placeholder="${escapeHtml(f.placeholder || "")}">${v}</textarea>`;
+      break;
+    default:
+      control = `<input name="value" value="${v}" placeholder="${escapeHtml(f.placeholder || "")}">`;
+  }
+  return `
+    <form method="POST" action="/admin/config" style="padding:14px 0;border-top:1px solid var(--border);">
+      <input type="hidden" name="key" value="${escapeHtml(f.key)}">
+      <div class="row" style="align-items:flex-start;gap:16px;">
+        <div style="flex:1;min-width:240px;">
+          <label style="font-weight:600;">${escapeHtml(f.label)}</label>
+          <p class="sub" style="margin:2px 0 8px;">${escapeHtml(f.help)}</p>
+          <code class="muted" style="font-size:11px;">${escapeHtml(f.key)}</code>
+        </div>
+        <div style="flex:1;min-width:220px;">${control}
+          <div style="margin-top:8px;"><button class="btn sm" type="submit">Save</button></div>
+        </div>
+      </div>
+    </form>`;
+}
+
 function configEditor(rows: any[], compact = false): string {
-  const list = rows
+  const valueOf = (key: string) =>
+    String((rows.find((r: any) => r.key === key) || {}).value ?? "");
+  const known = new Set(CONFIG_GROUPS.flatMap((g) => g.fields.map((f) => f.key)));
+  // Handled by their own dedicated cards higher up the page — listing them a
+  // second time here would give the admin two controls for one value.
+  known.add("master_list_version");
+
+  const grouped = compact
+    ? ""
+    : CONFIG_GROUPS.map(
+        (g) => `
+      <h2>${escapeHtml(g.title)}</h2>
+      <div class="card" style="margin-bottom:16px;">
+        <p class="sub" style="margin:0;">${escapeHtml(g.blurb)}</p>
+        ${g.fields.map((f) => configField(f, valueOf(f.key))).join("")}
+      </div>`,
+      ).join("");
+
+  // Everything the groups above do not claim. In compact mode that is
+  // everything, which preserves the old embedded view exactly.
+  const rest = rows.filter((r: any) => compact || !known.has(r.key));
+  const list = rest
     .map(
       (r: any) => `
       <form method="POST" action="/admin/config" class="row" style="margin-bottom:10px;align-items:flex-end;">
@@ -1300,7 +1475,14 @@ function configEditor(rows: any[], compact = false): string {
       <button class="btn sm" type="submit">Add</button>
     </form>`;
 
-  return `<div class="card">${list || '<div class="empty">No config yet.</div>'}${addForm}</div>`;
+  const rawTitle = compact ? "" : "<h2>Other settings</h2>";
+  const rawBlurb = compact
+    ? ""
+    : '<p class="sub">Anything not covered above, edited as raw key/value. New keys added here appear in the next heartbeat payload immediately.</p>';
+
+  return `${grouped}${rawTitle}${rawBlurb}<div class="card">${
+    list || '<div class="empty">Nothing else set.</div>'
+  }${addForm}</div>`;
 }
 
 /** GET /admin — Overview. */
@@ -1578,12 +1760,13 @@ async function pageNodes(): Promise<Response> {
     // Pending seed requests are reviewed on the dedicated Seed Nodes page now —
     // only the count is kept here, as a pointer.
     dbQuery(
-      `SELECT COUNT(*) c FROM seed_access WHERE enabled=0 AND requested_at IS NOT NULL`,
+      `SELECT COUNT(*) c FROM seed_access
+         WHERE enabled=0 AND requested_at IS NOT NULL AND COALESCE(dismissed,0)=0`,
     ),
     // Nodes joined with seed_access flag and a per-node shared-sermon count.
     dbQuery(
       `SELECT n.node_id, n.city, n.country, n.region, n.is_online, n.last_seen, n.node_type, n.reachable, n.quiet,
-              n.files_stored, n.library_coverage, n.app_version,
+              n.files_stored, n.library_coverage, n.app_version, n.seed_scope,
               COALESCE(sa.enabled, 0) AS seed_enabled,
               (SELECT COUNT(*) FROM shared_sermons ss WHERE ss.node_id = n.node_id) AS shared_count
          FROM nodes n
@@ -1699,6 +1882,45 @@ async function pageNodes(): Promise<Response> {
         }</p>
     </div>`;
 
+  /**
+   * The Files column, with what those files ARE stacked above the count.
+   *
+   * A bare number cannot be read. 12,400 files is a nearly complete audio
+   * mirror or a fifth of a full one, and which of those it is changes what the
+   * admin should do about it — so the two facts belong in the same cell as the
+   * number they qualify, not in separate columns halfway across the table.
+   *
+   * Two chips:
+   *   scope  — what the node set out to hold. "audio" (~412 GB) or "full"
+   *            (~2.4 TB, video included), reported by the node itself.
+   *   access — gold "seed access" when the admin has granted this machine
+   *            full-archive rights. Deliberately separate from scope: a node
+   *            can be GRANTED and still be running audio (it has not switched
+   *            yet, or chose not to), and a node can report "full" from before
+   *            the gate existed without holding a grant. Showing one chip for
+   *            both would hide exactly those two cases, which are the ones
+   *            worth noticing.
+   *
+   * `seed_scope` arrives from app v0.0.328+ / CLI 0.2.x. Older nodes report
+   * nothing, and say so rather than being guessed at.
+   */
+  const filesCell = (n: any, seedEnabled: boolean) => {
+    const scope = String(n.seed_scope || "");
+    const scopeChip =
+      scope === "full"
+        ? '<span class="badge b-seed" title="Full archive — audio and video (~2.4 TB).">full · video</span>'
+        : scope === "audio"
+          ? '<span class="badge b-user" title="Audio archive only (~412 GB). No approval needed to run this.">audio</span>'
+          : '<span class="badge b-off" title="This node has not reported its scope — requires app v0.0.328+ or CLI 0.2.x.">scope unknown</span>';
+    const accessChip = seedEnabled
+      ? '<span class="badge b-seed" title="Granted full-archive access by an admin. Whether it is USING it is the scope chip to the left.">seed access</span>'
+      : "";
+    return `<td style="min-width:130px;">
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:3px;">${scopeChip}${accessChip}</div>
+      ${toInt(n.files_stored, 0).toLocaleString()}
+    </td>`;
+  };
+
   // Full node table with flip switch.
   const nowMs = Date.now();
   const nodeRows = nodes.rows
@@ -1752,7 +1974,7 @@ async function pageNodes(): Promise<Response> {
         <td>${n.node_type === "seed" ? '<span class="badge b-seed">seed</span>' : '<span class="badge b-user">user</span>'}</td>
         <td>${classBadge}</td>
         <td>${toInt(n.shared_count, 0)}</td>
-        <td>${toInt(n.files_stored, 0)}</td>
+        ${filesCell(n, seedEnabled)}
         <td>${(Math.round(toNum(n.library_coverage, 0) * 10) / 10)}%</td>
         <td class="mono">${escapeHtml(n.app_version || "0.0.0")}</td>
         <td class="muted">${escapeHtml(timeAgo(n.last_seen))}</td>
@@ -1792,6 +2014,7 @@ async function pageSeedNodes(): Promise<Response> {
   const online = isoMinutesAgo(15);
   const { rows } = await dbQuery(
     `SELECT sa.node_id, sa.email, sa.enabled, sa.requested_at, sa.enabled_at,
+            COALESCE(sa.dismissed,0) AS dismissed, sa.dismissed_at,
             n.city, n.region, n.country, n.is_online, n.last_seen, n.node_type, n.reachable, n.quiet,
             n.files_stored, n.storage_used_bytes, n.library_coverage, n.uploaded_bytes,
             n.app_version, n.uptime_seconds, n.seed_scope, n.seed_progress, n.seed_verified,
@@ -1806,7 +2029,14 @@ async function pageSeedNodes(): Promise<Response> {
     toInt(r.is_online, 0) === 1 && !!r.last_seen && new Date(r.last_seen).getTime() >= onlineCutoff;
 
   const granted = rows.filter((r: any) => toInt(r.enabled, 0) === 1);
-  const pending = rows.filter((r: any) => toInt(r.enabled, 0) === 0 && r.requested_at);
+  // Dismissed requests leave the queue but not the database — see the migration
+  // note. They are listed below, collapsed, so a mistake is one click to undo.
+  const pending = rows.filter(
+    (r: any) => toInt(r.enabled, 0) === 0 && r.requested_at && toInt(r.dismissed, 0) === 0,
+  );
+  const dismissed = rows.filter(
+    (r: any) => toInt(r.enabled, 0) === 0 && r.requested_at && toInt(r.dismissed, 0) === 1,
+  );
 
   // Header figures — all across GRANTED seeds only.
   const grantedOnline = granted.filter(isOnlineRow).length;
@@ -1930,30 +2160,79 @@ async function pageSeedNodes(): Promise<Response> {
        <button class="btn sm ${enable === 1 ? "green" : "red"}" type="submit">${enable === 1 ? "Enable" : "Disable"}</button>
      </form></td>`;
 
+  // Dismiss / Restore. Deliberately a separate route from /admin/seed rather
+  // than a third value on the flip: "not approved" and "not worth looking at
+  // again" are different statements, and collapsing them would mean a dismissal
+  // could never be told apart from a node simply never having been enabled.
+  const dismissCell = (r: any, dismiss: 0 | 1) =>
+    `<td><form method="POST" action="/admin/seed-dismiss" class="inline-form">
+       <input type="hidden" name="node_id" value="${escapeHtml(r.node_id)}">
+       <input type="hidden" name="dismiss" value="${dismiss}">
+       <button class="btn sm ${dismiss === 1 ? "" : "green"}" type="submit"
+               title="${dismiss === 1 ? "Take this out of the queue. The request is kept and can be restored." : "Put this back in the pending queue."}">
+         ${dismiss === 1 ? "Dismiss" : "Restore"}
+       </button>
+     </form></td>`;
+
+  // Has this node ever actually run? A request from an id that has never sent a
+  // heartbeat is the signature of a scripted or speculative request — not proof
+  // of one, but the single most useful thing to see before approving ~2.4 TB of
+  // egress, so it goes in the row rather than in a tooltip.
+  const heardCell = (r: any) =>
+    r.last_seen
+      ? `<td><span class="badge b-on" title="This node id has sent at least one heartbeat.">ran</span></td>`
+      : `<td><span class="badge b-off" title="No heartbeat has ever been received from this node id. Either the software was never started, or the id was made up.">never ran</span></td>`;
+
   // ── Pending requests (first — this is the queue that needs action) ─────────
   const pendingRows = pending
     .map(
       (r: any) => `<tr>
-        ${idCell(r)}${emailCell(r)}${locCell(r)}${statusCell(r)}${versionCell(r)}
+        ${idCell(r)}${emailCell(r)}${locCell(r)}${heardCell(r)}${statusCell(r)}${versionCell(r)}
         <td class="muted">${escapeHtml(timeAgo(r.requested_at))}</td>
         ${lastSeenCell(r)}
         ${flipCell(r, 1)}
+        ${dismissCell(r, 1)}
       </tr>`,
     )
     .join("");
 
   const pendingSection = `
-    <h2>Pending requests</h2>
+    <h2>Pending requests${pending.length ? ` <span class="badge b-seed">${pending.length}</span>` : ""}</h2>
     <div class="card" style="overflow-x:auto;">
       ${
         pending.length
           ? `<table><thead><tr>
-              <th>Node</th><th>Email</th><th>Location</th><th>Status</th><th>Version</th>
-              <th>Requested</th><th>Last seen</th><th>Approve</th>
+              <th>Node</th><th>Email</th><th>Location</th><th>Ever ran</th><th>Status</th><th>Version</th>
+              <th>Requested</th><th>Last seen</th><th>Approve</th><th>Spam</th>
             </tr></thead><tbody>${pendingRows}</tbody></table>`
           : '<div class="empty">No pending seed requests.</div>'
       }
     </div>`;
+
+  // ── Dismissed (collapsed; here only so a mistake is recoverable) ───────────
+  const dismissedRows = dismissed
+    .map(
+      (r: any) => `<tr>
+        ${idCell(r)}${emailCell(r)}${locCell(r)}${heardCell(r)}
+        <td class="muted">${escapeHtml(timeAgo(r.requested_at))}</td>
+        <td class="muted">${escapeHtml(timeAgo(r.dismissed_at))}</td>
+        ${flipCell(r, 1)}
+        ${dismissCell(r, 0)}
+      </tr>`,
+    )
+    .join("");
+
+  const dismissedSection = dismissed.length
+    ? `<details style="margin-top:18px;">
+         <summary style="cursor:pointer;">Dismissed requests (${dismissed.length})</summary>
+         <div class="card" style="overflow-x:auto;margin-top:10px;">
+           <table><thead><tr>
+             <th>Node</th><th>Email</th><th>Location</th><th>Ever ran</th>
+             <th>Requested</th><th>Dismissed</th><th>Approve anyway</th><th></th>
+           </tr></thead><tbody>${dismissedRows}</tbody></table>
+         </div>
+       </details>`
+    : "";
 
   // ── Granted seed nodes ────────────────────────────────────────────────────
   const grantedRows = granted
@@ -2001,7 +2280,8 @@ async function pageSeedNodes(): Promise<Response> {
     <div class="stats">${cards}</div>
     ${warningsRow}
     ${pendingSection}
-    ${grantedSection}`;
+    ${grantedSection}
+    ${dismissedSection}`;
 
   return htmlResponse(page("Seed Nodes", "seed-nodes", body));
 }
@@ -2071,6 +2351,43 @@ async function adminSeedFlip(req: Request): Promise<Response> {
   ]);
 
   return redirect(back);
+}
+
+/**
+ * POST /admin/seed-dismiss — take a junk request out of the queue, or put it back.
+ *
+ * Deliberately NOT a delete. A dismissed request keeps its row, its email and
+ * its timestamp, so: the same node id asking again is visibly the same node id
+ * asking again; an approval made later still has the request it answers; and a
+ * dismissal made in haste is one click to undo. Deleting would throw away the
+ * only record that the person ever asked, which is the thing most worth
+ * keeping when they write to ask why nothing happened.
+ *
+ * Dismissing never touches `enabled`, so it cannot revoke access by accident —
+ * a granted node is not in this queue at all.
+ */
+async function adminSeedDismiss(req: Request): Promise<Response> {
+  const form = await req.formData().catch(() => null);
+  const nodeId = cleanNode(form ? form.get("node_id") : "");
+  const dismiss = form && String(form.get("dismiss")) === "1" ? 1 : 0;
+  if (!nodeId) return errorPage("Missing node id.");
+  const ts = nowIso();
+
+  await dbBatch([
+    {
+      // UPDATE, not upsert: there is nothing to dismiss unless a request row
+      // already exists, and inventing one here would put a node in the
+      // dismissed list that never asked for anything.
+      sql: `UPDATE seed_access SET dismissed=?, dismissed_at=? WHERE node_id=?`,
+      args: [dismiss, dismiss === 1 ? ts : null, nodeId],
+    },
+    {
+      sql: `INSERT INTO node_events (node_id, event_type, detail, timestamp) VALUES (?,?,?,?)`,
+      args: [nodeId, dismiss === 1 ? "seed_request_dismissed" : "seed_request_restored", "", ts],
+    },
+  ]);
+
+  return redirect("/admin/seed-nodes");
 }
 
 /** POST /admin/node-command — queue a command a node runs on its next heartbeat. */
@@ -2217,6 +2534,7 @@ BunnySDK.net.http.serve(async (req: Request): Promise<Response> => {
 
       // POST actions
       if (path === "/admin/seed" && method === "POST") return await adminSeedFlip(req);
+      if (path === "/admin/seed-dismiss" && method === "POST") return await adminSeedDismiss(req);
       if (path === "/admin/node-command" && method === "POST") return await adminNodeCommand(req);
       if (path === "/admin/config" && method === "POST") return await adminConfigSave(req);
       if (path === "/admin/master-list/refresh" && method === "POST") return await adminMasterListRefresh(req);

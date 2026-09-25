@@ -487,6 +487,12 @@ struct StreamOutcome {
     retry_after: String,
     /// 404/403/... - the caller should drop this source rather than retry it.
     fatal_source: bool,
+    /// The throughput watchdog gave up on this source: it is connected and
+    /// sending, just uselessly slowly. Distinct from `fatal_source` — the source
+    /// HAS the file and may be fine later, so it is not dropped, only skipped.
+    /// The caller should go straight to the other source (resuming from
+    /// `received`) rather than retrying this one, which cannot help.
+    slow_source: bool,
     /// The download was cancelled via `cancel_sermon_download`.
     cancelled: bool,
     /// Empty when `ok`.
@@ -626,6 +632,32 @@ async fn stream_url_to_part(
     let mut last_progress = std::time::Instant::now();
     on_progress(written, total);
 
+    // ── Throughput watchdog ─────────────────────────────────────────────────
+    // `read_timeout` above catches a socket that goes completely silent. It
+    // cannot catch the case that actually cost operators whole nights: a source
+    // that keeps sending, politely and continuously, at a speed that will never
+    // finish the file — while a fast copy sits unused at the other source.
+    //
+    // Thresholds are the CLI's (download.rs), on purpose. The floor respects an
+    // operator's own `limit_bps`: someone who capped the app at 30 KB/s is
+    // getting what they asked for, and reading their setting as a failure would
+    // abandon every source and fail the file.
+    const SLOW_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+    const SLOW_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+    const SLOW_GRACE_BYTES: u64 = 1024 * 1024;
+    let rate_floor: u64 = if limit_bps > 0 {
+        (50 * 1024).min(limit_bps / 2)
+    } else {
+        50 * 1024
+    };
+    // Below ~4 KB/s no measurement here can tell a throttle from a stall, so
+    // the check turns itself off rather than guess.
+    let watch_rate = rate_floor >= 4096;
+    let mut got_this_attempt: u64 = 0;
+    let mut window_start = std::time::Instant::now();
+    let mut window_bytes: u64 = 0;
+    let mut slow_for = std::time::Duration::ZERO;
+
     loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = file.flush().await;
@@ -653,6 +685,36 @@ async fn stream_url_to_part(
             return out;
         }
         written += chunk.len() as u64;
+        got_this_attempt += chunk.len() as u64;
+        window_bytes += chunk.len() as u64;
+
+        // Rolling-window rate check — see the watchdog note above. Measured over
+        // windows so one slow chunk proves nothing and a burst cannot mask a
+        // sustained crawl, and only once enough has arrived to mean anything.
+        let w_elapsed = window_start.elapsed();
+        if w_elapsed >= SLOW_WINDOW {
+            let bps = (window_bytes as f64 / w_elapsed.as_secs_f64()) as u64;
+            if watch_rate && got_this_attempt >= SLOW_GRACE_BYTES && bps < rate_floor {
+                slow_for += w_elapsed;
+                if slow_for >= SLOW_FOR {
+                    let _ = file.flush().await;
+                    out.received = written;
+                    out.slow_source = true;
+                    // Everything received stays in `.part`: the other source
+                    // resumes from here with a Range request rather than
+                    // starting the file over.
+                    out.error = format!(
+                        "Source too slow ({} KB/s) at {written} bytes - switching source",
+                        bps / 1024
+                    );
+                    return out;
+                }
+            } else {
+                slow_for = std::time::Duration::ZERO;
+            }
+            window_start = std::time::Instant::now();
+            window_bytes = 0;
+        }
 
         // ~10 progress events/sec - enough for a smooth bar, not enough to
         // flood the IPC channel or React's state updates.
