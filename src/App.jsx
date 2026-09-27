@@ -470,12 +470,32 @@ export default function App() {
       // Normalize server mode keys to app keys. Legacy server values
       // (e.g. *_PRIMARY / *_ONLY from the pre-BitTorrent era) map onto the
       // new p2p modes so old admin configs keep working.
+      // Two vocabularies that never agreed, and nobody noticed because the
+      // mismatch failed SILENTLY into the safe answer.
+      //
+      // The console stores      cdn | hybrid | p2p
+      // The app understands     cdn | p2p-primary | p2p-only
+      //
+      // The old version of this function tested `startsWith('cdn')`, then
+      // `includes('only')`, then `includes('primary')` — none of which match
+      // "hybrid" or "p2p" — and fell through to its `cdn` default. So selecting
+      // **Hybrid** or **Peer-to-peer** in the console set every desktop node to
+      // CDN and logged that it had done so, which is the worst kind of bug: the
+      // control appears to work, the value travels, and the behaviour never
+      // changes.
+      //
+      // Both vocabularies are accepted now, server spellings first, and an
+      // unrecognised value still falls back to CDN — but loudly.
       const normalizeMode = (m) => {
-        const s = String(m || '').toLowerCase();
-        let result = 'cdn';
-        if (s.startsWith('cdn')) result = 'cdn';
-        else if (s.includes('only')) result = 'p2p-only';
-        else if (s.includes('primary')) result = 'p2p-primary';
+        const s = String(m || '').trim().toLowerCase();
+        let result;
+        if (s === 'hybrid' || s === 'p2p-primary') result = 'p2p-primary';
+        else if (s === 'p2p' || s === 'p2p-only') result = 'p2p-only';
+        else if (s === 'cdn' || s === 'cdn-primary' || s.startsWith('cdn')) result = 'cdn';
+        else {
+          console.warn(`[App] normalizeMode: unrecognised source_mode "${m}" — defaulting to CDN`);
+          result = 'cdn';
+        }
         console.log(`[App] normalizeMode: "${m}" → "${result}"`);
         return result;
       };
@@ -513,6 +533,18 @@ export default function App() {
               libraryCoverage: freshStats?.coverage || 0,
               contentMode: contentModeRef.current,
               nodeType: seedUnlockedRef.current ? 'seed' : 'user',
+              // Where this node's files came from since it started. The
+              // console adds these up across the fleet — the only way to
+              // answer whether putting the network on P2P Primary actually
+              // moved traffic off the CDN, rather than merely instructing
+              // every node to try.
+              ...(() => {
+                const d = downloadManager.getStats?.() || {};
+                return {
+                  swarmFiles: d.swarmFiles || 0, swarmBytes: d.swarmBytes || 0,
+                  httpFiles: d.httpFiles || 0, httpBytes: d.httpBytes || 0,
+                };
+              })(),
             };
           }, {
             onConfigUpdate: (config) => {

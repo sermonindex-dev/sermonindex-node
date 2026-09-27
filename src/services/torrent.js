@@ -131,6 +131,42 @@ export async function seedDownloaded(filename, name = null) {
  * Omit it for arbitrary magnets/torrents (unknown target name).
  * Returns { id, info_hash, name }.
  */
+/**
+ * Try to FETCH a file from the swarm before HTTP is touched. Returns true only
+ * when the file landed complete and verified.
+ *
+ * Distinct from addTorrent() on purpose: that one starts SEEDING a file already
+ * on disk and returns immediately, this one waits — briefly — for peers to
+ * produce a file we do not have. The native side enforces the give-up limits
+ * (25s to first byte, 45s stall, a size-scaled ceiling), because a file no peer
+ * holds must cost seconds rather than a stalled download slot.
+ *
+ * Never throws for "no peers had it" — that is the ordinary answer early in the
+ * network's life and it returns false. It throws only when the command itself
+ * is unavailable or errors, which the caller treats the same as false.
+ */
+export async function fetchFromSwarm(source, filename, expectedSize = 0) {
+  if (!source || !filename) return 0;
+  try {
+    // The native side returns the REAL on-disk size (0 = no peer produced it),
+    // read back with metadata rather than counted off the wire — the caller
+    // records it as the authoritative size, exactly as for an HTTP download.
+    const size = await invoke('torrent_fetch', {
+      source,
+      filename,
+      expectedSize: Number(expectedSize) || 0,
+    });
+    const n = Number(size) || 0;
+    if (n > 0) torrentLog.info(`[Torrent] Fetched from peers: ${filename} (${n} bytes)`);
+    return n;
+  } catch (err) {
+    // An older native binary has no such command. Not an error worth showing:
+    // the HTTP path behind this is the normal one and still works.
+    torrentLog.warn(`[Torrent] Swarm fetch unavailable for ${filename}: ${String(err?.message || err)}`);
+    return 0;
+  }
+}
+
 export async function addTorrent(source, filename = null) {
   try {
     const res = await invoke('torrent_add', { source, filename });

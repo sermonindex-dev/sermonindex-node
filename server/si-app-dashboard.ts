@@ -775,11 +775,28 @@ async function handleHeartbeat(req: Request): Promise<Response> {
 
   // Record shared sermons from body.seeded_torrents.
   // Full-sync: wipe this node's rows, then re-insert the current set.
-  const seeded = body.seeded_torrents && typeof body.seeded_torrents === "object" ? body.seeded_torrents : {};
-  const sermonStmts: { sql: string; args?: any[] }[] = [
-    { sql: `DELETE FROM shared_sermons WHERE node_id = ?`, args: [nodeId] },
-  ];
-  for (const sermonId of Object.keys(seeded)) {
+  //
+  // ABSENT is not the same as EMPTY, and the difference matters enough to be
+  // the reason this block is guarded:
+  //
+  //   {}        — "I am seeding nothing." Wipe the rows; that is the truth.
+  //   (absent)  — "I am not reporting this beat." Leave the rows alone.
+  //
+  // Before that distinction existed, a node could only keep its rows by
+  // re-sending the WHOLE set every five minutes. For the desktop app, holding
+  // a few dozen torrents, that is nothing. For a CLI seed holding ~40,000 it is
+  // ~1.6 MB per node per beat and 40,000 rows deleted and re-inserted every
+  // five minutes — so the CLI sent nothing at all, and every headless node has
+  // reported "sharing 0" while holding the entire archive.
+  //
+  // With this guard a node can send the full set on its first beat and then
+  // occasionally, and be reported accurately in between.
+  const reportedSeeded = body.seeded_torrents && typeof body.seeded_torrents === "object";
+  const seeded = reportedSeeded ? body.seeded_torrents : {};
+  const sermonStmts: { sql: string; args?: any[] }[] = reportedSeeded
+    ? [{ sql: `DELETE FROM shared_sermons WHERE node_id = ?`, args: [nodeId] }]
+    : [];
+  for (const sermonId of reportedSeeded ? Object.keys(seeded) : []) {
     const t = seeded[sermonId] || {};
     sermonStmts.push({
       sql: `INSERT OR REPLACE INTO shared_sermons
@@ -796,7 +813,7 @@ async function handleHeartbeat(req: Request): Promise<Response> {
       ],
     });
   }
-  await dbBatch(sermonStmts);
+  if (sermonStmts.length) await dbBatch(sermonStmts);
 
   // Best-effort time-series snapshot — must NOT block or fail the response.
   maybeWriteSnapshot().catch(() => {});

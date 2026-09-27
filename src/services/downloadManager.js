@@ -433,6 +433,23 @@ class DownloadManager {
     this.storageLimitBytes = 0; // bytes, 0 = unlimited (caps total cached sermons)
     this.paused = false;
     this.totalDownloaded = 0;
+    /* ── WHERE THE FILES CAME FROM ──────────────────────────────────────
+       Counted because nothing counted it. The console can put the whole
+       network on P2P Primary and every node will dutifully try the swarm
+       first — and until now there was no figure, on any screen, saying
+       whether a single byte ever arrived that way. The swarm either takes
+       load off the CDN or it does not, and "we think so" is not an answer
+       when the alternative is a bandwidth bill.
+
+       Bytes as well as files: a node that pulled one large video over HTTP
+       and two hundred short clips off peers is still mostly costing money,
+       and a file count alone would say the opposite. Per-session, like
+       totalDownloaded above — the question is what this node is doing now.
+       The same four fields exist in the CLI (state.rs). */
+    this.swarmFiles = 0;
+    this.swarmBytes = 0;
+    this.httpFiles = 0;
+    this.httpBytes = 0;
     this.totalFiles = 0;
     // Waiters parked on a concurrency slot (event-driven — no busy-polling).
     this._slotWaiters = [];
@@ -920,10 +937,52 @@ class DownloadManager {
     entry.filename = filename; // cancel() needs it to stop the native stream
 
     try {
+      // ── PHASE 0: the swarm, when the console asks for it ────────────
+      //
+      // The comment that used to sit here said swarm-first fetching "will
+      // become possible once catalog entries carry magnet links". They have
+      // carried them for some time — the seeding path below reads
+      // `sermon.magnet` and `sermon.torrentUrl` on every completed download.
+      // What was missing was this branch, and one line reading `this.mode`.
+      //
+      // Until 0.0.340 every node acquired its library over HTTP and used
+      // BitTorrent only to serve, so every node was a seeder and none was ever
+      // a leecher: no demand in the swarm, and fleet-wide upload across the
+      // whole network sat at exactly zero. `source_mode` reached
+      // `setMode()` from the console on every heartbeat, was stored, was
+      // reported in stats — and was never read to decide anything, so choosing
+      // "Peer-to-peer" changed no behaviour on any machine.
+      //
+      // The native side gives up fast (25s to first byte, 45s stall, a
+      // size-scaled ceiling) because the HTTP path below always works: a file
+      // no peer holds costs seconds, not a stalled slot. A partial transfer is
+      // left on disk, so HTTP resumes into it rather than starting over.
+      let swarmSize = 0;
+      const swarmSource = sermon.torrentUrl
+        || (sermon.magnet?.startsWith('magnet:') ? sermon.magnet : null);
+      if (swarmSource && this.mode !== SOURCE_MODE.CDN_PRIMARY) {
+        try {
+          const mod = await import('./torrent.js');
+          swarmSize = await mod.fetchFromSwarm(swarmSource, filename, sermon.sizeBytes || 0);
+        } catch (e) {
+          console.warn(`[DL] Swarm attempt failed for ${filename}: ${e?.message || e}`);
+        }
+      }
+      // P2P_ONLY means the swarm and nothing else — an operator who chose full
+      // decentralisation did not ask for a silent fall back to the CDN. Saying
+      // so out loud beats failing with a generic HTTP error.
+      // Recorded on the ENTRY rather than read from `swarmSize` later:
+      // the success is tallied further down the method, outside this block,
+      // and a counter that silently throws is worse than no counter.
+      entry.viaSwarm = !!swarmSize;
+      if (!swarmSize && this.mode === SOURCE_MODE.P2P_ONLY) {
+        throw new Error(`No peer has ${filename} and the source mode is peer-to-peer only`);
+      }
+
       // ── PHASE 1: Download (holds concurrency slot) ──────────────────
-      // All modes currently download over HTTP (Archive.org → CDN). The peer
-      // swarm is fed by seeding completed files; swarm-first fetching will
-      // become possible once catalog entries carry magnet links.
+      // Reached whenever the swarm did not produce the file — which is every
+      // time in CDN mode, and the common case in hybrid until enough nodes are
+      // complete.
       //
       // Preferred path: Rust streams the body straight into `<file>.part` and
       // renames it, so the webview never holds the file (a 2 GB video used to
@@ -933,8 +992,14 @@ class DownloadManager {
       const invoke = await loadTauri();
       const canStream = !!invoke && streamingSupported && (await this._ensureProgressListener());
 
-      let streamed = null;
-      if (canStream) {
+      // A swarm hit takes the same shape as a native stream result, so every
+      // step after this one — the integrity record, the storage totals, the
+      // seeding hand-off — is identical whether the bytes came from a peer or
+      // from the CDN. That is the point: downstream should not be able to tell.
+      let streamed = swarmSize
+        ? { received: swarmSize, size: swarmSize, path: filename }
+        : null;
+      if (!streamed && canStream) {
         try {
           streamed = await this._streamWithArchiveFallback(sermon, entry, filename);
         } catch (streamErr) {
@@ -1051,6 +1116,10 @@ class DownloadManager {
     entry.diskSize = diskSize; // what's actually on disk — the number to record
     this.totalDownloaded += receivedBytes;
     this.totalFiles++;
+    // Set only when PHASE 0 produced the file, so this splits cleanly and
+    // only ever counts a download that actually landed.
+    if (entry.viaSwarm) { this.swarmFiles++; this.swarmBytes += receivedBytes; }
+    else { this.httpFiles++; this.httpBytes += receivedBytes; }
     this._notify(sermon.id, entry);
 
     const doneSizeMB = (receivedBytes / (1024 * 1024)).toFixed(1);
@@ -1711,6 +1780,10 @@ class DownloadManager {
     return {
       totalDownloaded: this.totalDownloaded,
       totalFiles: this.totalFiles,
+      swarmFiles: this.swarmFiles,
+      swarmBytes: this.swarmBytes,
+      httpFiles: this.httpFiles,
+      httpBytes: this.httpBytes,
       activeDownloads: this.activeDownloads,
       queueSize: [...this.queue.values()].filter(e => e.state === DL_STATE.QUEUED).length,
       mode: this.mode,

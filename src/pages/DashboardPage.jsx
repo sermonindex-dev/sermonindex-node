@@ -4,6 +4,7 @@ import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 import { getNodeId } from '../services/heartbeat.js';
 import { subscribe as subscribeNodeMap } from '../services/nodeMapStore.js';
 import { getSeedProgress } from '../services/catalog.js';
+import downloadManager from '../services/downloadManager.js';
 
 const TOTAL_SERMONS = 33528;
 const AUDIO_FALLBACK = 25587;
@@ -224,12 +225,30 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
     setNet({ nodes: snap.count, countries: countries.size, countryNames: [...countries].sort() });
   }), []);
 
+  /* WHERE YOUR FILES CAME FROM.
+     Shown only once something has actually been downloaded this session —
+     a tile reading "0% from peers" on a fresh install teaches nothing and
+     makes the network look broken. Bytes rather than files: one large video
+     off the CDN outweighs a hundred short clips off peers, and counting files
+     would say the opposite. Per-session by nature; the console adds the same
+     four figures up across the fleet for the network-wide answer. */
+  const dl = downloadManager.getStats ? downloadManager.getStats() : {};
+  const fetched = (dl.swarmBytes || 0) + (dl.httpBytes || 0);
+  const swarmPct = fetched ? (100 * (dl.swarmBytes || 0)) / fetched : 0;
+
   const tiles = [
     { value: total.toLocaleString(), label: 'Sermons in the library', color: 'var(--gold-text)' },
     { value: `${covLabel}%`, label: 'Your library coverage', color: 'var(--olive)' },
     { value: formatContribution(readUploadedLifetime()), label: "Data you've contributed", color: 'var(--seed-blue)' },
     { value: filesShared.toLocaleString(), label: "Files you're sharing", color: 'var(--green)' },
     { value: storageUsed, label: 'Storage used', color: 'var(--text-primary)' },
+    ...(fetched
+      ? [{
+          value: `${swarmPct < 10 ? swarmPct.toFixed(1) : Math.round(swarmPct)}%`,
+          label: 'Came from other nodes',
+          color: swarmPct >= 50 ? 'var(--green)' : 'var(--gold-text)',
+        }]
+      : []),
   ];
 
   const go = (k) => onNavigate && onNavigate(k);

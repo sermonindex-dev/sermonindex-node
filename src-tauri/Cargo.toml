@@ -1,6 +1,6 @@
 [package]
 name = "sermonindex-app"
-version = "0.0.339"
+version = "0.0.340"
 description = "SermonIndex Sermon Library — Decentralized P2P sermon sharing"
 authors = ["SermonIndex"]
 license = ""
@@ -39,7 +39,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 # ── BitTorrent node (librqbit — the engine behind rqbit) ──
 # Mainline DHT + trackers + UPnP. Replaces the hand-rolled IPFS stack.
-librqbit = "9.0.0-rc.0"
+librqbit = "9.0.0-rc.0"   # see [patch.crates-io] at the foot of this file
 # librqbit returns anyhow::Error; we inspect the error chain to tell a
 # port-already-in-use bind failure from a real startup failure (torrent_node.rs).
 anyhow = "1"
@@ -68,3 +68,34 @@ tokio = { version = "1", features = ["full"] }
 # middle of `[dependencies]` silently swallows every dependency listed after it.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# ── Vendored librqbit ────────────────────────────────────────────────────────
+#
+# The app used librqbit straight from crates.io until 0.0.340, while the CLI has
+# carried a patched copy for some time. That was not a decision anyone made — it
+# is simply that every bug in this engine was found by a CLI operator, fixed in
+# the CLI's vendor/ tree, and never carried across. The app has been shipping
+# both of these faults to every desktop node since.
+#
+# This is the SAME tree as sermonindex-node-cli/vendor/librqbit. Keep them
+# identical: two copies that drift is worse than either bug.
+#
+#   1. torrent_state/live/peers/mod.rs — the per-torrent discovered-peer map is
+#      bounded. Upstream never caps or prunes it, which makes a large seed run
+#      out of memory. The app holds fewer torrents than a full CLI seed, so this
+#      shows up as slow growth over days rather than a crash — which is why
+#      nobody had reported it.
+#
+#   2. session.rs, task_listener() — the `futs.next()` select arm matches
+#      `Some(res)` rather than `Some(Ok(..))`, plus an `else` arm. Upstream's
+#      pattern disables its own branch the moment a handshake check FAILS; if
+#      `futs` is full at that instant the accept branch is disabled too, and
+#      `select!` with every branch disabled and no else is a panic. The task
+#      dies, the process lives, and the node silently stops accepting peers.
+#      Reliable on a small machine under memory pressure, invisible on a big
+#      one — so a Pi or an old laptop running this app is exactly the profile
+#      that hits it. See NODE-CHANGES-0.3.0.md.
+#
+# BOTH must be re-applied on any librqbit upgrade.
+[patch.crates-io]
+librqbit = { path = "vendor/librqbit" }

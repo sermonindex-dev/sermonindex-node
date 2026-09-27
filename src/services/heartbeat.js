@@ -314,6 +314,12 @@ async function sendHeartbeat() {
       files_stored: stats.filesShared || 0,
       storage_used_bytes: stats.storageUsedBytes || 0,
       uploaded_bytes: uploadedLifetime,
+      // Same four field names the CLI sends (see heartbeat.rs), so the server
+      // and the console do not need to know which client it is talking to.
+      swarm_files: stats.swarmFiles || 0,
+      swarm_bytes: stats.swarmBytes || 0,
+      http_files: stats.httpFiles || 0,
+      http_bytes: stats.httpBytes || 0,
       peers_connected: livePeers || stats.peersConnected || 0,
       // Direction. `peers_connected` is a bare total and cannot tell "people
       // are taking sermons from me" apart from "I am taking from them" — the

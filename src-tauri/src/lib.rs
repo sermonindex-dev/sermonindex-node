@@ -2141,6 +2141,40 @@ async fn torrent_add(
     handle.add(&source, output_folder).await
 }
 
+/// Try the swarm before HTTP. Returns true only when the file landed complete.
+///
+/// Deliberately a separate command from `torrent_add`: that one exists to seed
+/// a file already on disk and must never block, while this one waits — briefly
+/// — for peers to produce a file we do not have. Conflating them would make it
+/// impossible to tell "start seeding this" from "please fetch this".
+#[tauri::command]
+async fn torrent_fetch(
+    state: tauri::State<'_, Arc<Mutex<TorrentState>>>,
+    source: String,
+    filename: String,
+    expected_size: Option<u64>,
+) -> Result<u64, String> {
+    let handle = get_torrent_handle(&state).await?;
+    // Same shard folder the HTTP path writes to, so a swarm hit and a CDN hit
+    // are indistinguishable to everything downstream.
+    let target = resolve_path(&filename);
+    let output_folder = target
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| downloads_dir().to_string_lossy().to_string());
+    let ok = handle
+        .fetch(&source, Some(output_folder), 25, 45, expected_size.unwrap_or(0))
+        .await?;
+    if !ok {
+        return Ok(0);
+    }
+    // Return the REAL on-disk size, read back with metadata — never the byte
+    // count the engine reported. Everything downstream (the integrity record,
+    // the storage totals) treats this as the authoritative size, exactly as it
+    // does for the HTTP path, so it must come from the filesystem.
+    Ok(std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0))
+}
+
 /// List all torrents with live stats (progress, speeds, peers)
 #[tauri::command]
 async fn torrent_list(
@@ -2377,6 +2411,7 @@ pub fn run() {
             torrent_seed_file,
             torrent_seed_downloaded,
             torrent_add,
+            torrent_fetch,
             torrent_list,
             torrent_remove,
             torrent_prune_missing,

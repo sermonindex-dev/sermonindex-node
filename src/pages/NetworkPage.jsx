@@ -15,8 +15,20 @@ const COUNTRY_NAMES = {
   NZ: 'New Zealand', SG: 'Singapore', XX: 'Unknown',
 };
 
-// Mercator projection constants — matching the analytics dashboard
-const LON_MIN = -130, LON_MAX = 155, LAT_MIN = -55, LAT_MAX = 72;
+// Mercator projection constants.
+//
+// THE WHOLE WORLD. These used to be the analytics dashboard's window, which
+// stopped at 155°E and 130°W — slicing New Zealand and eastern Russia in half
+// and cutting Alaska off entirely. A continent chopped by a straight vertical
+// line does not read as cropping, it reads as a map that failed to finish
+// drawing, and it cost more in credibility than the empty Pacific saved in
+// space. 80°N keeps Greenland almost whole without Mercator stretching the top
+// of the map into nonsense.
+//
+// The console's ported painter (console/ui/live.js, ND_LON_MIN…) carries the
+// identical four numbers. The two maps are meant to be one map; if you change
+// these, change those.
+const LON_MIN = -180, LON_MAX = 180, LAT_MIN = -56, LAT_MAX = 80;
 function mercY(lat) {
   const r = lat * Math.PI / 180;
   return Math.log(Math.tan(Math.PI / 4 + r / 2));
@@ -234,6 +246,11 @@ export default function NetworkPage({ nodeStats }) {
       if (!geoData) return;
       geoData.features.forEach(f => {
         const iso = f.properties.c;
+        // Antarctica is dropped, not clamped. It reaches 90°S, the frame stops
+        // at 56°S, and projectBase pins anything beyond to the edge — so it
+        // came out as a grey smear welded along the bottom of the map. Nobody
+        // runs a node there.
+        if (iso === 'AQ') return;
         const paths = [];
         const rings = [];                         // same projected rings, kept as point arrays for hit-testing
         let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
@@ -320,7 +337,9 @@ export default function NetworkPage({ nodeStats }) {
       ctx.quadraticCurveTo(cpX, cpY, x2, y2);
       ctx.strokeStyle = color;
       ctx.lineWidth = lineWidth;
-      ctx.setLineDash([4, 8]);
+      // A shorter gap: the travelling dots read as a line of them moving
+      // rather than as an occasional speck.
+      ctx.setLineDash([4, 6]);
       ctx.lineDashOffset = -dashOffset;
       ctx.stroke();
       ctx.setLineDash([]);
@@ -333,9 +352,15 @@ export default function NetworkPage({ nodeStats }) {
       const myId = getNodeId();
 
       // Background
+      // Lifted a step in 0.0.340 — the SAME values are in the console's ported
+      // painter (console/ui/live.js, drawAppNodeMap). The two screens are meant
+      // to be one picture of one network, so these move together. The old
+      // ground was so near black that an unlit continent read as a hole rather
+      // than as land, and the gold threads between nodes sank into it. Still a
+      // night view; just one where you can see the coastline you are looking at.
       const bg = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.7);
-      bg.addColorStop(0, '#0c1824');
-      bg.addColorStop(1, '#060c14');
+      bg.addColorStop(0, '#132435');
+      bg.addColorStop(1, '#0a1420');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
 
@@ -346,7 +371,7 @@ export default function NetworkPage({ nodeStats }) {
       ctx.clip();
 
       // Grid
-      ctx.strokeStyle = 'rgba(30,51,72,0.15)';
+      ctx.strokeStyle = 'rgba(52,84,116,0.22)';
       ctx.lineWidth = 0.5;
       for (let lon = LON_MIN; lon <= LON_MAX; lon += 30) {
         ctx.beginPath();
@@ -372,12 +397,12 @@ export default function NetworkPage({ nodeStats }) {
         // Density heat-map (dim): opacity scales with node count — subtle for a
         // single node, brighter for 3+ — and caps at 0.30 so the map stays dark
         // overall rather than the previous flat 0.35-for-everyone highlight.
-        const fillA = Math.min(count * 0.07, 0.30);
-        const strokeA = Math.min(0.10 + count * 0.04, 0.24);
+        const fillA = Math.min(0.06 + count * 0.075, 0.34);
+        const strokeA = Math.min(0.16 + count * 0.05, 0.34);
         countryPaths[iso].forEach(path => {
-          ctx.fillStyle = isActive ? `rgba(212,175,55,${fillA})` : 'rgba(22,34,48,0.55)';
+          ctx.fillStyle = isActive ? `rgba(212,175,55,${fillA})` : 'rgba(32,50,70,0.78)';
           ctx.fill(path);
-          ctx.strokeStyle = isActive ? `rgba(212,175,55,${strokeA})` : 'rgba(50,80,110,0.18)';
+          ctx.strokeStyle = isActive ? `rgba(212,175,55,${strokeA})` : 'rgba(78,116,152,0.34)';
           ctx.lineWidth = isActive ? 0.8 : 0.5;
           ctx.stroke(path);
         });
@@ -402,7 +427,7 @@ export default function NetworkPage({ nodeStats }) {
         for (let j = i + 1; j < seeds.length; j++) {
           const [x1, y1] = project(seeds[i].lat, seeds[i].lon);
           const [x2, y2] = project(seeds[j].lat, seeds[j].lon);
-          drawArc(x1, y1, x2, y2, `rgba(${LINK},0.30)`, 0.8, dashOff);
+          drawArc(x1, y1, x2, y2, `rgba(${LINK},0.55)`, 1.1, dashOff);
         }
       }
 
@@ -418,7 +443,7 @@ export default function NetworkPage({ nodeStats }) {
           nodes.forEach(n => {
             if (n === me || n.lat == null || n.lon == null) return;
             const [nx, ny] = project(n.lat, n.lon);
-            drawArc(mx, my, nx, ny, `rgba(${LINK},0.30)`, 0.8, dashOff);
+            drawArc(mx, my, nx, ny, `rgba(${LINK},0.55)`, 1.1, dashOff);
           });
         }
       }
@@ -434,7 +459,7 @@ export default function NetworkPage({ nodeStats }) {
           if (d < minDist) { minDist = d; nearestCoords = [sx, sy]; }
         });
         if (nearestCoords) {
-          drawArc(px, py, nearestCoords[0], nearestCoords[1], `rgba(${LINK},0.18)`, 0.5, dashOff);
+          drawArc(px, py, nearestCoords[0], nearestCoords[1], `rgba(${LINK},0.36)`, 0.8, dashOff);
         }
       });
 

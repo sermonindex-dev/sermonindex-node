@@ -649,6 +649,112 @@ impl TorrentHandle {
         })
     }
 
+    /// Try to FETCH a file from the swarm, before anything touches HTTP.
+    ///
+    /// ## Why this did not exist until 0.0.340
+    ///
+    /// `add()` above can download from peers — that capability has always been
+    /// here. But both places the app called it ran AFTER the file had already
+    /// arrived over HTTP, purely to start seeding what was on disk. So every
+    /// desktop node was a seeder and none was ever a leecher, and fleet-wide
+    /// upload across the whole network sat at exactly zero. We shipped the
+    /// supply side of a peer-to-peer network and never the demand side.
+    ///
+    /// The switch was there too: `source_mode` reaches `downloadManager.setMode()`
+    /// through the heartbeat, is stored, is reported in stats — and was never
+    /// read to decide anything. An operator selecting "Peer-to-peer" in the
+    /// console changed no behaviour on any machine.
+    ///
+    /// ## The design
+    ///
+    /// Give up fast. The HTTP path behind this always works, so a file no peer
+    /// holds must cost seconds, not a stalled download slot:
+    ///
+    ///   * `first_byte_secs` — nothing arrived, nobody has it. Hand it to HTTP.
+    ///   * `stall_secs` — it started and stopped. Same verdict as the HTTP
+    ///     throughput watchdog, for the same reason.
+    ///   * a size-scaled ceiling — a swarm slower than our own CDN is not worth
+    ///     the slot it is occupying.
+    ///
+    /// On success the file is already piece-verified by BitTorrent and already
+    /// live in this session, so it begins seeding at once: the machine that
+    /// received it becomes a source for the next one with no second pass. The
+    /// CALLER still checks the size against the signed master list — the swarm
+    /// is not the authority on what a file should be.
+    pub async fn fetch(
+        &self,
+        source: &str,
+        output_folder: Option<String>,
+        first_byte_secs: u64,
+        stall_secs: u64,
+        expected_size: u64,
+    ) -> Result<bool, String> {
+        if source.trim().is_empty() {
+            return Ok(false);
+        }
+        let added = self.add(source, output_folder).await?;
+        let id = match added.id {
+            Some(i) => i,
+            None => return Ok(false),
+        };
+
+        let first_byte = std::time::Duration::from_secs(first_byte_secs);
+        let stall = std::time::Duration::from_secs(stall_secs);
+        // A 4 MB sermon that has taken five minutes is not going to arrive.
+        let cap = std::time::Duration::from_secs(60 + (expected_size / (32 * 1024)).min(900));
+
+        let started = std::time::Instant::now();
+        let mut last_progress = std::time::Instant::now();
+        let mut best: u64 = 0;
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            // One snapshot, not two reads: `finished` and `progress_bytes` must
+            // describe the same instant, or a file that completes between them
+            // looks stalled.
+            // A plain loop, not `.find()`: `with_torrents` hands us a trait
+            // object, and the adapter methods that take `self` by value cannot
+            // be called on one.
+            let snap = self.session.with_torrents(|iter| {
+                let mut found = None;
+                for (tid, t) in iter {
+                    if tid == id {
+                        let st = t.stats();
+                        found = Some((st.finished, st.progress_bytes));
+                        break;
+                    }
+                }
+                found
+            });
+            let (finished, got) = match snap {
+                Some(v) => v,
+                // Gone from the session — treat as a miss rather than looping
+                // forever on a torrent that no longer exists.
+                None => return Ok(false),
+            };
+
+            if got > best {
+                best = got;
+                last_progress = std::time::Instant::now();
+            }
+            if finished {
+                return Ok(true);
+            }
+
+            let give_up = (best == 0 && started.elapsed() >= first_byte)
+                || (best > 0 && last_progress.elapsed() >= stall)
+                || started.elapsed() >= cap;
+            if give_up {
+                // Remove the torrent but NOT the partial file: the HTTP path
+                // resumes into `.part` from wherever the swarm got to, so the
+                // bytes peers did send are not thrown away.
+                let _ = self.remove(id, false).await;
+                return Ok(false);
+            }
+        }
+    }
+
     /// List all managed torrents with their live stats.
     pub fn list(&self) -> Vec<TorrentInfo> {
         self.session.with_torrents(|iter| {
