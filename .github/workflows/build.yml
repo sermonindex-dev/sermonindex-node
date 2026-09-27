@@ -190,7 +190,7 @@ jobs:
           # "Update failed" — which is exactly what happened on 0.0.328/0.0.329
           # and needed a manual purge both times.
           BUNNY_API_KEY: ${{ secrets.BUNNY_API_KEY }}
-        run: node scripts/publish-update.mjs --version "${{ github.ref_name }}" --dir dist-artifacts --mode prompt --require-all
+        run: node scripts/publish-update.mjs --version "${{ github.ref_name }}" --dir dist-artifacts --mode silent --require-all
 
       # Purge the Bunny edge so users immediately see the new version instead of a
       # stale cached page. Re-fetches fresh copies of the update manifest, the

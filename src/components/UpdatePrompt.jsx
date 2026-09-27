@@ -135,18 +135,24 @@ export default function UpdatePrompt({ inline = false }) {
     }
   }, [update]);
 
-  if (!update || !visible) return null;
-
-  const working = state === 'working';
-  const error = state === 'error';
-  const isFallback = state === 'fallback';
-
+  // MUST stay above the early return below. React counts hooks per render:
+  // while there is no update this component returns null having called N
+  // hooks, and the first render where an update exists would call N+1 —
+  // "Rendered more hooks than during the previous render" (React #310), which
+  // takes down the whole app through the error boundary. It went unseen in
+  // 0.0.339 only because no newer version existed yet for it to find.
   const openFallback = useCallback(async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('open_url', { url: fallback });
     } catch { try { window.open(fallback, '_blank'); } catch {} }
   }, [fallback]);
+
+  if (!update || !visible) return null;
+
+  const working = state === 'working';
+  const error = state === 'error';
+  const isFallback = state === 'fallback';
   const label = working
     ? 'Updating…'
     : isFallback
