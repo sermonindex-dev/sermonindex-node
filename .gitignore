@@ -28,6 +28,11 @@ ipfs_debug.log
 *.bak
 *.bak-*
 *.orig
+# Same idea, different spelling: the migration scripts park a dated copy of the
+# file they are about to rewrite (upload-log.json.stale-uppercase-20260801-...).
+# The *.bak globs above miss it, so it sat untracked in canonical-output/ —
+# a 1.5 MB copy of the upload log one `git add -A` away from the history.
+*.stale-*
 
 # Bundled speaker portraits — fetched locally via scripts/fetch-speaker-images.mjs
 # (run before building a release; the app falls back to the CDN if absent)
