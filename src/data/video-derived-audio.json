@@ -1,6 +1,6 @@
 {
  "note": "sermon_ids whose mp3 is a convenience copy of a video this site hosts. generate-canonical-torrents.mjs refuses these. Regenerate with build_torrent_denylist.py --write whenever video sermons gain audio.",
- "generated": "2026-09-15T15:19:14Z",
+ "generated": "2026-09-27T00:26:43Z",
  "count": 9269,
  "ids": [
   "--6n7qJsAqvwPQtV",
