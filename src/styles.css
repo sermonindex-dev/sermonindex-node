@@ -6202,12 +6202,23 @@ html[data-theme='dark'] .si-abouthero {
 }
 
 :root[data-theme="dark"] {
-  /* The CLI goes LIGHTER in dark mode (--olive #908F51). Followed, but tempered:
-     at full #908F51 a full-width band glares against a near-black page, so this
-     lands between the two and keeps the same hue. */
-  --sidebar-bg: #6a6a35;
-  --sidebar-bg-top: #74743d;
-  --sidebar-bg-bottom: #5b5b2b;
+  /* The navigation column goes DARK in dark mode. It used to stay olive
+     (#6a6a35) on the reasoning that it was the brand surface in both themes —
+     but a full-height olive column beside a near-black page is the brightest
+     thing on screen, which is the opposite of what someone choosing dark mode
+     asked for. It keeps a trace of the olive hue so it still reads as the
+     brand's column, sits a step above the page (#17171A) so the edge is
+     visible, and the gold active spine carries the identity on its own.
+     The banner surfaces below (--brand-*) stay olive: they are single accents
+     on a page, not a column you look past all day. */
+  --sidebar-bg: #212419;
+  --sidebar-bg-top: #262A1D;
+  --sidebar-bg-bottom: #1A1C14;
+  --sidebar-border: rgba(0, 0, 0, 0.50);
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active-bg: rgba(212, 175, 55, 0.17);
+  --sidebar-text-dim: rgba(248, 248, 242, 0.74);
+  --sidebar-muted: rgba(248, 248, 242, 0.52);
   --brand-top: #74743d;
   --brand-bottom: #55552a;
   --brand-line: rgba(255, 255, 255, 0.13);
@@ -7010,4 +7021,93 @@ html[data-theme='dark'] .si-abouthero {
   color: var(--text-muted);
   line-height: 1.6;
   margin: 10px 0 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0.0.343 — THE SLIM PAGE HEADER
+   ═══════════════════════════════════════════════════════════════════════════
+   Inner pages open with a title bar, not an olive slab. See PageHead.jsx for
+   why. Everything here reads theme tokens, so it follows dark mode without a
+   second block. The `.masthead*` rules above are kept for anything still
+   pointing at them, but no component renders that class any more. */
+
+.pagehead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4) var(--space-6);
+  flex-wrap: wrap;
+  padding: var(--space-1) 0 var(--space-3);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.pagehead-copy { min-width: 240px; flex: 1 1 320px; }
+.pagehead h2 {
+  font-family: var(--font-serif);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.pagehead p {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-muted);
+  max-width: 72ch;
+}
+.pagehead-right {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.pagehead-figures {
+  display: flex;
+  gap: var(--space-5);
+}
+.pagehead-figures > div { text-align: right; }
+.pagehead-figures b {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.pagehead-figures small {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.pagehead-aside {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* The status chips were built to sit ON olive (cream ink, white wash). On the
+   page surface that's unreadable, so inside the slim header they take the
+   ordinary chip treatment. Same markup, no call site changes. */
+.pagehead .brand-chip {
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+.pagehead .brand-chip b { color: var(--text-primary); }
+.pagehead .brand-chip.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+.pagehead .brand-chip.gold { color: var(--gold-text); border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
+
+@media (max-width: 760px) {
+  .pagehead-right { margin-left: 0; }
+  .pagehead-figures > div { text-align: left; }
 }

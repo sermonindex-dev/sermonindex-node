@@ -1,6 +1,7 @@
 import React from 'react';
 import logo from '../assets/sermon-index-white.png';
 import UpdatePrompt from './UpdatePrompt';
+import { formatPct } from '../services/catalog.js';
 
 // Clean SVG icons (Lucide-inspired, MIT license, single-color flat)
 const icons = {
@@ -200,7 +201,7 @@ export default function Sidebar({ page, onNavigate, nodeOnline, nodeStats, seedU
             <div className="coverage-bar">
               <div className="coverage-bar-fill" style={{ width: `${coverage}%` }}></div>
             </div>
-            <span className="coverage-label">{coverage}% library coverage</span>
+            <span className="coverage-label">{formatPct(coverage)}% library coverage</span>
           </div>
         </div>
       )}

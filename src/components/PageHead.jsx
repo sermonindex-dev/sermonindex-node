@@ -1,42 +1,48 @@
 import React from 'react';
 
 /**
- * PageHead — the masthead every page opens with.
+ * PageHead — the slim header every inner page opens with.
  *
- * WHY THIS EXISTS. Before this, each page began with a plain `<h2>` and a grey
- * line of description sitting directly on the page background, while the
- * sidebar beside it was a deep olive column. The two never looked like parts of
- * the same application — the column read as bolted on, because nothing in the
- * content area shared its material.
+ * It used to be a full olive "masthead": the sidebar's material continued
+ * across the top of the content, with a gold eyebrow, a serif title, artwork
+ * bleeding in from the right, and room for figures. It looked deliberate on the
+ * Dashboard and About, where a page earns an introduction. On Library,
+ * Downloads, Settings and the rest it was a coloured slab ~150px tall that
+ * said nothing the highlighted sidebar row hadn't already said, and pushed the
+ * actual work below the fold.
  *
- * The masthead is that column's material continued across the top of the
- * content: same olive gradient family, the same gold gesture (there a spine on
- * the active row, here a hairline along the bottom edge), the same cream text.
- * It also gives every page a defined place for its live status, which the pages
- * were previously improvising with inline flex rows in half a dozen shapes.
+ * So inner pages get a header bar instead: the page name, one line on what it
+ * is for, and on the right whatever is LIVE — figures and status chips — which
+ * is the part of the masthead that carried information. No eyebrow (the
+ * sidebar is the "you are here"), no artwork, no slab. A breadcrumb was
+ * considered and rejected: the app is flat, so "Dashboard › Library" would
+ * describe a hierarchy that doesn't exist.
  *
- * @param {string}     kicker  the gold eyebrow — the section this page is in
+ * Dashboard and About keep their own olive heroes (`.dash-hero`,
+ * `.si-abouthero`); they don't use this component.
+ *
+ * `kicker`, `icon` and `art` are still accepted so no caller breaks, and are
+ * intentionally not drawn.
+ *
  * @param {ReactNode}  title   the page name
  * @param {ReactNode}  sub     one line on what the page is for
- * @param {ReactNode}  icon    optional glyph shown beside the title
  * @param {ReactNode}  aside   right-hand slot: chips, a primary action
- * @param {ReactNode}  art     optional artwork bleeding in from the right
- * @param {Array}      figures optional [{ value, label }] headline numbers
+ * @param {Array}      figures optional [{ value, label }] live numbers
  */
+// eslint-disable-next-line no-unused-vars
 export default function PageHead({ kicker, title, sub, icon, aside, art, figures, children }) {
+  const hasRight = (figures && figures.length > 0) || aside;
   return (
-    <header className="masthead">
-      {art && <div className="masthead-art" aria-hidden="true">{art}</div>}
-      <div className="masthead-wrap">
-        <div className="masthead-copy">
-          {kicker && <div className="masthead-kick">{kicker}</div>}
-          <h2>
-            {icon && <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>}
-            <span>{title}</span>
-          </h2>
-          {sub && <p>{sub}</p>}
+    <header className="pagehead">
+      <div className="pagehead-copy">
+        <h2>{title}</h2>
+        {sub && <p>{sub}</p>}
+        {children}
+      </div>
+      {hasRight && (
+        <div className="pagehead-right">
           {figures?.length > 0 && (
-            <div className="masthead-figures">
+            <div className="pagehead-figures">
               {figures.map((f) => (
                 <div key={f.label}>
                   <b>{f.value}</b>
@@ -45,10 +51,9 @@ export default function PageHead({ kicker, title, sub, icon, aside, art, figures
               ))}
             </div>
           )}
-          {children}
+          {aside && <div className="pagehead-aside">{aside}</div>}
         </div>
-        {aside && <div className="masthead-aside">{aside}</div>}
-      </div>
+      )}
     </header>
   );
 }

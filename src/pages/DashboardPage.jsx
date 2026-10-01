@@ -3,7 +3,7 @@ import { useWidth } from '../components/charts.jsx';
 import SpeakerAvatar from '../components/SpeakerAvatar.jsx';
 import { getNodeId } from '../services/heartbeat.js';
 import { subscribe as subscribeNodeMap } from '../services/nodeMapStore.js';
-import { getSeedProgress } from '../services/catalog.js';
+import { getSeedProgress, formatPct } from '../services/catalog.js';
 import downloadManager from '../services/downloadManager.js';
 
 const TOTAL_SERMONS = 33528;
@@ -57,7 +57,7 @@ function CoverageDonut({ pct }) {
         </g>
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: 'var(--gold-text)', lineHeight: 1 }}>{pct.toFixed(pct >= 10 ? 0 : 1)}%</div>
+        <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: 'var(--gold-text)', lineHeight: 1 }}>{formatPct(pct)}%</div>
         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '0.6px' }}>of library</div>
       </div>
     </div>
@@ -151,21 +151,32 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
   const nodeId = getNodeId ? (getNodeId() || '') : '';
 
   // Library coverage — same source + precision as the Your Stats page (1-decimal %).
+  //
+  // Measured against the WHOLE catalogue, audio and video, so that it agrees
+  // with the "Sermons in the library" tile above it and with the coverage this
+  // node reports on its heartbeat (getLibraryStats().coverage, which has always
+  // been whole-catalogue). It used to follow the user's chosen seed scope,
+  // which meant the ring counted 25,587 audio sermons while the tile beside it
+  // counted 33,528 audio+video — two totals for "the library" on one screen,
+  // with nothing saying which was which.
+  //
+  // Note this makes a completed audio-only seed read well short of 100%. That
+  // is what "how much of the library do you hold" honestly means; progress
+  // towards a chosen scope is a different question and is still reported
+  // scope-relative as `seed_progress` on the heartbeat.
   const [coverage, setCoverage] = useState({ pct: 0, downloaded: 0, total: 0 });
-  // The whole-archive figure, read alongside it. Deliberately NOT the same number
-  // as `coverage`: that one follows the user's chosen seed scope (audio-only by
-  // default), while the Seed Node highlight below talks about a complete copy.
+  // The same figure, kept separate because the Seed Node highlight below reads
+  // `remaining` and `verified` from it.
   const [fullSeed, setFullSeed] = useState({ total: 0, downloaded: 0, remaining: 0, verified: false });
   useEffect(() => {
     const refresh = () => {
+      // One walk of the catalogue, feeding both. They were separate calls when
+      // they measured different scopes; now that both are whole-catalogue,
+      // scanning ~40,000 entries twice on a 12s timer is pure waste.
       try {
-        const scope = (() => { try { return localStorage.getItem('si-seed-scope') || 'audio'; } catch { return 'audio'; } })();
-        const sp = getSeedProgress(scope);
+        const sp = getSeedProgress('full');
         setCoverage({ pct: sp.pct, downloaded: sp.downloaded, total: sp.total });
-      } catch { /* keep last-known */ }
-      try {
-        const fp = getSeedProgress('full');
-        setFullSeed({ total: fp.total, downloaded: fp.downloaded, remaining: fp.remaining, verified: !!fp.verified });
+        setFullSeed({ total: sp.total, downloaded: sp.downloaded, remaining: sp.remaining, verified: !!sp.verified });
       } catch { /* keep last-known */ }
     };
     refresh();
@@ -173,7 +184,7 @@ export default function DashboardPage({ nodeStats, libraryStats, catalog, seedSt
     return () => clearInterval(id);
   }, []);
   const coveragePct = coverage.pct;
-  const covLabel = coveragePct.toFixed(coveragePct >= 10 ? 0 : 1);
+  const covLabel = formatPct(coveragePct);
 
   // Audio vs video you're actually hosting (downloaded counts) — matches Your Stats.
   const breakdown = useMemo(() => {

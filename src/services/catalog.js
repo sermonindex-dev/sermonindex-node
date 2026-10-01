@@ -1190,8 +1190,27 @@ export function getLibraryStats() {
     totalSizeBytes: totalBytes,
     downloadedSize: formatBytes(downloadedBytes),
     downloadedSizeBytes: downloadedBytes,
-    coverage: totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0,
+    // Complete files over catalogue files, one decimal — the same figure the
+    // Dashboard ring, Your Stats and the CLI node all report. It used to be
+    // bytes over catalogue bytes, rounded to a whole number, so the sidebar
+    // read 0% beside a Dashboard reading 0.2%, and on the network map a desktop
+    // node and a CLI node holding the same files reported different coverage.
+    coverage: getSeedProgress('full').pct,
   };
+}
+
+/**
+ * Coverage as people see it: whole numbers from 10% up, one decimal below, so
+ * a new node's first downloads read 0.2% rather than a discouraging 0%.
+ * Never rounds up to 100 — 99.6% held is not the whole library.
+ */
+export function formatPct(pct) {
+  const p = Number(pct) || 0;
+  if (p <= 0) return '0';
+  if (p < 0.1) return '<0.1';            // the first few files: not nothing
+  if (p >= 100) return '100';
+  if (p >= 99.5) return p.toFixed(1);
+  return p.toFixed(p >= 10 ? 0 : 1);
 }
 
 /**
@@ -1220,7 +1239,10 @@ export function getSeedProgress(scope = 'audio') {
     total,
     downloaded,
     remaining: total - downloaded,
-    pct: Math.round(pct * 1000) / 10, // one decimal, e.g. 97.4
+    // One decimal, e.g. 97.4 — but never 100 while a file is still missing.
+    // 40,030 of 40,042 rounds to 100.0, and "100%" is a claim people act on
+    // (it is what tells a seed operator they are done).
+    pct: downloaded < total ? Math.min(99.9, Math.round(pct * 1000) / 10) : (total > 0 ? 100 : 0),
     bytes,
     sizeFormatted: formatBytes(bytes),
     verified: total > 0 && pct >= SEED_VERIFY_THRESHOLD,

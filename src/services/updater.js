@@ -38,6 +38,9 @@ const UPDATE_MANIFEST = 'https://sermonindex4.b-cdn.net/app/latest.json';
 // The periodic re-check calls checkForUpdates() repeatedly; only surface/install
 // a given version once per run so we don't re-nag (prompt) or re-install (silent).
 let _handledVersion = null;
+// Set once a silent/forced install has finished this run, so a manual check
+// says "installed — restart" instead of offering to download it again.
+let _installedVersion = null;
 let _timer = null;
 let _lastCheck = 0;
 
@@ -176,6 +179,7 @@ export async function checkForUpdatesNow() {
     const target = await updaterTarget();
     const update = await check(target ? { target } : undefined);
     if (!update) return { status: 'latest' };
+    if (_installedVersion === update.version) return { status: 'ready', version: update.version };
 
     const notes = (update.body || '').trim();
     const install = makeInstaller(update);
@@ -235,6 +239,7 @@ export async function checkForUpdates() {
     if (mode === 'silent') {
       // Install now, apply on next launch — non-disruptive.
       await update.downloadAndInstall();
+      _installedVersion = update.version;
       console.log('[Updater] Installed silently — applies next launch');
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('si-update-ready', {

@@ -4,6 +4,7 @@ import { getCatalog } from '../services/catalog.js';
 import ReachabilityBanner from './ReachabilityBanner';
 import ReachabilityHelp from './ReachabilityHelp.jsx';
 import { v6ConfirmedRecently, localIpv6 } from '../services/network.js';
+import { onAction } from '../services/pendingAction.js';
 
 // Tiny "Copied!" tooltip state hook
 function useCopiedTooltip(timeout = 1500) {
@@ -398,6 +399,18 @@ export default function ConnectionsPanel({ p2pRunning, onP2pToggle, p2pEnabled }
       await tauri.invoke('open_url', { url: 'https://canyouseeme.org/' });
     } catch {}
   }, [status, addLog]);
+
+  // App menu → "Re-test Reachability". The request can arrive before the
+  // torrent session has reported its listening port, and the test cannot run
+  // without one, so it is held as `wantRetest` until the port is known.
+  const [wantRetest, setWantRetest] = useState(false);
+  useEffect(() => onAction('retest-reach', () => setWantRetest(true)), []);
+  useEffect(() => {
+    if (wantRetest && status?.tcp_listen_port && !testing) {
+      setWantRetest(false);
+      handleTestReachability();
+    }
+  }, [wantRetest, status?.tcp_listen_port, testing, handleTestReachability]);
 
   // Seed the input from whatever is stored, but ONLY until the user types.
   // Re-seeding on every status poll would wipe a half-typed port every 2s.

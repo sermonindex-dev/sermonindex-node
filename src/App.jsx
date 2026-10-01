@@ -323,23 +323,30 @@ export default function App() {
               try { localStorage.setItem('si-theme', next); } catch { /* private mode */ }
               break;
             }
+            // All three used to do their work out of sight — or not at all.
+            // "Check for Updates…" ran the check and only console.logged the
+            // answer, so "you're up to date" never reached the person who asked;
+            // the other two fired events nothing listened for. Each now opens
+            // the page that shows the result and asks it to run. See
+            // services/pendingAction.js.
             case 'check_update': {
-              const m = await import('./services/updater.js');
-              const r = await m.checkForUpdatesNow();
-              // checkForUpdatesNow returns a result rather than only firing an
-              // event, precisely so a user-initiated check can say "you are up
-              // to date" instead of appearing to do nothing.
-              if (r && r.message) console.log('[menu] update check:', r.message);
+              const { requestAction } = await import('./services/pendingAction.js');
+              navigateTo('settings');
+              requestAction('check-update');
               break;
             }
-            case 'retest_reach':
+            case 'retest_reach': {
+              const { requestAction } = await import('./services/pendingAction.js');
               navigateTo('connections');
-              window.dispatchEvent(new CustomEvent('si-retest-reach'));
+              requestAction('retest-reach');
               break;
-            case 'verify_library':
+            }
+            case 'verify_library': {
+              const { requestAction } = await import('./services/pendingAction.js');
               navigateTo('settings');
-              window.dispatchEvent(new CustomEvent('si-verify-library'));
+              requestAction('verify-library');
               break;
+            }
             case 'open_dashboard':
             case 'help_guide': {
               const { invoke } = await import('@tauri-apps/api/core');

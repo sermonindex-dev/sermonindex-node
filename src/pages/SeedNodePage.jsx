@@ -7,6 +7,7 @@ import { isReachable, writeSeedGranted } from '../utils/nodeStatus.js';
 import CgnatNotice from '../components/CgnatNotice.jsx';
 import { TORRENT_PORT_RANGE } from '../services/constants.js';
 import { getNodeId } from '../services/heartbeat.js';
+import { formatPct } from '../services/catalog.js';
 
 const SEED_CONTACT_EMAIL = 'sermonindex@gmail.com';
 
@@ -1060,7 +1061,7 @@ export default function SeedNodePage({
           title="Your node is carrying the library"
           sub="Set up in four steps below. Everything here is measured live — nothing is remembered from a previous run."
           figures={[
-            { value: `${scopeTotal > 0 ? Math.round(scopePercent) : 0}%`, label: 'Library held' },
+            { value: `${scopeTotal > 0 ? formatPct(scopePercent) : 0}%`, label: 'Library held' },
             { value: scopeDownloaded.toLocaleString(), label: 'Files seeded' },
             { value: libraryStats?.downloadedSize || '0 B', label: 'On disk' },
           ]}
@@ -1087,7 +1088,7 @@ export default function SeedNodePage({
           <div>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px' }}>
               <b style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {scopeTotal > 0 ? scopePercent.toFixed(scopePercent >= 10 ? 0 : 1) : 0}%
+                {scopeTotal > 0 ? formatPct(scopePercent) : 0}%
               </b>
               <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>95% = verified</span>
             </div>

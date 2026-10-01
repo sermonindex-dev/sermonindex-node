@@ -4,6 +4,7 @@ import { getNodeId } from '../services/heartbeat.js';
 // Shared with App.jsx's seeding-status derivation so the two never drift.
 import { to12h } from '../utils/time.js';
 import { checkForUpdatesNow } from '../services/updater.js';
+import { onAction } from '../services/pendingAction.js';
 // The verification sweep lives in catalog.js beside the one and only definition
 // of "is this file complete" — this page just drives it and reports the result.
 import { verifyLibrary } from '../services/catalog.js';
@@ -88,6 +89,16 @@ export default function SettingsPage({
     setUpdateCheck(result);
   };
 
+  // Restart into an update that is already installed and waiting.
+  const handleRelaunch = async () => {
+    try {
+      const { relaunch } = await import('@tauri-apps/plugin-process');
+      await relaunch();
+    } catch {
+      setUpdateCheck({ status: 'error', message: 'Restart the app yourself to finish updating.' });
+    }
+  };
+
   // Reuses the install() handed back by the updater — the same download +
   // install + relaunch the update banner performs, not a second implementation.
   const handleInstallUpdate = async () => {
@@ -129,6 +140,22 @@ export default function SettingsPage({
     mountedRef.current = true;
     cancelVerifyRef.current = false;
     return () => { mountedRef.current = false; cancelVerifyRef.current = true; };
+  }, []);
+
+  // App menu → "Check for Updates…" / "Verify Library…" land here. Refs so the
+  // subscription is made once and always calls the current handler.
+  const checkRef = useRef(null);
+  const verifyRef = useRef(null);
+  useEffect(() => {
+    // Bring the card into view too: both live low on a long page, and a result
+    // the person can't see is the same as no result.
+    const show = (id) => setTimeout(() => {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+    const offA = onAction('check-update', () => { show('settings-about'); checkRef.current && checkRef.current(); });
+    const offB = onAction('verify-library', () => { show('settings-verify'); verifyRef.current && verifyRef.current(); });
+    return () => { offA(); offB(); };
   }, []);
 
   const handleVerifyLibrary = async () => {
@@ -312,6 +339,9 @@ export default function SettingsPage({
 
   // How many the last sweep found that can be repaired (damaged + missing).
   const repairableCount = (verify?.damaged || 0) + (verify?.missing || 0);
+  checkRef.current = handleCheckForUpdate;
+  verifyRef.current = handleVerifyLibrary;
+
   const verifyPct = verify?.status === 'running' && verify.total > 0
     ? Math.min(100, Math.round((verify.done / verify.total) * 100))
     : 0;
@@ -723,7 +753,7 @@ export default function SettingsPage({
               startup, but on demand, watchable, stoppable, and with a one-press
               repair for whatever it finds. Wording is deliberately plain: the
               people running these nodes are volunteers, not engineers. */}
-          <div className="seed-card">
+          <div className="seed-card" id="settings-verify">
             <h3>Verify &amp; Repair Library</h3>
             <p style={{ marginBottom: '8px' }}>
               This checks that every sermon you are hosting is complete and undamaged.
@@ -891,7 +921,7 @@ export default function SettingsPage({
             </div>
           </div>
 
-          <div className="seed-card">
+          <div className="seed-card" id="settings-about">
             <h3>About</h3>
             <div className="settings-row">
               <span style={{ color: 'var(--text-muted)' }}>Version</span>
@@ -932,6 +962,20 @@ export default function SettingsPage({
                       style={{ whiteSpace: 'nowrap' }}
                     >
                       {installing ? 'Installing…' : 'Install now'}
+                    </button>
+                  </span>
+                )}
+
+                {/* Already downloaded in the background (silent delivery) and
+                    waiting for a restart. Offering "Install now" here would
+                    download it a second time. */}
+                {updateCheck?.status === 'ready' && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--green)' }}>
+                      Version {updateCheck.version} is installed
+                    </span>
+                    <button onClick={handleRelaunch} className="btn btn-gold btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                      Restart to finish
                     </button>
                   </span>
                 )}

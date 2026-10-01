@@ -85,9 +85,6 @@ function readUploadedLifetime() {
   } catch { return 0; }
 }
 
-function readScope() {
-  try { return localStorage.getItem('si-seed-scope') || 'audio'; } catch { return 'audio'; }
-}
 
 // ── Rolling windows for the trend lines, mirroring the CLI's `Trends` ────────
 
@@ -188,7 +185,9 @@ function pollLibrary() {
     live.storageBytes = Number(st?.downloadedSizeBytes) || 0;
   } catch { /* keep last good */ }
   try {
-    const sp = getSeedProgress(readScope());
+    // Whole catalogue, matching the Dashboard, Your Stats and the coverage
+    // reported on the heartbeat. See the note in DashboardPage.jsx.
+    const sp = getSeedProgress('full');
     live.held = Number(sp?.downloaded) || 0;
     live.catalogTotal = Number(sp?.total) || 0;
     live.coveragePct = Number(sp?.pct) || 0;

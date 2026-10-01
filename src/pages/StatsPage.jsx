@@ -3,7 +3,7 @@ import PageHead, { Panel } from '../components/PageHead.jsx';
 import { CoverageMeter, MixBars, TrendArea, DailyColumns, ChartTable } from '../components/charts.jsx';
 import { openNodeDisplay, nodeDisplayUrl, ensureNodeDisplay } from '../services/nodeDisplay.js';
 import { readSeedGranted } from '../utils/nodeStatus.js';
-import { getSeedProgress } from '../services/catalog.js';
+import { getSeedProgress, formatPct } from '../services/catalog.js';
 import { getIpv6Observation } from '../services/torrent.js';
 import ConnectivityChart from '../components/ConnectivityChart.jsx';
 
@@ -302,7 +302,9 @@ function ShareRow({ icon, label, onSelect }) {
  *   • Sermons seeding   — finished torrents (t.stats.finished) from listTorrents()
  *   • Data contributed  — localStorage si-uploaded-lifetime { lifetime }
  *   • Peers helped now   — Σ t.stats.live.snapshot.peer_stats.live
- *   • Library coverage   — getSeedProgress(scope).pct (files on disk = source of truth)
+ *   • Library coverage   — getSeedProgress('full').pct (files on disk = source of truth).
+ *                        Whole catalogue, audio and video, matching the Dashboard
+ *                        ring and the library_coverage this node reports.
  *   • Audio/video mix    — downloaded counts from the catalog
  */
 export default function StatsPage({ catalog, libraryStats, nodeStats, downloadStates }) {
@@ -425,9 +427,12 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
     setUploaded(readUploadedLifetime());
     // Library coverage from the files actually complete on disk (source of truth).
     try {
-      const scope = (() => { try { return localStorage.getItem('si-seed-scope') || 'audio'; } catch { return 'audio'; } })();
-      const sp = getSeedProgress(scope);
-      setCoverage({ pct: sp.pct, scope, downloaded: sp.downloaded, total: sp.total });
+      // Whole catalogue, matching the Dashboard ring and the reported
+      // library_coverage. The sub-heading below reads the scope back out of
+      // this state, so it now says "the full library" rather than "the audio
+      // library" — which is what is actually being measured.
+      const sp = getSeedProgress('full');
+      setCoverage({ pct: sp.pct, scope: 'full', downloaded: sp.downloaded, total: sp.total });
     } catch { /* keep last-known coverage */ }
     // Live seeding + peer figures from the running torrent session.
     try {
@@ -541,7 +546,7 @@ export default function StatsPage({ catalog, libraryStats, nodeStats, downloadSt
     { value: seeding.toLocaleString(), label: "Sermons you're seeding", color: 'var(--gold-text)' },
     { value: dataLabel, label: "Data you've contributed", color: 'var(--green)' },
     { value: peers.toLocaleString(), label: "Peers you're helping now", color: 'var(--seed-blue)' },
-    { value: `${coverage.pct.toFixed(coverage.pct >= 10 ? 0 : 1)}%`, label: 'Library coverage', color: 'var(--gold-text)' },
+    { value: `${formatPct(coverage.pct)}%`, label: 'Library coverage', color: 'var(--gold-text)' },
     { value: storageUsed, label: 'Storage used', color: 'var(--text-primary)' },
   ];
 
