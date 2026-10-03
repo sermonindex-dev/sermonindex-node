@@ -269,7 +269,7 @@ const encPath = (p) => p.split('/').map(encodeURIComponent).join('/');
 async function put(remotePath, bytes, contentType = 'application/octet-stream') {
   const url = `https://${HOST}/${ZONE}/${encPath(remotePath)}`;
   if (DRY) { console.log(`[dry-run] PUT ${url} (${bytes.length} bytes)`); return; }
-  const res = await fetch(url, { method: 'PUT', headers: { AccessKey: KEY, 'Content-Type': contentType }, body: bytes });
+  const res = await fetch(url, { method: 'PUT', headers: { AccessKey: KEY, 'Content-Type': contentType }, body: new Blob([bytes]) });
   if (res.status !== 201) {
     const body = await res.text().catch(() => '');
     throw new Error(`PUT ${remotePath} → HTTP ${res.status} ${body.slice(0, 200)}`);

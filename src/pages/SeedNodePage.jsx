@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import PiBoard from '../components/PiBoard.jsx';
 import PageHead, { Panel } from '../components/PageHead.jsx';
-import { probeReachability, registerSeed, checkSeedAccess, requestSeedAccess, saveReachability, readReachability, readIpv6Observation } from '../services/network.js';
+import { probeReachability, registerSeed, fetchSeedStatus, requestSeedAccess, saveReachability, readReachability, readIpv6Observation } from '../services/network.js';
 import { timeAgo } from '../utils/time.js';
 import { isReachable, writeSeedGranted } from '../utils/nodeStatus.js';
 import CgnatNotice from '../components/CgnatNotice.jsx';
@@ -475,6 +475,8 @@ export default function SeedNodePage({
   const [accessMsg, setAccessMsg] = useState('');
   const [reqEmail, setReqEmail] = useState('');
   const [requested, setRequested] = useState(false);
+  // The console's answer about this machine's request: null until known.
+  const [declinedAt, setDeclinedAt] = useState(null);
   // Inline hardware-recommendations panel shown in the locked "What is a Seed
   // Node?" card — expands in-app in place of the old external forums link.
   // `showHardware` lived here: the hardware guide used to be a disclosure the
@@ -555,24 +557,46 @@ export default function SeedNodePage({
     if (seedUnlocked || !nodeId) return;
     let cancelled = false;
     (async () => {
-      const ok = await checkSeedAccess(nodeId);
-      if (cancelled) return;
+      const st = await fetchSeedStatus(nodeId);
+      if (cancelled || !st) return;
       // Mirror the server's answer locally — see utils/nodeStatus.js. This is
       // what lets the Connections panel tell a Seed node from a Node.
-      writeSeedGranted(ok);
-      if (ok) onUnlock(true);
+      writeSeedGranted(st.enabled);
+      if (st.enabled) { onUnlock(true); return; }
+      showStatus(st);
     })();
     return () => { cancelled = true; };
   }, [seedUnlocked, nodeId, onUnlock]);
+
+  // Say where the request stands: declined (and that asking again is
+  // allowed), waiting, or not asked yet.
+  const showStatus = (st) => {
+    if (st.status === 'denied') {
+      setRequested(false);
+      setDeclinedAt(st.declined_at || 'yes');
+      setAccessMsg('');
+    } else if (st.status === 'pending') {
+      setDeclinedAt(null);
+      setRequested(true);
+      setAccessMsg('Your request is waiting for approval. Press "Check access" any time to see if it has been approved.');
+    } else {
+      setDeclinedAt(null);
+    }
+  };
 
   const checkAccess = async () => {
     if (!nodeId) return;
     setCheckingAccess(true);
     setAccessMsg('');
-    const ok = await checkSeedAccess(nodeId);
-    writeSeedGranted(ok);
-    if (ok) onUnlock(true);
-    else setAccessMsg('Not approved yet. Once the admin enables your node, press "Check access" again.');
+    const st = await fetchSeedStatus(nodeId);
+    if (!st) {
+      setAccessMsg('Could not reach SermonIndex — check your connection and try again.');
+    } else {
+      writeSeedGranted(st.enabled);
+      if (st.enabled) onUnlock(true);
+      else if (st.status === 'denied' || st.status === 'pending') showStatus(st);
+      else setAccessMsg('Not approved yet. Once the admin enables your node, press "Check access" again.');
+    }
     setCheckingAccess(false);
   };
 
@@ -584,6 +608,7 @@ export default function SeedNodePage({
     if (res?.enabled) { writeSeedGranted(true); onUnlock(true); }
     else if (res?.requested) {
       setRequested(true);
+      setDeclinedAt(null);
       setAccessMsg("Request sent. You'll get access once the admin approves your node — then press \"Check access\".");
     } else {
       setAccessMsg('Could not send the request — check your connection and try again.');
@@ -988,7 +1013,7 @@ export default function SeedNodePage({
                   style={{ flex: 1, minWidth: '200px' }}
                 />
                 <button className="btn btn-gold" onClick={submitRequest} disabled={checkingAccess || requested}>
-                  {requested ? 'Requested ✓' : 'Request access'}
+                  {requested ? 'Requested ✓' : declinedAt ? 'Ask again' : 'Request access'}
                 </button>
                 <button className="btn btn-outline" onClick={checkAccess} disabled={checkingAccess}>
                   {checkingAccess ? 'Checking…' : 'Check access'}
@@ -1000,6 +1025,14 @@ export default function SeedNodePage({
                 {' '}with the ID above. Once your node is enabled, press <strong>Check access</strong> and this
                 page turns into your control panel.
               </p>
+              {declinedAt && (
+                <p style={{ color: 'var(--red, #b3261e)', fontSize: 'var(--text-sm)', marginTop: '10px', fontWeight: 600 }}>
+                  Your request was declined{typeof declinedAt === 'string' && declinedAt.length >= 10 ? ` on ${declinedAt.slice(0, 10)}` : ''}.
+                  {' '}<span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>
+                    You can ask again above, or email {SEED_CONTACT_EMAIL} with this machine&rsquo;s ID.
+                  </span>
+                </p>
+              )}
               {accessMsg && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', marginTop: '10px' }}>{accessMsg}</p>
               )}

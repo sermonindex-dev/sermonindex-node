@@ -478,6 +478,8 @@ pub async fn start(
         *natpmp_status.lock().unwrap_or_else(|e| e.into_inner()) = "unavailable".to_string();
     }
 
+    spawn_rotation(session.clone());
+
     Ok(TorrentHandle {
         session,
         started_at: Instant::now(),
@@ -488,6 +490,111 @@ pub async fn start(
         spawner: BlockingSpawner::new(BLOCKING_THREADS),
         ipv6_obs: Arc::new(std::sync::Mutex::new(Ipv6ObsCache::default())),
     })
+}
+
+// ── Seeding rotation ─────────────────────────────────────────────────────────
+//
+// Ported from the headless node (sermonindex-node-cli/src/seed.rs, rotate_tick),
+// where it was built after measuring the problem on a 4 GB Pi: with every file
+// it holds live at once, a node pays for every torrent's peer tables, announce
+// state and buffers at the same time — over 2 GB of resident memory for a full
+// library before it had done anything. The app had no rotation at all: the
+// reseed at startup brought EVERY downloaded sermon live, so a desktop seed
+// node with 25,000 files used that same 2 GB+, on a machine that is also
+// running a desktop and a browser.
+//
+// Rotation keeps every file registered — a paused torrent keeps its verified
+// pieces and costs a few KB — and lets a WINDOW of them be live at a time,
+// moving on every 15 minutes so each gets its turn. Rules, as in the CLI:
+//   * a torrent with peers connected is never paused mid-transfer;
+//   * a torrent still downloading (not finished) is never paused — it may be a
+//     swarm fetch in progress;
+//   * a library smaller than the window is untouched: everything stays live.
+const ROTATE_DWELL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Live window by machine size, the same steps the CLI uses.
+fn rotation_window() -> usize {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let gb = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+    if gb >= 15.0 {
+        8000
+    } else if gb >= 7.0 {
+        4000
+    } else {
+        2000
+    }
+}
+
+fn spawn_rotation(session: Arc<Session>) {
+    tokio::spawn(async move {
+        let window = rotation_window();
+        // Start somewhere different on each machine so a fleet does not walk
+        // the library in lockstep, all announcing the same files at once.
+        let mut cursor = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as usize)
+            .unwrap_or(0);
+        let mut last: Option<Instant> = None;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let total = session.with_torrents(|iter| iter.count());
+            if total <= window {
+                continue; // everything fits — nothing to rotate
+            }
+            // While the startup reseed is still adding files, tick every 30s so
+            // the live count never runs far past the window; after that, once
+            // per dwell.
+            if let Some(t) = last {
+                if t.elapsed() < ROTATE_DWELL {
+                    continue;
+                }
+            }
+            rotate_tick(&session, window, cursor).await;
+            cursor = cursor.wrapping_add(window);
+            last = Some(Instant::now());
+        }
+    });
+}
+
+async fn rotate_tick(session: &Arc<Session>, window: usize, cursor: usize) {
+    use librqbit::TorrentStatsState as S;
+    let mut handles = session.with_torrents(|iter| {
+        let mut v = Vec::new();
+        for (id, h) in iter {
+            v.push((id, h.clone()));
+        }
+        v
+    });
+    handles.sort_by_key(|(id, _)| *id);
+    let total = handles.len();
+    if total == 0 {
+        return;
+    }
+    let window = window.min(total);
+    let start = cursor % total;
+    let end = start + window;
+    let in_window = |i: usize| if end <= total { i >= start && i < end } else { i >= start || i < end - total };
+    for (i, (_, h)) in handles.iter().enumerate() {
+        let st = h.stats();
+        match st.state {
+            S::Live => {
+                if in_window(i) || !st.finished {
+                    continue;
+                }
+                let busy = st.live.as_ref().map(|l| l.snapshot.peer_stats.live > 0).unwrap_or(false);
+                if !busy {
+                    let _ = session.pause(h).await;
+                }
+            }
+            S::Paused => {
+                if in_window(i) {
+                    let _ = session.unpause(h).await;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl TorrentHandle {
@@ -692,11 +799,21 @@ impl TorrentHandle {
         if source.trim().is_empty() {
             return Ok(false);
         }
+        // Which torrents were here before? If this one was (the file is
+        // already held and seeding), a give-up below must not delete it.
+        let before: Vec<usize> = self.session.with_torrents(|iter| {
+            let mut v = Vec::new();
+            for (tid, _) in iter {
+                v.push(tid);
+            }
+            v
+        });
         let added = self.add(source, output_folder).await?;
         let id = match added.id {
             Some(i) => i,
             None => return Ok(false),
         };
+        let ours = !before.contains(&id);
 
         let first_byte = std::time::Duration::from_secs(first_byte_secs);
         let stall = std::time::Duration::from_secs(stall_secs);
@@ -746,10 +863,15 @@ impl TorrentHandle {
                 || (best > 0 && last_progress.elapsed() >= stall)
                 || started.elapsed() >= cap;
             if give_up {
-                // Remove the torrent but NOT the partial file: the HTTP path
-                // resumes into `.part` from wherever the swarm got to, so the
-                // bytes peers did send are not thrown away.
-                let _ = self.remove(id, false).await;
+                // Remove the torrent AND the file it created. The engine sizes
+                // the file to its full length the moment it has the torrent's
+                // metadata — before a byte arrives — so what a failed fetch
+                // leaves is full-length and mostly empty. Until 0.0.345 it was
+                // kept, on the belief that HTTP would resume into it; it never
+                // did (HTTP stages into `<file>.part`), and when HTTP failed too
+                // the hollow file stayed behind at the right size, where every
+                // later size check read it as downloaded.
+                let _ = self.remove(id, ours).await;
                 return Ok(false);
             }
         }

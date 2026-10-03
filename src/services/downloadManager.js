@@ -955,8 +955,9 @@ class DownloadManager {
       //
       // The native side gives up fast (25s to first byte, 45s stall, a
       // size-scaled ceiling) because the HTTP path below always works: a file
-      // no peer holds costs seconds, not a stalled slot. A partial transfer is
-      // left on disk, so HTTP resumes into it rather than starting over.
+      // no peer holds costs seconds, not a stalled slot. A transfer that gives
+      // up is deleted on the native side: the torrent engine creates the file
+      // at full length up front, so a leftover would look downloaded.
       let swarmSize = 0;
       const swarmSource = sermon.torrentUrl
         || (sermon.magnet?.startsWith('magnet:') ? sermon.magnet : null);

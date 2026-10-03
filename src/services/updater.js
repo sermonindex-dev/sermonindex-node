@@ -236,20 +236,26 @@ export async function checkForUpdates() {
       return;
     }
 
+    // 'silent' and 'prompt' now do the same thing on this version: tell the
+    // person, and install only when they click. Nothing is downloaded or
+    // installed behind their back.
+    //
+    // Until 0.0.344 'silent' meant install quietly and tell nobody, so people
+    // ran an old version for days without knowing a newer one existed — or
+    // that one was already sitting on their disk.
+    //
+    // Why the manifest still says 'silent' rather than 'prompt': a 0.0.339
+    // install that receives 'prompt' crashes (React #310, see the note in
+    // UpdatePrompt.jsx), and the mode applies to every installed version at
+    // once. Older versions keep reading 'silent' and updating quietly, which
+    // is the one path that is safe for all of them; from 0.0.344 on, it reads
+    // as a notification. 'force' (above) is unchanged: the break-glass lever
+    // for a security release, and the only case that installs on its own.
     if (mode === 'silent') {
-      // Install now, apply on next launch — non-disruptive.
-      await update.downloadAndInstall();
-      _installedVersion = update.version;
-      console.log('[Updater] Installed silently — applies next launch');
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('si-update-ready', {
-          detail: { version: update.version, mode },
-        }));
-      }
-      return;
+      console.log('[Updater] Treating mode=silent as a notification — installs on click');
     }
 
-    // mode === 'prompt' — hand the UI an installer it can trigger on click.
+    // Hand the UI an installer it runs when the banner is clicked.
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('si-update-available', {
         detail: {

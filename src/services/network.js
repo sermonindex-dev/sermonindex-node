@@ -365,6 +365,27 @@ export async function checkSeedAccess(nodeId) {
 }
 
 /**
+ * Where this machine's seed request stands: { enabled, status, declined_at }.
+ * status is 'approved' | 'pending' | 'denied' | 'none', or 'unknown' from a
+ * server older than the status field. Returns null when it could not ask.
+ */
+export async function fetchSeedStatus(nodeId) {
+  if (!nodeId) return null;
+  try {
+    const res = await fetch(`${DASHBOARD_API}/api/seed/access?node_id=${encodeURIComponent(nodeId)}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!d || !d.ok) return null;
+    const enabled = !!d.enabled;
+    return { enabled, status: d.status || (enabled ? 'approved' : 'unknown'), declined_at: d.declined_at || null };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Submit a seed-access request with an email so the admin can enable this node.
  * Shows up as a pending request on the dashboard's Nodes page.
  * Returns the server response ({ requested, enabled }) or null on failure.

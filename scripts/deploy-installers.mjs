@@ -136,7 +136,7 @@ async function put(remotePath, bytes, contentType = 'application/octet-stream') 
   const res = await fetch(url, {
     method: 'PUT',
     headers: { AccessKey: KEY, 'Content-Type': contentType },
-    body: bytes,
+    body: new Blob([bytes]),
   });
   if (res.status !== 201) {
     const body = await res.text().catch(() => '');
